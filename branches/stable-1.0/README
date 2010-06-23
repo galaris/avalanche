@@ -1,23 +1,9 @@
                            AVALANCHE
 
 Dynamic defect detection tool for generating "inputs of death". 
+
 See http://code.google.com/p/avalanche/ and 
-http://code.google.com/p/avalanche/w/list for more details.
-
-===================================================================
-
-DOWNLOAD:
-
-Use 
-
-svn checkout http://avalanche.googlecode.com/svn/branches/stable-1.0 
-
-or
-
-svn checkout http://avalanche.googlecode.com/svn/trunk/
-
-to get either stable release or the latest development snapshot
-respectively.
+http://code.google.com/p/avalanche/wiki/Avalanche for more details.
 
 ===================================================================
 
