@@ -1,0 +1,13 @@
+ # Checkout the source:
+{{{
+$ svn checkout http://avalanche.googlecode.com/svn/branches/stable-1.0 avalanche
+}}}
+ # Configure and make (default install directory is /usr/local):
+{{{
+./configure --prefix=<path to avalanche install directory>
+make
+}}}
+ # Set the program stack size to be "unlimited" before you run Avalanche - STP needs large stack and will most likely fail with stack overflow on any non-trivial example with system's default stack size:
+{{{
+$ ulimit -s unlimited
+}}}
