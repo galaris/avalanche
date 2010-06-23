@@ -1,4 +1,4 @@
- # Download the [http://code.google.com/p/avalanche/downloads/detail?name=avalanche-1.0.tar.gz&can=2&q= source archive] or checkout the source:
+ # Download the [http://avalanche.googlecode.com/files/avalanche-1.0.tar.gz source archive] or checkout the source:
 {{{
 $ svn checkout http://avalanche.googlecode.com/svn/trunk avalanche
 }}}
