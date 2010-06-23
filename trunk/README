@@ -1,0 +1,158 @@
+                           AVALANCHE
+
+Dynamic defect detection tool for generating "inputs of death". 
+See http://code.google.com/p/avalanche/ and 
+http://code.google.com/p/avalanche/w/list for more details.
+
+===================================================================
+
+DOWNLOAD:
+
+Use 
+
+svn checkout http://avalanche.googlecode.com/svn/branches/stable-1.0 
+
+or
+
+svn checkout http://avalanche.googlecode.com/svn/trunk/
+
+to get either stable release or the latest development snapshot
+respectively.
+
+===================================================================
+
+INSTALLATION:
+
+Type './configure' to configure valgrind and STP. You may specify 
+'--prefix=<path_to_dir>' option to install avalanche to a certain 
+directory. For example
+
+./configure --prefix=`pwd`/inst
+
+If everything is configured successfully, run 'make'.
+
+Then SET THE PROGRAM STACK SIZE TO BE UNLIMITED:
+
+ulimit -s unlimited
+
+This is need to be done for correct work of STP. Otherwise it fails 
+with stack overflow.
+
+===================================================================
+
+LICENSE:
+
+Valgrind is licensed under the GNU General Public License, version 2. 
+Read the file valgrind/COPYING in the source distribution for details.
+
+STP is licensed under the MIT License. Read the file 
+stp-ver-0.1-11-18-2008/LICENSE in the source distribution for details.
+
+Driver is licensed under under the Apache License, Version 2.0.
+Read the file driver/LICENSE in the source distribution for details.
+
+===================================================================
+
+AVALANCHE OPTIONS:
+
+avalanche [options] prog-and-args
+
+  user options defined in [ ]:
+    --help                       print help and exit
+    --use-memcheck               indicate that memcheck should be used instead of covgrind
+    --leaks                      indicate that inputs resulting in memory leaks should be saved
+                                 (ignored if '--use-memcheck' isn't specified)
+    --debug                      more verbous avalanche output
+    --depth=<number>             the number of conditions inverted during one run of tracegrind (default is 100)
+    --alarm=<number>             timer value in seconds (for infinite loop recognition) (default is 300)
+    --filename=<input_file>      the path to the file with the input data for the application being tested
+
+  special options for sockets:
+    --sockets                    mark data read from TCP sockets as tainted
+    --host=<IPv4 address>        IP address of the network connection (for TCP sockets only)
+    --port=<number>              port number of the network connection (for TCP sockets only)
+    --datagrams                  mark data read from UDP sockets as tainted
+    --alarm=<number>             timer for breaking infinite waitings in covgrind or memcheck (not set by default)
+    --tracegrind-alarm=<number>  timer for breaking infinite waitings in tracegrind (not set by default)
+
+===================================================================
+
+USAGE EXAMPLES:
+
+Avalanche comes with some simple examples. Their sources are located in 
+samples/simple folder. It also contains 'seed' file - it is initial input 
+file for the examples. It contains just four zero bytes.
+
+entry.c - simple crash due to use of uninitialized data.
+sample2.c - the program is aborted on a certain input
+multiple_client.c and multpile_client2.c - the same as sample2.c, but they receive input data from sockets.
+divclient.c - division by zero, the data also comes from sockets
+uninit.c - simple use of uninitialezed data not resulting in a program crash
+mleak.c - simple memory leak
+
+One more file - writeserver.c - is a simple server for multiple_client.c, multpile_client2.c, divclient.c
+
+Let's describe how avalanche may be used to detect bugs in these programs:
+
+1) For programs that receive their input data from files just specify the name of the file with '--filename' option:
+
+./inst/bin/avalanche --debug --filename=samples/simple/seed  samples/simple/entry samples/simple/seed
+
+Avalanche generates three input files (exploit_0_0, exploit_1_0, exploit_2_0) each 
+causing a segmentation fault in the program to happen:
+
+./samples/simple/entry exploit_0_0 
+Segmentation fault
+
+./samples/simple/entry exploit_1_0 
+Segmentation fault
+
+./samples/simple/entry exploit_2_0 
+Segmentation fault
+
+Sample2 may be analyzed in the same way:
+
+./inst/bin/avalanche --debug --filename=seed  samples/simple/sample2 samples/simple/seed
+
+./samples/simple/sample2 exploit_0_0 
+Aborted
+
+2) For programs that receive their input data from TCP sockets provide host 
+and port of server with '--host' and '--port' options. You should also 
+specify '--sockets' option. Analysis also requires the server to be running. 
+
+So, run the writeserver:
+
+./samples/simple/writeserver &
+
+It accepts any incoming connection, writes four bytes into it and closes the connection. Then run
+
+./inst/bin/avalanche --sockets --host=127.0.0.1 --port=10000 --debug samples/simple/multiple_client
+
+Avalanche generates 'exploit_0' file. To reproduce the actual bug, you need to run
+
+./inst/bin/valgrind --tool=covgrind --no-coverage=yes --host=127.0.0.1 --port=10000 --replace=exploit_0 --sockets=yes samples/simple/multiple_client
+
+This causes all the incoming data to be replaced with data in the generated 
+exploit file. Multiple_client2 and divclient may be analyzed in the same way.
+
+3) To detect errors that doesn't lead to a program crash, you need to specify '--use-memcheck' option
+
+./inst/bin/avalanche --use-memcheck --debug --filename=samples/simple/seed  samples/simple/uninit samples/simple/seed
+
+Avalanche should generate 'memcheck_0_0' file. To see the memcheck output for the error, run 
+
+./inst/bin/valgrind --tool=memcheck samples/simple/uninit memcheck_0_0
+
+For memory leak specify an additional '--leaks' option:
+
+./inst/bin/avalanche --use-memcheck --leaks --debug --filename=samples/simple/seed  samples/simple/mleak samples/simple/seed
+
+./inst/bin/valgrind --tool=memcheck samples/simple/mleak memcheck_0_0
+
+===================================================================
+
+CONTACT:
+
+Mailing list for discussion: http://groups.google.com/group/avalanche-users
+
