@@ -1,7 +1,7 @@
 === Using Avalanche ===
 
 === Synopsis ===
-avalanche ![ _avalanche-options_ ] _program_ _arguments_
+avalanche _avalanche-options_ _program_ _program-options_
 
 This command will iteratively run the _program_ with specified command line _arguments_ under Avalanche. The program's executable (binary) code will be dynamically instrumented and analyzed by Avalanche to detect errors, and generate program's for the next iteration.
 
