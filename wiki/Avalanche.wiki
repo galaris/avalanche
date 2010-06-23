@@ -1,11 +1,11 @@
-== Documentation ==
+=== Documentation ===
 
  * [Installation]
  * [Using Avalanche]
  * [Samples]
  * [Papers]
 
-== Detected errors ==
+=== Detected errors ===
 
 Avalanche was tested on a number of open-source tools and has found the following bugs:
 
@@ -25,12 +25,12 @@ Avalanche was tested on a number of open-source tools and has found the followin
 
 etc...
 
-== License ==
+=== License ===
 
 The two valgrind plugins, which are part of Avalanche (_tracegrind_ and _covgrind_) are licensed under [http://www.gnu.org/licenses/gpl-2.0.html GPLv2]. The driver module, that coordinates iterative testing is using [http://www.apache.org/licenses/LICENSE-2.0.html Apache] license.
 
 Third party open-source components use their own licenses: Valgrind is GPL licensed, STP uses MIT license.
 
-== Mailing list ==
+=== Mailing list ===
 
 [http://groups.google.com/group/avalanche-users The place to ask any question related to Avalanche]
