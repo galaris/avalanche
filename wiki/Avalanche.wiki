@@ -1,7 +1,7 @@
 === Documentation ===
 
  * [Installation]
- * [Using Avalanche]
+ * [Using_Avalanche]
  * [Samples]
  * [Papers]
 
