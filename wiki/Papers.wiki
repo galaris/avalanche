@@ -1,0 +1,3 @@
+ * [http://code.google.com/p/avalanche/downloads/detail?name=ProCom4_10IsaevLO.pdf&can=2&q= The Use of Dynamic Analysis for Generation of Input Data that Demonstrates Critical Bugs and Vulnerabilities in Programs]
+
+ * [http://code.google.com/p/avalanche/downloads/detail?name=isaev.pdf&can=2&q= Применение динамического анализа для генерации входных данных, демонстрирующих критические ошибки и уязвимости в программах]
