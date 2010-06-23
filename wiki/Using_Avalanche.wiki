@@ -1,7 +1,7 @@
 === Using Avalanche ===
 
 === Synopsis ===
-avalanche [ _avalanche-options_ ] _program_ _arguments_
+avalanche ![ _avalanche-options_ ] _program_ _arguments_
 
 This command will iteratively run the _program_ with specified command line _arguments_ under Avalanche. The program's executable (binary) code will be dynamically instrumented and analyzed by Avalanche to detect errors, and generate program's for the next iteration.
 
@@ -11,19 +11,19 @@ This command will iteratively run the _program_ with specified command line _arg
 || *Avalanche general options* || || ||
 ||--help|| ||Print help and exit||
 ||--debug|| ||More verbous avalanche output||
-||--depth=<number>||100||The number of conditions inverted during one run of tracegrind||
+|| --depth=number ||100||The number of conditions inverted during one run of tracegrind||
 ||--use-memcheck|| ||Indicate that memcheck should be used instead of covgrind||
 ||--leaks|| ||Indicate that inputs resulting in memory leaks should be saved (ignored if '--use-memcheck' isn't specified)||
 || *if the program receives input data from files* || || ||
-||--filename=<input_file>|| ||The path to the file with the input data for the analyzed program||
-||--alarm=<number>||300||Timer value in seconds (for infinite loop recognition). If the execution runs for the specified number of seconds, then Avalanche suspects an infinite loop in the program and dumps the corresponding input file as exploit||
+|| --filename=input_file || ||The path to the file with the input data for the analyzed program||
+|| --alarm=number ||300||Timer value in seconds (for infinite loop recognition). If the execution runs for the specified number of seconds, then Avalanche suspects an infinite loop in the program and dumps the corresponding input file as exploit||
 || *if the program receives input data from sockets* || || ||
 ||--sockets|| ||Mark data read from TCP sockets as tainted||
 ||--datagrams|| ||Mark data read from UDP sockets as tainted||
-||--host=<IPv4 address>||not set||IP address of the network connection (for TCP sockets only)||
-||--port=<number>||not set||Port number of the network connection (for TCP sockets only)||
-||--alarm=<number>||not set||Timer for breaking infinite waitings in covgrind or memcheck. It designates the maximum time for each run of covgrind or memcheck. If the timer expires, the plugin is killed. Set this option if the analysed program "hangs" on some iteration.||
-||--tracegrind-alarm=<number>||not set||Timer for breaking infinite waitings in tracegrind. It designates the maximum time for each run of tracegrind. If the timer expires, the plugin is killed. Set this option if the analysed program "hangs" on some iteration. In general, this value should be greater than the timer for covgrind or memcheck specified by '--alarm' option.||
+|| --host=IPv4 address ||not set||IP address of the network connection (for TCP sockets only)||
+|| --port=number ||not set||Port number of the network connection (for TCP sockets only)||
+|| --alarm=number ||not set||Timer for breaking infinite waitings in covgrind or memcheck. It designates the maximum time for each run of covgrind or memcheck. If the timer expires, the plugin is killed. Set this option if the analysed program "hangs" on some iteration.||
+|| --tracegrind-alarm=number ||not set||Timer for breaking infinite waitings in tracegrind. It designates the maximum time for each run of tracegrind. If the timer expires, the plugin is killed. Set this option if the analysed program "hangs" on some iteration. In general, this value should be greater than the timer for covgrind or memcheck specified by '--alarm' option.||
 
 === Avalanche output ===
 
