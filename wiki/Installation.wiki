@@ -1,6 +1,6 @@
- # Checkout the source:
+ # Download the [http://code.google.com/p/avalanche/downloads/detail?name=avalanche-1.0.tar.gz&can=2&q= source archive] or checkout the source:
 {{{
-$ svn checkout http://avalanche.googlecode.com/svn/branches/stable-1.0 avalanche
+$ svn checkout http://avalanche.googlecode.com/svn/trunk avalanche
 }}}
  # Configure and make (default install directory is /usr/local):
 {{{
