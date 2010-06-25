@@ -1,24 +1,35 @@
-all: inst_check tracegrind stp driver samples
+include config.info
+INSTALL_DIR:=$(PREFIX)
 
-INSTALL_DIR:=inst
+all: tracegrind stp driver samples
 
-inst_check:
+inst_check: 
 	mkdir -p $(INSTALL_DIR)
 
+install: inst_check tracegrind-inst stp-inst driver-inst
+
 tracegrind:
-	cd valgrind; if (test -r Makefile); then make && make install; else ./autogen.sh; ./configure --prefix=$(PWD)/$(INSTALL_DIR); make && make install; fi
+	cd valgrind; if (test -r Makefile); then make; else ./autogen.sh; ./configure --prefix=$(INSTALL_DIR) && make; fi
+
+tracegrind-inst:
+	cd valgrind; make install
 
 stp:
-	cd stp-ver-0.1-11-18-2008; if (test -r Makefile); then make && make install; else ./configure --with-prefix=$(PWD)/$(INSTALL_DIR); make && make install; ulimit -s unlimited; fi
+	cd stp-ver-0.1-11-18-2008; if (test -r Makefile); then make; else ./configure --with-prefix=$(INSTALL_DIR) && make; ulimit -s unlimited; fi
+
+stp-inst:
+	cd stp-ver-0.1-11-18-2008; make install
 
 driver:
-	cd driver; make && make install
+	cd driver; make
+
+driver-inst:
+	cd driver; make install
 
 samples:
 	cd samples; make
 
 clean:
-	rm avalanche
 	cd valgrind; make clean
 	cd stp-ver-0.1-11-18-2008; make clean
 	cd driver; make clean
