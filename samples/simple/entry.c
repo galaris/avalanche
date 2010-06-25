@@ -3,9 +3,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-char global[5];
-int i;
+int* i;
 
 int main(int argc, char** argv)
 {
@@ -21,9 +21,9 @@ int main(int argc, char** argv)
       j++;
   }
   if (j == 2) {
-      i = 100;
+      i = (int*) malloc(sizeof(int));
   }
-  global[i - 100] = 0;
+  *i = 2;
   return 0;
 }
 
