@@ -7,6 +7,7 @@ $ svn checkout http://avalanche.googlecode.com/svn/trunk avalanche
 $ ./autogen.sh
 $ ./configure --prefix=<path to avalanche install directory>
 $ make
+$ make install
 }}}
  # Set the program stack size to be "unlimited" before you run Avalanche - STP needs large stack and will most likely fail with stack overflow on any non-trivial example with system's default stack size:
 {{{
