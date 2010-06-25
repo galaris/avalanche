@@ -29,20 +29,21 @@ all:
 	$(RANLIB) libstp.a
 	@mkdir -p lib
 	@mv libstp.a lib/
-#	$(MAKE) TAGS
-	@echo ""
-	@echo "Compilation successful."
-	@echo "Type 'make install' to install STP."
-
 
 .PHONY: install
 install: all
-	@cp -f $(BINARIES) $(BIN_DIR)
-	@cp -f $(LIBRARIES) $(LIB_DIR)
-	@cp -f $(HEADERS) $(INCLUDE_DIR)
-	@echo "STP installed successfully."
+	mkdir -p $(BIN_DIR)
+	cp -f $(BINARIES) $(BIN_DIR)
+	mkdir -p $(LIB_DIR)
+	cp -f $(LIBRARIES) $(LIB_DIR)
+	mkdir -p $(INCLUDE_DIR)
+	cp -f $(HEADERS) $(INCLUDE_DIR)
 
-.PHONY: clean
+.PHONY: clean distclean
+distclean: clean
+	$(RM) Makefile
+	$(RM) config.info
+
 clean:
 	rm -rf *~
 	rm -rf *.a
@@ -51,8 +52,6 @@ clean:
 	rm -rf bin/*~
 	rm -rf bin/stp
 	rm -rf *.log
-	#rm -rf Makefile
-	#rm -rf config.info
 	rm -f TAGS
 	$(MAKE) clean -C AST
 	$(MAKE) clean -C sat/core
