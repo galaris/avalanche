@@ -4,6 +4,7 @@ $ svn checkout http://avalanche.googlecode.com/svn/trunk avalanche
 }}}
  # Configure and make (default install directory is /usr/local):
 {{{
+$ ./autogen.sh
 $ ./configure --prefix=<path to avalanche install directory>
 $ make
 }}}
