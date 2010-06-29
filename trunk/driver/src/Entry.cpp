@@ -25,6 +25,7 @@
    limitations under the License.
 */
 
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <string>
