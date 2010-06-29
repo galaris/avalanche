@@ -36,7 +36,7 @@
 FileBuffer::FileBuffer(char* name)
 {
   this->name = strdup(name);
-  int fd = open(name, O_RDWR | O_CREAT);
+  int fd = open(name, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   struct stat fileInfo;
   fstat(fd, &fileInfo);
   size = fileInfo.st_size;

@@ -27,6 +27,7 @@
 #include "OptionParser.h"
 #include "OptionConfig.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
