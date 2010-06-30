@@ -82,6 +82,9 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
         }
+        else if (arg_vec[i] == "--verbose") {
+            config->setVerbose();
+        }
         else if (arg_vec[i] == "--use-memcheck") {
             config->setUsingMemcheck();
         }

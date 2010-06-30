@@ -136,7 +136,7 @@ void ExecutionManager::runUninstrumented(Input* input)
       LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
       stringstream ss(stringstream::in | stringstream::out);
       ss << "exploit_" << exploits;
-      LOG(logger, "dumping an exploit to file " << ss.str());
+      REPORT(logger, "Crash detected. Dumping exploit input to file " << ss.str());
       input->dumpExploit((char*) ss.str().c_str(), false);
       exploits++;
     }
@@ -161,12 +161,13 @@ void ExecutionManager::runUninstrumented(Input* input)
       time_t exploittime;
       time(&exploittime);
       string t = string(ctime(&exploittime));
-      LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
+      REPORT(logger, "Crash detected."); 
+      LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));
       for (int i = 0; i < input->files.size(); i++)
       {
         stringstream ss(stringstream::in | stringstream::out);
         ss << "exploit_" << exploits << "_" << i;
-        LOG(logger, "dumping an exploit to file " << ss.str());
+        REPORT(logger, "Dumping exploit input to file " << ss.str());
         input->files.at(i)->dumpFile((char*) ss.str().c_str());
       }
       exploits++;
@@ -238,12 +239,13 @@ int ExecutionManager::checkAndScore(Input* input)
     time_t exploittime;
     time(&exploittime);
     string t = string(ctime(&exploittime));
+    REPORT(logger, "Crash detected.");
     LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
     if (config->usingSockets() || config->usingDatagrams())
     {
       stringstream ss(stringstream::in | stringstream::out);
       ss << "exploit_" << exploits;
-      LOG(logger, "dumping an exploit to file " << ss.str());
+      REPORT(logger, "Dumping an exploit to file " << ss.str());
       input->dumpExploit((char*) ss.str().c_str(), false);
     }
     else
@@ -252,7 +254,7 @@ int ExecutionManager::checkAndScore(Input* input)
       {
         stringstream ss(stringstream::in | stringstream::out);
         ss << "exploit_" << exploits << "_" << i;
-        LOG(logger, "dumping an exploit to file " << ss.str());
+        REPORT(logger, "dumping an exploit to file " << ss.str());
         input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
       }
     }
@@ -288,12 +290,13 @@ int ExecutionManager::checkAndScore(Input* input)
       time_t memchecktime;
       time(&memchecktime);
       string t = string(ctime(&memchecktime));
+      REPORT(logger, "Error detected.");
       LOG(logger, "memcheck error time: " << t.substr(0, t.size() - 1));   
       if (config->usingSockets() || config->usingDatagrams())
       {
         stringstream ss(stringstream::in | stringstream::out);
         ss << "memcheck_" << memchecks;
-        LOG(logger, "dumping an memcheck error to file " << ss.str());
+        REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
         input->dumpExploit((char*) ss.str().c_str(), false);
       }
       else
@@ -302,7 +305,7 @@ int ExecutionManager::checkAndScore(Input* input)
         {
           stringstream ss(stringstream::in | stringstream::out);
           ss << "memcheck_" << memchecks << "_" << i;
-          LOG(logger, "dumping an memcheck error to file " << ss.str());
+          REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
           input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
         }
       }
@@ -438,6 +441,7 @@ void ExecutionManager::run()
 
     while (!inputs.empty()) 
     {
+      REPORT(logger, "Starting iteration " << runs);
       LOG(logger, "inputs.size()=" << inputs.size());
       multimap<Key, Input*, cmp>::iterator it = --inputs.end();
       Input* fi = it->second;

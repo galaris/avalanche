@@ -85,7 +85,8 @@ static void printHelpBanner()
         "    --use-memcheck               indicate that memcheck should be used instead of covgrind\n"
         "    --leaks                      indicate that inputs resulting in memory leaks should be saved\n"
         "                                 (ignored if '--use-memcheck' isn't specified)\n"
-        "    --debug                      more verbous avalanche output\n" 
+        "    --verbose                    much more detailed avalanche output\n" 
+        "    --debug                      save some debugging information - divergent inputs, etc.\n" 
         "    --depth=<number>             the number of conditions inverted during one run of"
         "                                 tracegrind (default is 100)\n"
         "    --alarm=<number>             timer value in seconds (for infinite loop recognition) (default is 300)\n"
@@ -153,7 +154,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    if (opt_config->getDebug()) logger->enableDebug();
+    if (opt_config->getVerbose()) logger->enableVerbose();
     
     LOG(logger, "Avalanche, a dynamic analysis tool.");
 

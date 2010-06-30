@@ -33,13 +33,13 @@
 class Logger
 {
 public:
-    enum Level { LEV_INFO, LEV_DEBUG, LEV_ERROR};
+    enum Level { LEV_ALWAYS, LEV_INFO, LEV_DEBUG, LEV_ERROR };
 
-    Logger(): enable_debug(false)
+    Logger(): enable_verbose(false)
     {}
 
-    void enableDebug()
-    { enable_debug = true; }
+    void enableVerbose()
+    { enable_verbose = true; }
     
     static Logger *getLogger();
 
@@ -48,9 +48,15 @@ public:
                const char *file, std::size_t line) const;
 
 private:
-    bool enable_debug;
+    bool enable_verbose;
 };
 
+#define REPORT(logger, msg) \
+    do { \
+        std::ostringstream log_buf; \
+        log_buf << msg; \
+        logger->write(Logger::LEV_ALWAYS, log_buf.str(), __FILE__, __LINE__);\
+    } while (0)
 
 #define LOG(logger, msg) \
     do { \

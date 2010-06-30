@@ -36,6 +36,7 @@ class OptionConfig
 {
 public:
     OptionConfig(): debug(false),
+                    verbose(false),
 		    sockets(false),
                     datagrams(false),
                     useMemcheck(false),
@@ -50,6 +51,7 @@ public:
     OptionConfig(const OptionConfig *opt_config)
     {
         debug           = opt_config->debug;
+        verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
         datagrams       = opt_config->datagrams;
         depth           = opt_config->depth;
@@ -78,6 +80,12 @@ public:
     
     bool getDebug() const
     { return debug; }
+
+    void setVerbose()
+    { verbose = true; }
+    
+    bool getVerbose() const
+    { return verbose; }
 
     void setUsingSockets()
     { sockets = true; }
@@ -150,6 +158,7 @@ public:
 
 private:
     bool                     debug;
+    bool                     verbose;
     bool		     sockets;
     bool                     datagrams;
     bool                     useMemcheck;
