@@ -21,6 +21,7 @@ noinst_PROGRAMS += tracegrind-ppc64-aix5
 endif
 
 TRACEGRIND_SOURCES_COMMON = tg_main.c buffer.c copy.c
+noinst_HEADERS = buffer.h copy.h
 
 tracegrind_x86_linux_SOURCES      = $(TRACEGRIND_SOURCES_COMMON)
 tracegrind_x86_linux_CPPFLAGS     = $(AM_CPPFLAGS_X86_LINUX)

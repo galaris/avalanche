@@ -7,7 +7,7 @@
 # Comment out the next line to skip building print docs.  The default
 # is not to skip building print docs.  Note, after changing it
 # you of course need to re-run configure to make it take effect.
-BUILD_ALL_DOCS=yes
+BUILD_ALL_DOCS=no
 
 ##-------------------------------------------------------------
 ## END OF HACK
@@ -55,7 +55,7 @@ XSL_HTML_CHUNK_STYLE  = $(mylibdir)/vg-html-chunk.xsl
 XSL_FO_STYLE          = $(mylibdir)/vg-fo.xsl
 XSL_TEXT_STYLE        = $(mylibdir)/vg-faq2txt.xsl
 XSL_WEBSITE_STYLE     = $(mylibdir)/vg-html-website.xsl
-XSL_MAN_STYLE = /usr/share/xml/docbook/stylesheet/nwalsh/current/manpages/docbook.xsl
+XSL_MAN_STYLE = /usr/share/xml/docbook/stylesheet/nwalsh/manpages/docbook.xsl
 
 all-docs: FAQ.txt man-page html-docs print-docs
 

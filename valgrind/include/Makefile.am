@@ -36,4 +36,5 @@ incinc_HEADERS = \
 	pub_tool_vkiscnums.h		\
 	pub_tool_wordfm.h		\
 	pub_tool_xarray.h		\
-	valgrind.h
+	valgrind.h			\
+	avalanche.h

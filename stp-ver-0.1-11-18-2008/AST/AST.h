@@ -10,14 +10,20 @@
 #ifndef AST_H
 #define AST_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #include <vector>
-#ifdef EXT_HASH_MAP
-#include <ext/hash_set>
+#if defined(HAVE_EXT_HASH_MAP)
 #include <ext/hash_map>
-#else
-#include <hash_set>
+#elif defined(HAVE_HASH_MAP)
 #include <hash_map>
+#endif
+#if defined(HAVE_EXT_HASH_SET)
+#include <ext/hash_set>
+#elif defined(HAVE_HASH_SET)
+#include <hash_set>
 #endif
 #include <iostream>
 #include <sstream>
