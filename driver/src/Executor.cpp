@@ -37,6 +37,9 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/time.h>
+#include <sys/resource.h>
+
 
 using namespace std;
 
@@ -46,7 +49,7 @@ static Logger *logger = Logger::getLogger();
 pid_t child_pid;
 
 
-int Executor::exec()
+int Executor::exec(bool setlimit)
 {
     child_pid = fork();
 
@@ -62,6 +65,13 @@ int Executor::exec()
     
     do_redirect(STDOUT_FILENO, file_out); file_out = -1;
     do_redirect(STDERR_FILENO, file_err); file_err = -1;
+
+    if (setlimit) {
+        struct rlimit r;
+        r.rlim_cur = RLIM_INFINITY;
+        r.rlim_max = RLIM_INFINITY;
+        setrlimit(RLIMIT_STACK, &r);
+    }
 
     return execvp(prog, args);
 }

@@ -61,7 +61,7 @@ int ProgExecutor::run()
     redirect_stdout(file_out.getName());
     redirect_stderr(file_out.getName());
 
-    int ret = exec();
+    int ret = exec(false);
     pure_pid = child_pid;
     
     if (ret == -1) {
