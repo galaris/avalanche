@@ -10,21 +10,23 @@
 #ifndef ASTUTIL_H
 #define ASTUTIL_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <cstring>
 
 #include <iostream>
 #include <vector>
-#ifdef EXT_HASH_MAP
-#include <ext/hash_set>
+#if defined(HAVE_EXT_HASH_MAP)
 #include <ext/hash_map>
-#else
-#include <hash_set>
+#elif defined(HAVE_HASH_MAP)
 #include <hash_map>
 #endif
 
 using namespace std; 
 namespace BEEV {
-#ifdef EXT_HASH_MAP
+#ifdef HAVE_EXT_HASH_MAP
   using namespace __gnu_cxx;
 #endif
   //some global variables that are set through commandline options. it

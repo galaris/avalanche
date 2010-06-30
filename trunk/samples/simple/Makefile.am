@@ -8,3 +8,5 @@ writeserver_SOURCES = writeserver.c
 sample2_SOURCES = sample2.c
 uninit_SOURCES = uninit.c
 mleak_SOURCES = mleak.c
+
+dist_noinst_DATA = seed
