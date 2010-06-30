@@ -4035,7 +4035,6 @@ static void tg_print_debug_usage()
 
 static void tg_pre_clo_init(void)
 {
-  VG_(printf)("sizeof(UWord)=%d sizeof(IRExpr*)=%d\n", sizeof(UWord), sizeof(IRExpr*));
   VG_(details_name)            ("Tracegrind");
   VG_(details_version)         ("1.0");
   VG_(details_description)     ("valgrind IR to STP declarations converter");

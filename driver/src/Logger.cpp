@@ -43,15 +43,23 @@ void Logger::write(Level level, const string &msg,
                    const char *file, size_t line) const
 {
     switch (level) {
+    case LEV_ALWAYS:
+        cout << msg << endl;
+        break;
     case LEV_INFO:
-        cout << "INFO: "<< msg << endl;
+        if (enable_verbose) {
+            cout << "INFO: "<< msg << endl;
+        }
         break;
     case LEV_DEBUG:
-        if (enable_debug)
+        if (enable_verbose) {
             cout << "DEBUG: " << /*file << ":" << line << "]: " << */msg << endl;
+        }
         break;
     case LEV_ERROR:
-        cout << "ERROR: [" << file << ":" << line << "]: " << msg << endl;
+        if (enable_verbose) {
+            cout << "ERROR: [" << file << ":" << line << "]: " << msg << endl;
+        }
         break;
     default:
         cout << "Unknown logging level, log message: " << msg << endl;
