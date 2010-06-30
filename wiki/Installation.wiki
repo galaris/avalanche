@@ -1,8 +1,24 @@
- # Checkout the sources from the repository:
+=== From source archive ===
+
+  # Download and unpack the source tarball from http://code.google.com/p/avalanche/downloads/list
+{{{
+$ tar xf avalanche-VERSION.tar.gz
+$ cd avalanche-VERSION
+}}}
+  # Configure and make:
+{{{
+$ ./configure --prefix=<path to avalanche install directory>
+$ make
+$ make install
+}}}
+
+=== From subversion repository ===
+
+  # Checkout the sources:
 {{{
 $ svn checkout http://avalanche.googlecode.com/svn/trunk avalanche
 }}}
- # Configure and make (default install directory is /usr/local):
+  # Configure and make:
 {{{
 $ ./autogen.sh
 $ ./configure --prefix=<path to avalanche install directory>
