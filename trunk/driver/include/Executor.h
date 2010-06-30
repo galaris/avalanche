@@ -36,7 +36,7 @@ public:
     Executor(): prog(NULL), args(NULL), file_out(-1), file_err(-1)
     {}
 
-    int exec();
+    int exec(bool setlimit);
 
     int wait();
 

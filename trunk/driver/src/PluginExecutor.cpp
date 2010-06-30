@@ -93,7 +93,7 @@ int PluginExecutor::run()
     redirect_stdout(file_out.getName());
     redirect_stderr(file_err.getName());
 
-    int ret = exec();
+    int ret = exec(false);
     if (kind == TRACEGRIND)
     {
       tg_pid = child_pid;

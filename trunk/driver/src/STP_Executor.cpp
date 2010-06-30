@@ -72,7 +72,7 @@ STP_Output *STP_Executor::run(STP_Input *input)
     redirect_stdout(file_out.getName());
     redirect_stderr(file_err.getName());
 
-    int ret = exec();
+    int ret = exec(true);
     stp_pid = child_pid;
     if (ret == -1) {
         ERR(logger, "Problem in execution: " << strerror(errno));
