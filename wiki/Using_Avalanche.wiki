@@ -10,7 +10,8 @@ This command will iteratively run the _program_ with specified command line _pro
 || *flag name* || *default* || *description* ||
 || *Avalanche general options* || || ||
 ||--help|| ||Print help and exit||
-||--debug|| ||More verbous avalanche output||
+||--verbose|| ||much more detailed avalanche output||
+||--debug|| ||save some debugging information - divergent inputs, etc.||
 || --depth=number ||100||The number of conditions inverted during one run of tracegrind||
 ||--use-memcheck|| ||Indicate that memcheck should be used instead of covgrind||
 ||--leaks|| ||Indicate that inputs resulting in memory leaks should be saved (ignored if '--use-memcheck' isn't specified)||
