@@ -11,7 +11,7 @@ user@machine:$ hexdump samples/simple/seed
 
 == If input data comes from file ==
 
-For programs that receive their input data from files just specify the name of the file with '--filename' option. [http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/sample2.c sample2.c] sample demonstrates a simple crash due to use of uninitialized data. This is how avalanche may be used to detect this crash and generate input files that reproduce it.
+For programs that receive their input data from files just specify the name of the file with '--filename' option. [http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/sample2.c sample2.c] is a small program that terminates if and only if it reads the letters 'b', 'a', 'd', '!' from input file. This is how avalanche may be used to detect the crash and generate input file that reproduces it.
 
 {{{
 user@machine:$ ./inst/bin/avalanche --filename=samples/simple/seed samples/simple/sample2 samples/simple/seed 
