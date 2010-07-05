@@ -11,35 +11,24 @@ user@machine:$ hexdump samples/simple/seed
 
 == If input data comes from file ==
 
-For programs that receive their input data from files just specify the name of the file with '--filename' option. [http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/entry.c entry.c] sample demonstrates a simple crash due to use of uninitialized data. This is how avalanche may be used to detect this crash and generate input files that reproduce it.
+For programs that receive their input data from files just specify the name of the file with '--filename' option. [http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/sample2.c sample2.c] sample demonstrates a simple crash due to use of uninitialized data. This is how avalanche may be used to detect this crash and generate input files that reproduce it.
 
 {{{
-user@machine:$ ./inst/bin/avalanche --debug --filename=samples/simple/seed samples/simple/entry samples/simple/seed 
+user@machine:$ ./inst/bin/avalanche --filename=samples/simple/seed samples/simple/sample2 samples/simple/seed 
 }}}
 
-Avalanche generates three exploit files: exploit_0_0, exploit_1_0 and exploit_2_0:
+Avalanche generates exploit file exploit_0_0
 
 {{{
-user@machine:$ hexdump exploit_0_0 
-0000000 0020 0000                              
-0000004
-user@machine:$ hexdump exploit_1_0 
-0000000 4000 0000                              
-0000004
-user@machine:$ hexdump exploit_2_0 
-0000000 4020 0000                              
-0000004
+user@machine:$ cat exploit_0_0 
+bad!
 }}}
 
-Each of these files cause the sample program to crash:
+Check that file causes the sample program to crash:
 
 {{{
-user@machine:$ samples/simple/entry exploit_0_0 
-Segmentation fault
-user@machine:$ samples/simple/entry exploit_1_0 
-Segmentation fault
-user@machine:$ samples/simple/entry exploit_2_0 
-Segmentation fault
+user@machine:$ samples/simple/sample2 exploit_0_0 
+Aborted
 }}}
 
 === If input data comes from TCP socket ===
