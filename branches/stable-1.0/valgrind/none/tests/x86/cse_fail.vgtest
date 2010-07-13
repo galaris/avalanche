@@ -1,3 +1,0 @@
-prog: cse_fail
-prereq: ../../../tests/arch_test x86-sse
-vgopts: -q

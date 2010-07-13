@@ -1,3 +1,0 @@
-prog: long_namespace_xml
-vgopts: --xml=yes
-stderr_filter: filter_xml

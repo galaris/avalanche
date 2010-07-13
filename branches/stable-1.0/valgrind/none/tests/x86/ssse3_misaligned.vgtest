@@ -1,3 +1,0 @@
-prog: ssse3_misaligned
-prereq: ../../../tests/arch_test x86-ssse3
-vgopts: -q

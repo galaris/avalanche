@@ -1,3 +1,0 @@
-prog: bug137714-x86
-prereq: ../../../tests/arch_test x86-sse2
-vgopts: -q
