@@ -53,6 +53,7 @@
 #include "copy.h"
 
 //#define TAINTED_TRACE_PRINTOUT
+#define TAINTED_BLOCKS_PRINTOUT
 
 enum {
     X86CondO      = 0,  /* overflow           */
@@ -110,6 +111,29 @@ struct _sizeNode
 };
 
 typedef struct _sizeNode sizeNode;
+
+IRSB* printSB;
+Bool newSB = False;
+
+Int smth = 0;
+UInt queryCounter = 0;
+
+Addr64 curIAddr;
+Addr64 curNextIAddr;
+Addr64 returnAddr;
+Addr64 returnSubcallAddr;
+Bool activeSubcall = False;
+Bool activeFiltering = False;
+Bool filterConditions = False;
+Bool filterDangerous = False;
+
+Bool suppressSubcalls = False;
+UInt funcNum = 0;
+UInt funcAddrSize = 10;
+Char funcName[100];
+Addr64* funcAddresses;
+
+Char* fnName;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -389,10 +413,32 @@ Int stranslateIRTmp(Char* s, IRExpr* e)
   return VG_(sprintf)(s, "t_%llx_%u_%u", curblock, e->Iex.RdTmp.tmp, curvisited);
 }
 
-void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt basicBlockLowerBytes, UInt basicBlockUpperBytes, Int types_used)
+void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt ilen, UInt basicBlockLowerBytes, UInt basicBlockUpperBytes, Int types_used)
 {
   Addr64 addr = (((Addr64) iaddrUpperBytes) << 32) ^ iaddrLowerBytes;
   Addr64 bbaddr = (((Addr64) basicBlockUpperBytes) << 32) ^ basicBlockLowerBytes;
+  if (filterConditions || filterDangerous)
+  {
+    if (returnSubcallAddr == addr)
+    {
+      activeFiltering = True;
+    }
+    if (activeFiltering && addr == returnAddr)
+    {
+      activeFiltering = False;
+    }
+    Int i;
+    for (i = 0; i < funcNum; i ++)
+    {
+      if (addr == funcAddresses[i])
+      {
+        activeFiltering = True;
+        returnAddr = curNextIAddr;
+      }
+    }
+  }
+  curNextIAddr = addr + ilen;
+  curIAddr = addr;
 #ifdef TAINTED_TRACE_PRINTOUT
   VG_(printf)("------ IMark(0x%llx) ------\n", addr);
 #endif
@@ -1024,7 +1070,15 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
     taintRegister(offset, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1144,7 +1198,15 @@ void instrumentPutGet(IRStmt* clone, UInt putOffset, UInt getOffset)
     taintRegister(putOffset, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1219,7 +1281,15 @@ void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
     taintRegister(offset, curNode->temps[tmp].size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1289,6 +1359,16 @@ void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
 
 void instrumentPutConst(IRStmt* clone, UInt offset)
 {
+  /*#if defined(VGA_x86) 
+    if (offset == 60) //IP register
+    {
+      if(VG_(get_fnname) (clone->Ist.Put.data->Iex.Const.con->Ico.U32, fnName, 100))
+      {
+          VG_(printf) ("%d %lx\n", offset, clone->Ist.Put.data->Iex.Const.con->Ico.U32);
+        VG_(printf) ("%s\n", fnName);
+      }
+    }
+  #endif*/
   switch (clone->Ist.Put.data->Iex.Const.con->tag)
   {
     case Ico_U8:	untaintRegister(offset, 8);
@@ -1305,7 +1385,15 @@ void instrumentPutConst(IRStmt* clone, UInt offset)
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
   }
 }
@@ -1320,8 +1408,17 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
-    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n", 
+    if (activeFiltering || !filterDangerous)
+    {
+      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE)\n", 
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
+      queryCounter ++; 
+    }
+    else
+    {
+      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\n", 
+                 curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
+    }
     l = VG_(sprintf)(s, format, curblock, rtmp, curvisited, seg->start);
     my_write(fddanger, s, l);
 
@@ -1336,7 +1433,15 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     taintTemp(tmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     UWord addr = (UWord) loadAddr;
     switch (curNode->temps[tmp].size)
@@ -1387,7 +1492,15 @@ void instrumentWrTmpGet(IRStmt* clone, UInt tmp, UInt offset)
     my_write(fddanger, s, l);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
   }
 }
@@ -1400,7 +1513,15 @@ void instrumentWrTmpRdTmp(IRStmt* clone, UInt ltmp, UInt rtmp)
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Int l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
     my_write(fdtrace, s, l);
@@ -1415,7 +1536,15 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     size2Node* node;
     Char s[256];
@@ -1638,8 +1767,15 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
-    //VG_(printf)("size=%d\n", size);
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
 #if defined(VGA_x86)
     size %= 3;
@@ -2341,7 +2477,15 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     switch (oprt)
     {
@@ -2622,7 +2766,15 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+				  if (activeFiltering || !filterDangerous)
+				  {
+				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+				  }
+				  else 
+				  {
+				    l = VG_(sprintf)(s, ");\n");
+                                  }
+//				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++; 
 				  my_write(fddanger, s, l);
 				} 
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVDIV(64,", curblock, ltmp, curvisited);
@@ -2642,7 +2794,15 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+				  if (activeFiltering || !filterDangerous)
+				  {
+				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+				  }
+				  else 
+				  {
+				    l = VG_(sprintf)(s, ");\n");
+                                  }
+//				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++; 
 				  my_write(fddanger, s, l);
 				} 
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=SBVDIV(64,", curblock, ltmp, curvisited);
@@ -2675,7 +2835,15 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     switch (oprt)
     {
@@ -2684,7 +2852,14 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+				  if (activeFiltering || !filterDangerous)
+				  {
+				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+				  }
+				  else 
+				  {
+				    l = VG_(sprintf)(s, ");\n");
+                                  }
 				  my_write(fddanger, s, l);
 				} 
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVMOD(64,", curblock, ltmp, curvisited);
@@ -2712,7 +2887,15 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+				  if (activeFiltering || !filterDangerous)
+				  {
+				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+				  }
+				  else 
+				  {
+				    l = VG_(sprintf)(s, ");\n");
+                                  }
+//				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++; 
 				  my_write(fddanger, s, l);
 				} 
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=SBVMOD(64,", curblock, ltmp, curvisited);
@@ -2754,7 +2937,15 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     switch (oprt)
     {
@@ -3078,8 +3269,14 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-				  my_write(fddanger, s, l);
+				  if (activeFiltering || !filterDangerous)
+				  {
+				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+				  }
+				  else 
+				  {
+				    l = VG_(sprintf)(s, ");\n");
+                                  }
 				} 
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVDIV(32,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
@@ -3098,7 +3295,14 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+				  if (activeFiltering || !filterDangerous)
+				  {
+				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+				  }
+				  else 
+				  {
+				    l = VG_(sprintf)(s, ");\n");
+                                  }
 				  my_write(fddanger, s, l);
 				} 
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=SBVDIV(32,", curblock, ltmp, curvisited);
@@ -3175,7 +3379,15 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
     taintMemory(addr, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -3277,7 +3489,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 {
   UShort size = curNode->temps[tmp].size;
   UWord addr = (UWord) storeAddr;
-  if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL)
+  if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL )
   {
     Char s[256];
     Int l = 0;
@@ -3285,8 +3497,16 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
-    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n", 
+    if (activeFiltering || !filterDangerous)
+    {
+      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE)\n", 
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
+    }
+    else
+    {
+      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\n", 
+                 curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
+    }
     l = VG_(sprintf)(s, format, curblock, ltmp, curvisited, seg->start);
     my_write(fddanger, s, l);
 
@@ -3296,7 +3516,15 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     taintMemory(addr, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -3397,6 +3625,16 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
 {
   UShort size;
+  Addr64 storeAddr = clone->Ist.Store.data->Iex.Const.con->Ico.U64;
+  if (activeFiltering && suppressSubcalls)
+  {
+    
+    if (storeAddr == curNextIAddr)
+    {
+      activeFiltering = False;
+      returnSubcallAddr = curNextIAddr;
+    }
+  }
   switch (clone->Ist.Store.data->Iex.Const.con->tag)
   {
     case Ico_U8:	size = 8;
@@ -3413,18 +3651,34 @@ void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
   }
 }
 
 void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
 {
-  if (VG_(HT_lookup)(taintedTemps, tmp) != NULL)
+  if (VG_(HT_lookup)(taintedTemps, tmp) != NULL )
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char s[256];
     Int l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, tmp, curvisited);
@@ -3462,9 +3716,9 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
       VG_(write)(fd.res, &divergence, sizeof(Bool));
       VG_(close)(fd.res);
     }
-    if (curdepth >= depth)
+    if (curdepth >= depth && (activeFiltering || !filterConditions))
     {
-      l = VG_(sprintf)(s, "QUERY(FALSE);\n");
+      l = VG_(sprintf)(s, "QUERY(FALSE);\n"); queryCounter ++; 
       my_write(fdtrace, s, l);
     }
     curdepth++;
@@ -3731,10 +3985,13 @@ void instrumentExit(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
   IRExpr* etemp;
   IRExpr* guard = clone->Ist.Exit.guard;
   ULong dst = clone->Ist.Exit.dst->Ico.U64;
+  
+//  ppIRJumpKind(clone->Ist.Exit.jk);
+ // VG_(printf) ("\n");
   switch (guard->tag)
   {
     case Iex_RdTmp:	etemp = adjustSize(sbOut, tyenv, guard);
-			di = unsafeIRDirty_0_N(0, "instrumentExitRdTmp", VG_(fnptr_to_fnentry)(&instrumentExitRdTmp), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), etemp, mkIRExpr_HWord(guard->Iex.RdTmp.tmp), mkIRExpr_HWord(dst)));
+                	di = unsafeIRDirty_0_N(0, "instrumentExitRdTmp", VG_(fnptr_to_fnentry)(&instrumentExitRdTmp), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), etemp, mkIRExpr_HWord(guard->Iex.RdTmp.tmp), mkIRExpr_HWord(dst)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
     default:		break;
@@ -3778,7 +4035,12 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
       /* We don't currently support this case. */
       VG_(tool_panic)("host/guest word size mismatch");
    }
+   newSB = True;
+   printSB = sbIn;
 
+   //VG_(get_and_pp_StackTrace) ( 0, 5);
+   
+  
    /* Set up SB */
    sbOut = deepCopyIRSBExceptStmts(sbIn);
 
@@ -3834,7 +4096,7 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
          iaddrLowerBytes = sbIn->stmts[i]->Ist.IMark.addr & ((long long int) 0x00000000ffffffff);
          basicBlockUpperBytes = (vge->base[0] & ((long long int) 0xffffffff00000000)) >> 32;
          basicBlockLowerBytes = vge->base[0] & ((long long int) 0x00000000ffffffff);
-	 di = unsafeIRDirty_0_N(0, "instrumentIMark", VG_(fnptr_to_fnentry)(&instrumentIMark), mkIRExprVec_5(mkIRExpr_HWord(iaddrLowerBytes), mkIRExpr_HWord(iaddrUpperBytes), mkIRExpr_HWord(basicBlockLowerBytes), mkIRExpr_HWord(basicBlockUpperBytes), mkIRExpr_HWord(tyenv->types_used)));
+	 di = unsafeIRDirty_0_N(0, "instrumentIMark", VG_(fnptr_to_fnentry)(&instrumentIMark), mkIRExprVec_6(mkIRExpr_HWord(iaddrLowerBytes), mkIRExpr_HWord(iaddrUpperBytes), mkIRExpr_HWord(sbIn->stmts[i]->Ist.IMark.len), mkIRExpr_HWord(basicBlockLowerBytes), mkIRExpr_HWord(basicBlockUpperBytes), mkIRExpr_HWord(tyenv->types_used)));
          addStmtToIRSB(sbOut, IRStmt_Dirty(di));
          break;
        case Ist_AbiHint:
@@ -3855,6 +4117,7 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
        case Ist_MBE:
          break;
        case Ist_Exit:
+         
 	 instrumentExit(clone, sbOut, sbOut->tyenv);
          break;
      }
@@ -3895,14 +4158,16 @@ static void tg_fini(Int exitcode)
     }
     VG_(close)(fd);
   }
+
 }
 
 static Bool tg_process_cmd_line_option(Char* arg) 
 { 
   Char* inputfile;
   Char* addr;
+  Char* filtertype;
   if (VG_INT_CLO(arg, "--startdepth", depth))
-  { 
+  {
     depth -= 1;
     return True;
   }
@@ -3913,6 +4178,29 @@ static Bool tg_process_cmd_line_option(Char* arg)
   else if (VG_STR_CLO(arg, "--port", addr))
   {
     port = (UShort) VG_(strtoll10)(addr, NULL);
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--func-addr", addr))
+  {
+    if (funcNum + 1 == funcAddrSize)
+    {
+      Addr64* tmp = (Addr64*) VG_(malloc) ("tmp", 2 * funcAddrSize * sizeof(Addr64));
+      Int i;
+      for (i = 0; i < funcNum; i ++)
+      {
+        tmp[i] = funcAddresses[i];
+      }
+      VG_(free) (funcAddresses);
+      funcAddresses = (Addr64*) VG_(malloc) ("funcAddresses", 2 * funcAddrSize * sizeof(Addr64)); 
+      for (i = 0; i < funcNum; i ++)
+      {
+        funcAddresses[i] = tmp[i];
+      }
+      VG_(free) (tmp);
+    }
+    funcAddresses[funcNum] = (Addr64) VG_(strtoll10)(addr, NULL);
+    funcNum ++;
+    funcAddrSize *= 2;
     return True;
   }
   else if (VG_STR_CLO(arg, "--host", addr))
@@ -3944,6 +4232,28 @@ static Bool tg_process_cmd_line_option(Char* arg)
     node->filename = inputfile;
     node->declared = False;
     VG_(HT_add_node)(inputfiles, node);    
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--func-filter", filtertype))
+  {
+    if (!VG_(strcmp) (filtertype, "all"))
+    {
+      filterConditions = True;
+      filterDangerous = True;
+    }
+    else if (!VG_(strcmp) (filtertype, "conds"))
+    {
+      filterConditions = True;
+    } 
+    else if (!VG_(strcmp) (filtertype, "danger_ops"))
+    {
+      filterDangerous = True;
+    }
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
+  {
+    suppressSubcalls = True;
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--sockets",  sockets))
@@ -4056,6 +4366,10 @@ static void tg_pre_clo_init(void)
   taintedRegisters = VG_(HT_construct)("taintedRegisters"); 
 
   tempSizeTable = VG_(HT_construct)("tempSizeTable");
+  funcAddresses = VG_(malloc)("funcAddresses", 10 * sizeof(Addr64));
+  fnName = (Char *) VG_(malloc) ("fnName", sizeof(Char) * 100);
+  VG_(sprintf) (funcName, "f");
+  
 
   fdtrace = VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
   fddanger = VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;

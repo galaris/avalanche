@@ -71,6 +71,10 @@ OptionConfig *OptionParser::run() const
             string alarm = arg_vec[i].substr(strlen("--alarm="));
             config->setAlarm(atoi(alarm.c_str()));
         }
+        else if (arg_vec[i].find("--func-addr=") != string::npos) {
+            string addr = arg_vec[i].substr(strlen("--func-addr="));
+            config->setFuncAddr(strtoull(addr.data(), NULL, 16));
+        }
         else if (arg_vec[i].find("--tracegrind-alarm=") != string::npos) {
             string alarm = arg_vec[i].substr(strlen("--tracegrind-alarm="));
             config->setTracegrindAlarm(atoi(alarm.c_str()));
@@ -81,6 +85,13 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
+        }
+        else if (arg_vec[i] == "--suppress-subcalls") {
+            config->setSuppressSubcalls();
+        }
+        else if (arg_vec[i].find("--func-filter=") != string::npos) {
+            string filter = arg_vec[i].substr(strlen("--func-filter="));
+            config->setFuncFilter(filter);
         }
         else if (arg_vec[i] == "--verbose") {
             config->setVerbose();

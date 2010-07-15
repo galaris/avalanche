@@ -462,11 +462,28 @@ void ExecutionManager::run()
       tg_depth << "--startdepth=" << fi->startdepth;
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
+   
+     
         
       vector<string> plugin_opts;
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
       plugin_opts.push_back("--dump-prediction=yes");
+
+      if (config->getFuncFilter() != "")
+      {
+        ostringstream tg_filter_type;
+        tg_filter_type << "--func-filter=" << config->getFuncFilter();
+        plugin_opts.push_back(tg_filter_type.str());
+        ostringstream tg_faddr;
+        tg_faddr << "--func-addr=" << config->getFuncAddr();
+        plugin_opts.push_back(tg_faddr.str()); 
+      }
+
+      if (config->getSuppressSubcalls())
+      {
+        plugin_opts.push_back("--suppress-subcalls=yes");
+      }
 
       if (config->usingSockets())
       {
@@ -510,6 +527,7 @@ void ExecutionManager::run()
       {
         plugin_opts.push_back("--check-prediction=yes");
       }
+      
       PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
       tg_start = time(NULL);
       intg = true;
