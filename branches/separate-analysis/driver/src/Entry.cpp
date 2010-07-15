@@ -156,7 +156,13 @@ int main(int argc, char *argv[])
 
     if (opt_config->getVerbose()) logger->enableVerbose();
     
+    time_t starttime;
+    time(&starttime);
+
     LOG(logger, "Avalanche, a dynamic analysis tool.");
+  
+    string t = string(ctime(&starttime));
+    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));  
 
     ExecutionManager manager(opt_config);
     em = &manager;
