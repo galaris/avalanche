@@ -42,10 +42,9 @@ public:
                     useMemcheck(false),
                     suppressSubcalls(false),
                     leaks(false),
-                    funcFilter(std::string("")),
+                    filterType(std::string("")),
                     depth(100),
                     alarm(300),
-                    funcAddr(0),
                     tracegrindAlarm(0),
                     host(std::string("")),
                     port(65536) 
@@ -67,8 +66,8 @@ public:
         port	        = opt_config->port;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
-        funcFilter      = opt_config->funcFilter;
-        funcAddr        = opt_config->funcAddr;
+        filterType      = opt_config->filterType;
+        filterFunctions = opt_config->filterFunctions;
         suppressSubcalls= opt_config->suppressSubcalls;
     }
 
@@ -81,11 +80,11 @@ public:
     const std::string &getValgrind() const
     { return valgrind; }
 
-    void setFuncFilter(const std::string &filter)
-    { funcFilter = filter; }
+    void setFilterType(const std::string &filter)
+    { filterType = filter; }
     
-    const std::string getFuncFilter() const
-    { return funcFilter; }
+    const std::string getFilterType() const
+    { return filterType; }
 
     void setDebug()
     { debug = true; }
@@ -141,11 +140,17 @@ public:
     unsigned int getAlarm() const
     { return alarm; }
 
-    void setFuncAddr(unsigned long long int addr)
-    { this->funcAddr = addr; }
+    void addFilterFunction(const std::string &fn)
+    { filterFunctions.push_back(fn); }
 
-    unsigned long long int getFuncAddr() const
-    { return funcAddr; }
+    const std::vector<std::string> getFilterFunctions() const
+    { return filterFunctions; }
+  
+    std::string getFilterFunction(int i)
+    { return filterFunctions.at(i); }
+
+    int getNumberOfFilterFunctions()
+    { return filterFunctions.size(); }
 
     void setTracegrindAlarm(unsigned int alarm)
     { this->tracegrindAlarm = alarm; }
@@ -188,7 +193,7 @@ private:
     bool                     useMemcheck;
     bool                     leaks;
     bool                     suppressSubcalls;
-    std::string              funcFilter;
+    std::string              filterType;
     std::size_t              depth;
     std::string              valgrind;
     std::vector<std::string> prog_and_arg;
@@ -197,7 +202,7 @@ private:
     unsigned int             tracegrindAlarm;
     std::string		     host;
     unsigned int	     port;
-    unsigned long long int   funcAddr;
+    std::vector<std::string> filterFunctions;
 };
 
 
