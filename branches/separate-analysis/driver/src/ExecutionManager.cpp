@@ -470,14 +470,17 @@ void ExecutionManager::run()
       plugin_opts.push_back(tg_invert_depth.str());
       plugin_opts.push_back("--dump-prediction=yes");
 
-      if (config->getFuncFilter() != "")
+      if (config->getFilterType() != "")
       {
         ostringstream tg_filter_type;
-        tg_filter_type << "--func-filter=" << config->getFuncFilter();
+        tg_filter_type << "--func-filter=" << config->getFilterType();
         plugin_opts.push_back(tg_filter_type.str());
-        ostringstream tg_faddr;
-        tg_faddr << "--func-addr=" << config->getFuncAddr();
-        plugin_opts.push_back(tg_faddr.str()); 
+        for (int i = 0; i < config->getNumberOfFilterFunctions(); i++)
+        {
+          ostringstream tg_fname;
+          tg_fname << "--func-name=" << config->getFilterFunction(i);
+          plugin_opts.push_back(tg_fname.str()); 
+        }
       }
 
       if (config->getSuppressSubcalls())

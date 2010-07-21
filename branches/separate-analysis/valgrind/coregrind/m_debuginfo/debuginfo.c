@@ -1607,7 +1607,7 @@ Char* VG_(describe_IP)(Addr eip, Char* buf, Int n_buf)
       /* Print for humans to read */
       VG_(sprintf)(ibuf,"0x%llX: ", (ULong)eip);
       APPEND(ibuf);
-      if (know_fnname) { 
+      if (know_fnname) {
          APPEND(buf_fn);
          if (!know_srcloc && know_objname) {
             APPEND(" (in ");

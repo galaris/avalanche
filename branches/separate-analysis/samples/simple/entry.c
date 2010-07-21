@@ -12,8 +12,8 @@ int g(char val)
 {
   val ++;
   int y = 14;
-  //if(val < 3)
-  //  j ++;
+  if(val < 3)
+    j ++;
   return 1;
 }
 
@@ -21,9 +21,8 @@ int f(char val)
 {
   int x = 90;
   x += 11;
-  if(val < 4)
-     j ++;
-  //l(val);
+  //if(val < 4)
+  //   j ++;
   g(val);
   return 1;
 }
@@ -35,6 +34,7 @@ int main(int argc, char** argv)
   int  fd1 = open(argv[1], O_RDONLY | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   char local[4];
   read(fd1, local, 3);
+  //printf("%d", (int)local[0]);
   if(local[0] < 5)
     j ++;
   //l(local[0]);
@@ -51,7 +51,7 @@ int main(int argc, char** argv)
     i = (int*) malloc(sizeof(int));
   *i = 33;
   //printf("%d %d %d\n", local[0], local[1], j);
- 
+
   return 0;
 }
 
