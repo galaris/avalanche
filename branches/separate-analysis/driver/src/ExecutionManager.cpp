@@ -79,6 +79,7 @@ int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
+vector <FileBuffer> exploitLogs;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -225,6 +226,8 @@ int ExecutionManager::checkAndScore(Input* input)
     plugin_opts.push_back(cv_alarm.str());
   }
 
+  plugin_opts.push_back("--log-file=execution.log");
+
   PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
   curSockets = 0;
   cv_start = time(NULL);
@@ -234,31 +237,66 @@ int ExecutionManager::checkAndScore(Input* input)
   cv_end = time(NULL);
   cv_time += cv_end - cv_start;
   FileBuffer* mc_output;
+  bool infoAvailable = false;
+  bool sameExploit = false;
   if ((exitCode == -1) && !killed)
   {
+    FileBuffer cv_output("execution.log");
+    infoAvailable = cv_output.filterCovgrindOutput();
+    if (infoAvailable)
+    {
+      for (vector <FileBuffer>::iterator fb = exploitLogs.begin(); fb != exploitLogs.end(); fb ++)
+      {
+        if (*fb == cv_output)
+        {
+          sameExploit = true;
+          break;
+        }
+      }
+      if (!sameExploit) exploitLogs.push_back(cv_output);
+    }
     time_t exploittime;
     time(&exploittime);
     string t = string(ctime(&exploittime));
     REPORT(logger, "Crash detected.");
     LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
-    if (config->usingSockets() || config->usingDatagrams())
+    if (sameExploit)
     {
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << "exploit_" << exploits;
-      REPORT(logger, "Dumping an exploit to file " << ss.str());
-      input->dumpExploit((char*) ss.str().c_str(), false);
+      REPORT(logger, "Bug was detected previously.");
     }
     else
     {
-      for (int i = 0; i < input->files.size(); i++)
+      if (config->usingSockets() || config->usingDatagrams())
       {
         stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits << "_" << i;
-        REPORT(logger, "dumping an exploit to file " << ss.str());
-        input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+        ss << "exploit_" << exploits;
+        REPORT(logger, "Dumping an exploit to file " << ss.str());
+        input->dumpExploit((char*) ss.str().c_str(), false);
+        if (infoAvailable)
+        {
+          ss << ".log";
+          cv_output.dumpFile((char*) ss.str().c_str());
+          REPORT(logger, "Dumping exploit info to file " << ss.str());
+        }
       }
+      else
+      {
+        for (int i = 0; i < input->files.size(); i++)
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "exploit_" << exploits << "_" << i;
+          REPORT(logger, "Dumping an exploit to file " << ss.str());
+          input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+          if (infoAvailable)
+          {
+            ss << ".log";
+            cv_output.dumpFile((char*) ss.str().c_str());
+            REPORT(logger, "Dumping exploit info to file " << ss.str());
+          }
+        }
+      }
+      exploits++;
     }
-    exploits++;
   }
   else if (config->usingMemcheck())
   {
@@ -438,6 +476,15 @@ void ExecutionManager::run()
     score = checkAndScore(initial);
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
+  
+    int dumpRuns = 0;
+    
+    if (config->getDumpCalls())
+    {
+      dumpRuns = config->getDumpRuns();
+      int fd = open("calldump.log", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      close(fd);
+    }
 
     while (!inputs.empty()) 
     {
@@ -463,12 +510,15 @@ void ExecutionManager::run()
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
    
-     
-        
       vector<string> plugin_opts;
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
       plugin_opts.push_back("--dump-prediction=yes");
+
+      if (config->getDumpCalls())
+      {
+        plugin_opts.push_back("--dump-calls=yes");
+      }
 
       if (config->getFilterType() != "")
       {
@@ -480,6 +530,12 @@ void ExecutionManager::run()
           ostringstream tg_fname;
           tg_fname << "--func-name=" << config->getFilterFunction(i);
           plugin_opts.push_back(tg_fname.str()); 
+        }
+        if (config->getFilterFile() != "")
+        {
+          ostringstream tg_filename;
+          tg_filename << "--filter-file=" << config->getFilterFile();
+          plugin_opts.push_back(tg_filename.str());
         }
       }
 
@@ -594,7 +650,12 @@ void ExecutionManager::run()
           close(divfd);
         }
       }
-
+ 
+      if (config->getDumpCalls())
+      {
+        dumpRuns --;
+        if (dumpRuns <= 0) break;
+      }
       int actualfd = open("actual.log", O_RDWR);
       bool* actual = new bool[fi->startdepth - 1 + config->getDepth()];
       read(actualfd, actual, (fi->startdepth - 1 + config->getDepth()) * sizeof(bool));

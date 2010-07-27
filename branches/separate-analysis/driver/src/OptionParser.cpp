@@ -72,8 +72,12 @@ OptionConfig *OptionParser::run() const
             config->setAlarm(atoi(alarm.c_str()));
         }
         else if (arg_vec[i].find("--func-name=") != string::npos) {
-            string addr = arg_vec[i].substr(strlen("--func-addr="));
-            config->addFilterFunction(addr);
+            string name = arg_vec[i].substr(strlen("--func-addr="));
+            config->addFilterFunction(name);
+        }
+        else if (arg_vec[i].find("--filter-file=") != string::npos) {
+            string fname = arg_vec[i].substr(strlen("--filter-file="));
+            config->setFilterFile(fname);
         }
         else if (arg_vec[i].find("--tracegrind-alarm=") != string::npos) {
             string alarm = arg_vec[i].substr(strlen("--tracegrind-alarm="));
@@ -88,6 +92,13 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i] == "--suppress-subcalls") {
             config->setSuppressSubcalls();
+        }
+        else if (arg_vec[i] == "--dump-calls") {
+            config->setDumpCalls();
+        }
+        else if (arg_vec[i].find("--dump-runs=") != string::npos) {
+            string num = arg_vec[i].substr(strlen("--dump-runs="));
+            config->setDumpRuns(atoi(num.c_str()));
         }
         else if (arg_vec[i].find("--func-filter=") != string::npos) {
             string filter = arg_vec[i].substr(strlen("--func-filter="));

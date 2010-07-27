@@ -284,10 +284,9 @@ static void cv_pre_clo_init(void)
   VG_(track_post_mem_write)(cv_track_post_mem_write);
   VG_(needs_syscall_wrapper)(pre_call,
 			     post_call);
+  basicBlocksTable = VG_(HT_construct)("basicBlocksTable");
 
-   basicBlocksTable = VG_(HT_construct)("basicBlocksTable");
-
-   /* No needs, no core events to track */
+  /* No needs, no core events to track */
 }
 
 VG_DETERMINE_INTERFACE_VERSION(cv_pre_clo_init)
