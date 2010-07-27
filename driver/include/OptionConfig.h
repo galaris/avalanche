@@ -41,8 +41,11 @@ public:
                     datagrams(false),
                     useMemcheck(false),
                     suppressSubcalls(false),
+                    dumpCalls(false),
+                    dumpRuns(1),
                     leaks(false),
                     filterType(std::string("")),
+                    filterFile(std::string("")),
                     depth(100),
                     alarm(300),
                     tracegrindAlarm(0),
@@ -67,8 +70,11 @@ public:
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         filterType      = opt_config->filterType;
+        filterFile      = opt_config->filterFile;
         filterFunctions = opt_config->filterFunctions;
         suppressSubcalls= opt_config->suppressSubcalls;
+        dumpCalls       = opt_config->dumpCalls;
+        dumpRuns        = opt_config->dumpRuns;
     }
 
     bool empty() const
@@ -86,11 +92,23 @@ public:
     const std::string getFilterType() const
     { return filterType; }
 
+    void setFilterFile(const std::string &fileName)
+    { filterFile = fileName; }
+    
+    const std::string getFilterFile() const
+    { return filterFile; }
+
     void setDebug()
     { debug = true; }
     
     bool getDebug() const
     { return debug; }
+
+    void setDumpCalls()
+    { dumpCalls = true; }
+
+    bool getDumpCalls() const
+    { return dumpCalls; }
 
     bool getSuppressSubcalls() const
     { return suppressSubcalls; }
@@ -139,6 +157,12 @@ public:
 
     unsigned int getAlarm() const
     { return alarm; }
+
+    void setDumpRuns(unsigned int num)
+    { dumpRuns = num; }
+
+    unsigned int getDumpRuns() const
+    { return dumpRuns; }
 
     void addFilterFunction(const std::string &fn)
     { filterFunctions.push_back(fn); }
@@ -193,7 +217,9 @@ private:
     bool                     useMemcheck;
     bool                     leaks;
     bool                     suppressSubcalls;
+    bool                     dumpCalls;
     std::string              filterType;
+    std::string              filterFile;
     std::size_t              depth;
     std::string              valgrind;
     std::vector<std::string> prog_and_arg;
@@ -203,6 +229,7 @@ private:
     std::string		     host;
     unsigned int	     port;
     std::vector<std::string> filterFunctions;
+    unsigned int             dumpRuns;
 };
 
 

@@ -46,12 +46,15 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_machine.h"
 #include "pub_tool_threadstate.h"
+#include "pub_tool_debuginfo.h"
+#include "pub_tool_stacktrace.h"
 #include "libvex_ir.h"
 
 #include <avalanche.h>
 
 #include "buffer.h"
 #include "copy.h"
+#include "parser.h"
 
 #define CUT_ASSERT_WITH_QUERY
 
@@ -123,15 +126,14 @@ Bool filterConditions = False;
 Bool filterDangerous = False;
 
 Bool suppressSubcalls = False;
-Bool checkFilterFunctionEntry = True;
 
 VgHashTable funcNames;
+VgHashTable funcSignatures;
 
 Char* diFunctionName;
 
-Bool checkLocation = True;
-Bool checkParameters = False;
-Bool ignoreTemplates = True;
+Bool dumpCalls;
+Int fdfuncFilter;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -189,113 +191,6 @@ Int memory = 0;
 Int registers = 0;
 UInt curvisited;
 
-Bool transformFnName()
-{
-  Int i, j = 0;
-  Char res[256];
-  Char lastSymbol;
-  Int angleBracketBalance = 0;
-  Int parenthesesBalance = 0;
-  Int initialLength = VG_(strlen) (diFunctionName);
-  Bool isParamPart = False;
-  Bool isLocationPart = False;
-  Bool skipSymbol = False;
-  Bool lastSymbolStatus = False;
-  Bool printDoubleSymbol = False;
-  Bool stopEverything = False;
-  Bool isConst = VG_(strcmp) (diFunctionName + VG_(strlen) (diFunctionName) - 6, " const") == 0;
-  if (isConst)
-  {
-    initialLength -= 7;
-  }
-  for (i = initialLength; i >= 0; i --)
-  {
-    switch(diFunctionName[i])
-    {
-      case ')': isParamPart = True;
-                parenthesesBalance ++;
-                break;
-      case '(': parenthesesBalance --;
-                if (parenthesesBalance == 0)
-                {
-                  isParamPart = False;
-                  if (!checkParameters) skipSymbol = True;
-                }
-                break;
-      case '>': angleBracketBalance ++;
-                if (lastSymbol == '>')
-                {
-                  printDoubleSymbol = True;
-                  angleBracketBalance -= 2;
-                }
-                break;
-      case '<': angleBracketBalance --;
-                if (angleBracketBalance == 0 && ignoreTemplates) skipSymbol = True;
-                if (lastSymbol == '<')
-                {
-                  printDoubleSymbol = True;
-                  angleBracketBalance += 2;
-                }
-                break;
-      case ':': if (!isLocationPart && !isParamPart)
-                {
-                  isLocationPart = True;
-                  if (!checkLocation)
-                  {
-                    stopEverything = True;
-                  }
-                }
-                break;
-      case ' ': if (isLocationPart && angleBracketBalance == 0 && parenthesesBalance == 0)
-                {
-                  stopEverything = True;
-                }
-                break;
-      default:  break;
-    }
-    if (stopEverything)
-    {
-      break;
-    }
-    lastSymbol = diFunctionName[i];
-    if (printDoubleSymbol)
-    {
-      res[j ++] = lastSymbol;
-      if(!lastSymbolStatus)
-      {
-        res[j ++] = lastSymbol;
-      }
-      lastSymbolStatus = True;
-      printDoubleSymbol = False;
-      skipSymbol = False;
-      continue;
-    }
-    if ((isParamPart && !checkParameters) || (isLocationPart && !checkLocation) ||
-        ((angleBracketBalance != 0) && ignoreTemplates) || skipSymbol)
-    {
-      skipSymbol = False;
-      lastSymbolStatus = False;
-      continue;
-    }
-    res[j ++] = diFunctionName[i];
-    lastSymbolStatus = True;
-  }
-  j --;
-  if (isConst) initialLength += 2;
-  for (i = 0; i < initialLength; i ++)
-  {
-    if (j >= 0)
-    {
-      diFunctionName[i] = res[j --];
-    }
-    else
-    {
-      diFunctionName[i] = 0;
-      break;
-    }
-  }
-}
-
 Bool getFunctionName(Addr addr, Bool onlyEntry)
 {
   Bool continueFlag = False;
@@ -309,7 +204,6 @@ Bool getFunctionName(Addr addr, Bool onlyEntry)
   }
   if (continueFlag)
   {
-    transformFnName();
     return True;
   }
   return False;
@@ -319,8 +213,12 @@ Bool useFiltering()
 {
   if (suppressSubcalls)
   {
-    getFunctionName(curIAddr, False);
-    return (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL);
+    memset(diFunctionName, 0, VG_(strlen) (diFunctionName));
+    if (getFunctionName(curIAddr, False))
+    {
+      return (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName));
+    }
+    return False;
   }
 #define STACK_LOOKUP_DEPTH 30
   Addr ips[STACK_LOOKUP_DEPTH];
@@ -332,10 +230,10 @@ Bool useFiltering()
   for (i = 0; i < found; i ++)
   {
     getFunctionName(ips[i], False);
-    if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL)
+    if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
     {
       return True;
-    }  
+    }
   }
   return False;
 }
@@ -567,8 +465,55 @@ void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt ilen, UInt
   Addr64 addr = (((Addr64) iaddrUpperBytes) << 32) ^ iaddrLowerBytes;
   Addr64 bbaddr = (((Addr64) basicBlockUpperBytes) << 32) ^ basicBlockLowerBytes;
   curIAddr = addr;
+  Bool printName = False;
+  if (dumpCalls)
+  {
+    if (printName = getFunctionName(addr, True))
+    {
+      if (cutAffixes(diFunctionName))
+      {
+        Char tmp[256];
+        VG_(strcpy) (tmp, diFunctionName);
+        cutTemplates(tmp);
+        leaveFnName(tmp);
+        if (VG_(HT_lookup) (funcNames, hashCode(tmp)) == NULL)
+        {
+          Char b[256];
+          Char obj[256];
+          Bool isStandard = False;
+          if (VG_(get_objname) ((Addr)(addr), obj, 256))
+          {
+          //  VG_(printf) ("%s\n", obj);
+            isStandard = isStandardFunction(obj);
+          }
+          if (!isStandard)
+          {
+            Int l;
+            if (isCPPFunction(diFunctionName))
+            {
+              l = VG_(sprintf) (b, "$%s\n", diFunctionName);
+            }
+            else
+            { 
+              l = VG_(sprintf) (b, "%s\n", diFunctionName);
+            }
+            my_write(fdfuncFilter, b, l);
+            fnNode* node;
+            node = VG_(malloc)("fnNode", sizeof(fnNode));
+            node->key = hashCode(tmp);
+            node->data = NULL;
+            VG_(HT_add_node) (funcNames, node);
+          }
+        }
+      }
+    }
+  }
 #ifdef CALL_STACK_PRINTOUT
-  if (getFunctionName(addr, True))
+  if (!dumpCalls)
+  {
+    printName = getFunctionName(addr, True);
+  }
+  if (printName)
   {
     VG_(printf) ("%s\n", diFunctionName);
   }
@@ -3915,6 +3860,10 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     {
       dump(fdtrace);
       dump(fddanger);
+      if (dumpCalls)
+      {
+        dump(fdfuncFilter);
+      }
       if (dumpPrediction)
       {
         SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
@@ -4297,7 +4246,7 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
        case Ist_MBE:
          break;
        case Ist_Exit:
-	 instrumentExit(clone, sbOut, sbOut->tyenv);
+         instrumentExit(clone, sbOut, sbOut->tyenv);
          break;
      }
      addStmtToIRSB(sbOut, sbIn->stmts[i]);
@@ -4309,6 +4258,10 @@ static void tg_fini(Int exitcode)
 {
   dump(fdtrace);
   dump(fddanger);
+  if (dumpCalls)
+  {
+    dump(fdfuncFilter);
+  }
   if (dumpPrediction)
   {
     SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
@@ -4343,6 +4296,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
   Char* addr;
   Char* filtertype;
   Char* funcname;
+  Char* filterfile;
   if (VG_INT_CLO(arg, "--startdepth", depth))
   {
     depth -= 1;
@@ -4359,16 +4313,14 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_STR_CLO(arg, "--func-name", funcname))
   {
-    if (funcNames == NULL)
-    {
-      funcNames = VG_(HT_construct) ("funcNames");
-    }
-    stringNode* node;
-    node = VG_(malloc)("stringNode", sizeof(stringNode));
-    node->key = hashCode(funcname);
-    node->filename = NULL;
-    node->declared = False;
-    VG_(HT_add_node) (funcNames, node);
+    parseFnName(funcname);
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--filter-file", filterfile))
+  {
+    Int fd = VG_(open)(filterfile, VKI_O_RDWR, 0).res;
+    parseFuncFilterFile(fd);
+    VG_(close)(fd);
     return True;
   }
   else if (VG_STR_CLO(arg, "--host", addr))
@@ -4417,6 +4369,17 @@ static Bool tg_process_cmd_line_option(Char* arg)
     {
       filterDangerous = True;
     }
+    else
+    {
+      return False;
+    }
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--dump-calls", dumpCalls))
+  {
+    dumpCalls = True;
+    fdfuncFilter = VG_(open) ("calldump.log", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+    parseFuncFilterFile(fdfuncFilter);
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
@@ -4526,6 +4489,8 @@ static void tg_pre_clo_init(void)
   VG_(track_post_mem_write)(tg_track_post_mem_write);
   VG_(track_new_mem_mmap)(tg_track_mem_mmap);
 
+  VG_(needs_core_errors) ();
+
   VG_(needs_command_line_options)(tg_process_cmd_line_option,
                                   tg_print_usage,
                                   tg_print_debug_usage);
@@ -4534,9 +4499,12 @@ static void tg_pre_clo_init(void)
   taintedRegisters = VG_(HT_construct)("taintedRegisters");
 
   tempSizeTable = VG_(HT_construct)("tempSizeTable");
-
-  diFunctionName = VG_(malloc) ("diFunctionName", 256 * sizeof(Char));
+ 
+  funcNames = VG_(HT_construct)("funcNames");
+  funcSignatures = VG_(HT_construct)("funcSignatures");
   
+  diFunctionName = VG_(malloc) ("diFunctionName", 256 * sizeof(Char));
+      
   fdtrace = VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
   fddanger = VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
 #if defined(VGA_x86)

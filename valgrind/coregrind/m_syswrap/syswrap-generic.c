@@ -3643,6 +3643,10 @@ POST(sys_open)
        {
          j += 7;
        }
+       /*else if (((Char*) ARG1)[i] == '-')
+       {
+         j += 8;
+       }*/
        else 
        {
          j++;
@@ -3674,6 +3678,18 @@ POST(sys_open)
          name[j + 6] = '_';
          j += 7;
        }
+       /*else if (((Char*) ARG1)[i] == '-')
+       {
+         name[j] = '_';
+         name[j + 1] = 'h';
+         name[j + 2] = 'y';
+         name[j + 3] = 'p';
+         name[j + 4] = 'h';
+         name[j + 5] = 'e';
+         name[j + 6] = 'n';
+         name[j + 6] = '_';
+         j += 8;
+       }*/
        else 
        {
          name[j] = ((Char*) ARG1)[i];

@@ -39,6 +39,8 @@ public:
   //int predictionSize;
   //FileBuffer* parent;
 
+  friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
+
   FileBuffer(char* name);
 
   FileBuffer(const FileBuffer& other);
@@ -46,8 +48,10 @@ public:
   virtual FileBuffer* forkInput(char* stpOutputFile);
 
   virtual void dumpFile(char* name = NULL);
-  
+
   virtual void applySTPSolution(char* buf);
+  
+  bool filterCovgrindOutput();
 
   ~FileBuffer();
 

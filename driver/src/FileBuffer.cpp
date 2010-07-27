@@ -26,12 +26,13 @@
 
 #include <cstddef>
 #include <string>
-
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <iostream>
 
 FileBuffer::FileBuffer(char* name)
 {
@@ -119,6 +120,61 @@ void FileBuffer::applySTPSolution(char* buf)
       pointer = brack + 5;
     }
   }
+}
+
+bool FileBuffer::filterCovgrindOutput()
+{
+  char* checkPId = buf;
+  int eqNum = 0;
+  while (checkPId != NULL)
+  {
+    if (*checkPId == '=') eqNum ++;
+    if (eqNum == 4) break;
+    checkPId ++;
+  }
+  int skipLength = checkPId - buf + 2;
+  char* bug_start = strstr(buf, "Process terminating");
+  char* last_bug_line = bug_start;
+  char* tmp;
+  while ((tmp = strstr(last_bug_line, "by 0x")) != NULL)
+  {
+    last_bug_line = tmp + 1;
+  }
+  if (last_bug_line == NULL || last_bug_line == bug_start)
+  {
+    last_bug_line = strstr(buf, "at 0x");
+    if (last_bug_line == NULL) return false;
+  }
+  char* last_bug_sym = strchr(last_bug_line, '\n');
+  if (last_bug_sym == NULL) return false;
+  if (last_bug_sym <= bug_start + 1) return false;
+  char* new_buf = (char*) malloc (last_bug_sym - bug_start);
+  int i = 0, j;
+  while (bug_start < last_bug_sym && bug_start != NULL)
+  {
+    if (*bug_start == '=')
+    {
+      bug_start += skipLength;
+      continue;
+    }
+    new_buf[i ++] = *bug_start;
+    bug_start ++;
+  }
+  free(buf);
+  buf = (char*) malloc(i + 1);
+  for (j = 0; j < i; j ++)
+  {
+    buf[j] = new_buf[j];
+  }
+  buf[j] = '\0';
+  size = i;
+  free(new_buf);
+  return true;
+}
+
+bool operator == (const FileBuffer& arg1, const FileBuffer& arg2)
+{
+  return (strcmp(arg1.buf, arg2.buf) == 0);
 }
 
 FileBuffer::~FileBuffer()
