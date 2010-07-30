@@ -73,11 +73,15 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i].find("--func-name=") != string::npos) {
             string name = arg_vec[i].substr(strlen("--func-addr="));
-            config->addFilterFunction(name);
+            config->addFuncFilterUnit(name);
         }
-        else if (arg_vec[i].find("--filter-file=") != string::npos) {
-            string fname = arg_vec[i].substr(strlen("--filter-file="));
-            config->setFilterFile(fname);
+        else if (arg_vec[i].find("--func-filter-file=") != string::npos) {
+            string fname = arg_vec[i].substr(strlen("--func-filter-file="));
+            config->setFuncFilterFile(fname);
+        }
+        else if (arg_vec[i].find("--input-filter-file=") != string::npos) {
+            string fname = arg_vec[i].substr(strlen("--input-filter-file="));
+            config->setInputFilterFile(fname);
         }
         else if (arg_vec[i].find("--tracegrind-alarm=") != string::npos) {
             string alarm = arg_vec[i].substr(strlen("--tracegrind-alarm="));
@@ -102,7 +106,7 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i].find("--func-filter=") != string::npos) {
             string filter = arg_vec[i].substr(strlen("--func-filter="));
-            config->setFilterType(filter);
+            config->setFuncFilterType(filter);
         }
         else if (arg_vec[i] == "--verbose") {
             config->setVerbose();

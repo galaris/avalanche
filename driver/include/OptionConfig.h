@@ -44,8 +44,8 @@ public:
                     dumpCalls(false),
                     dumpRuns(1),
                     leaks(false),
-                    filterType(std::string("")),
-                    filterFile(std::string("")),
+                    funcFilterType(std::string("")),
+                    funcFilterFile(std::string("")),
                     depth(100),
                     alarm(300),
                     tracegrindAlarm(0),
@@ -69,12 +69,13 @@ public:
         port	        = opt_config->port;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
-        filterType      = opt_config->filterType;
-        filterFile      = opt_config->filterFile;
-        filterFunctions = opt_config->filterFunctions;
+        funcFilterType      = opt_config->funcFilterType;
+        funcFilterFile      = opt_config->funcFilterFile;
+        funcFilterUnits = opt_config->funcFilterUnits;
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
         dumpRuns        = opt_config->dumpRuns;
+        inputFilterFile = opt_config->inputFilterFile;
     }
 
     bool empty() const
@@ -86,17 +87,23 @@ public:
     const std::string &getValgrind() const
     { return valgrind; }
 
-    void setFilterType(const std::string &filter)
-    { filterType = filter; }
+    void setFuncFilterType(const std::string &filter)
+    { funcFilterType = filter; }
     
-    const std::string getFilterType() const
-    { return filterType; }
+    const std::string getFuncFilterType() const
+    { return funcFilterType; }
 
-    void setFilterFile(const std::string &fileName)
-    { filterFile = fileName; }
+    void setFuncFilterFile(const std::string &fileName)
+    { funcFilterFile = fileName; }
     
-    const std::string getFilterFile() const
-    { return filterFile; }
+    const std::string getFuncFilterFile() const
+    { return funcFilterFile; }
+
+    void setInputFilterFile(const std::string &fileName)
+    { inputFilterFile = fileName; }
+    
+    const std::string getInputFilterFile() const
+    { return inputFilterFile; }
 
     void setDebug()
     { debug = true; }
@@ -164,17 +171,17 @@ public:
     unsigned int getDumpRuns() const
     { return dumpRuns; }
 
-    void addFilterFunction(const std::string &fn)
-    { filterFunctions.push_back(fn); }
+    void addFuncFilterUnit(const std::string &fn)
+    { funcFilterUnits.push_back(fn); }
 
-    const std::vector<std::string> getFilterFunctions() const
-    { return filterFunctions; }
+    const std::vector<std::string> getfuncFilterUnits() const
+    { return funcFilterUnits; }
   
-    std::string getFilterFunction(int i)
-    { return filterFunctions.at(i); }
+    std::string getFuncFilterUnit(int i)
+    { return funcFilterUnits.at(i); }
 
-    int getNumberOfFilterFunctions()
-    { return filterFunctions.size(); }
+    int getFuncFilterUnitsNum()
+    { return funcFilterUnits.size(); }
 
     void setTracegrindAlarm(unsigned int alarm)
     { this->tracegrindAlarm = alarm; }
@@ -218,8 +225,8 @@ private:
     bool                     leaks;
     bool                     suppressSubcalls;
     bool                     dumpCalls;
-    std::string              filterType;
-    std::string              filterFile;
+    std::string              funcFilterType;
+    std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
     std::vector<std::string> prog_and_arg;
@@ -228,8 +235,9 @@ private:
     unsigned int             tracegrindAlarm;
     std::string		     host;
     unsigned int	     port;
-    std::vector<std::string> filterFunctions;
+    std::vector<std::string> funcFilterUnits;
     unsigned int             dumpRuns;
+    std::string              inputFilterFile;
 };
 
 

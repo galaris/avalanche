@@ -121,7 +121,7 @@ typedef struct _sizeNode sizeNode;
 
 UInt queryCounter = 0;
 
-Addr64 curIAddr;
+Addr curIAddr;
 Bool filterConditions = False;
 Bool filterDangerous = False;
 
@@ -131,9 +131,14 @@ VgHashTable funcNames;
 VgHashTable funcSignatures;
 
 Char* diFunctionName;
+Char* diVarName;
+
+Bool newSB;
+IRSB* printSB;
 
 Bool dumpCalls;
 Int fdfuncFilter;
+Int fdinputFilter = -1;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -191,12 +196,16 @@ Int memory = 0;
 Int registers = 0;
 UInt curvisited;
 
-Bool getFunctionName(Addr addr, Bool onlyEntry)
+Bool getFunctionName(Addr addr, Bool onlyEntry, Bool showOffset)
 {
   Bool continueFlag = False;
   if (onlyEntry)
   {
     continueFlag = VG_(get_fnname_if_entry) (addr, diFunctionName, 256);
+  }
+  else if (showOffset)
+  {
+    continueFlag = VG_(get_fnname_w_offset) (addr, diFunctionName, 256);
   }
   else
   {
@@ -214,7 +223,7 @@ Bool useFiltering()
   if (suppressSubcalls)
   {
     memset(diFunctionName, 0, VG_(strlen) (diFunctionName));
-    if (getFunctionName(curIAddr, False))
+    if (getFunctionName(curIAddr, False, False))
     {
       return (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName));
     }
@@ -229,10 +238,13 @@ Bool useFiltering()
   Int i;
   for (i = 0; i < found; i ++)
   {
-    getFunctionName(ips[i], False);
-    if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
+    memset(diFunctionName, 0, VG_(strlen) (diFunctionName));
+    if (getFunctionName(ips[i], False, False))
     {
-      return True;
+      if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
+      {
+        return True;
+      }
     }
   }
   return False;
@@ -468,14 +480,13 @@ void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt ilen, UInt
   Bool printName = False;
   if (dumpCalls)
   {
-    if (printName = getFunctionName(addr, True))
+    if (printName = getFunctionName(addr, True, False))
     {
       if (cutAffixes(diFunctionName))
       {
         Char tmp[256];
         VG_(strcpy) (tmp, diFunctionName);
         cutTemplates(tmp);
-        leaveFnName(tmp);
         if (VG_(HT_lookup) (funcNames, hashCode(tmp)) == NULL)
         {
           Char b[256];
@@ -511,7 +522,7 @@ void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt ilen, UInt
 #ifdef CALL_STACK_PRINTOUT
   if (!dumpCalls)
   {
-    printName = getFunctionName(addr, True);
+    printName = getFunctionName(addr, True, False);
   }
   if (printName)
   {
@@ -1057,11 +1068,21 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
 void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
 {
   UWord index;
+  Char curMaskByte;
+  if (fdinputFilter != -1)
+  {
+    VG_(lseek) (fdinputFilter, curoffs, VKI_SEEK_SET);
+  }
   if (isRead && (curfile != NULL))
   {
     for (index = a; (index < (a + size)) && (curoffs + (index - a) < cursize); index += 1)
     {
-      taintMemoryFromFile(index, curoffs + (index - a));
+      if (fdinputFilter != -1)
+      {
+        VG_(read) (fdinputFilter, &curMaskByte, sizeof(Char));
+        if (curMaskByte) taintMemoryFromFile(index, curoffs + (index - a));
+      }
+      else taintMemoryFromFile(index, curoffs + (index - a));
     }
   }
   else if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
@@ -1120,11 +1141,21 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
 void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_handle)
 {
   Addr index = a;
+  Char curMaskByte;
+  if (fdinputFilter != -1)
+  {
+    VG_(lseek) (fdinputFilter, 0, VKI_SEEK_SET);
+  }
   if (isMap && (curfile != NULL))
   {
     for (index = a; (index < (a + size)) && (index < (a + cursize)); index += 1)
     {
-      taintMemoryFromFile(index, index - a);
+      if (fdinputFilter != -1)
+      {
+        VG_(read) (fdinputFilter, &curMaskByte, sizeof(Char));
+        if (curMaskByte) taintMemoryFromFile(index, index - a);
+      }
+      else taintMemoryFromFile(index, index - a);
     }
   }
 }
@@ -1504,7 +1535,6 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     my_write(fddanger, s, l);
 
   }
-  //VG_(printf)("checking addr loadAddr=%lx ", loadAddr);
   taintedNode* t = VG_(HT_lookup)(taintedMemory, loadAddr);
   //VG_(printf)("t=%p\n", t);
   if (t != NULL)
@@ -1525,6 +1555,7 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     }
 #endif
     UWord addr = (UWord) loadAddr;
+    
     switch (curNode->temps[tmp].size)
     {
 #if defined(VGA_x86)
@@ -4169,7 +4200,12 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
       /* We don't currently support this case. */
       VG_(tool_panic)("host/guest word size mismatch");
    }
-   
+
+#ifdef TAINTED_BLOCKS_PRINTOUT   
+   newSB = True;
+   printSB = sbIn;
+#endif
+
    /* Set up SB */
    sbOut = deepCopyIRSBExceptStmts(sbIn);
 
@@ -4287,7 +4323,7 @@ static void tg_fini(Int exitcode)
     }
     VG_(close)(fd);
   }
-
+  if (fdinputFilter != 0) VG_(close) (fdinputFilter);
 }
 
 static Bool tg_process_cmd_line_option(Char* arg)
@@ -4296,7 +4332,8 @@ static Bool tg_process_cmd_line_option(Char* arg)
   Char* addr;
   Char* filtertype;
   Char* funcname;
-  Char* filterfile;
+  Char* funcfilterfile;
+  Char* inputfilterfile;
   if (VG_INT_CLO(arg, "--startdepth", depth))
   {
     depth -= 1;
@@ -4316,11 +4353,16 @@ static Bool tg_process_cmd_line_option(Char* arg)
     parseFnName(funcname);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--filter-file", filterfile))
+  else if (VG_STR_CLO(arg, "--func-filter-file", funcfilterfile))
   {
-    Int fd = VG_(open)(filterfile, VKI_O_RDWR, 0).res;
+    Int fd = VG_(open)(funcfilterfile, VKI_O_RDWR, 0).res;
     parseFuncFilterFile(fd);
     VG_(close)(fd);
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--input-filter-file", inputfilterfile))
+  {
+    fdinputFilter = VG_(open)(inputfilterfile, VKI_O_RDONLY, 0).res;
     return True;
   }
   else if (VG_STR_CLO(arg, "--host", addr))
@@ -4490,6 +4532,7 @@ static void tg_pre_clo_init(void)
   VG_(track_new_mem_mmap)(tg_track_mem_mmap);
 
   VG_(needs_core_errors) ();
+  VG_(needs_var_info) ();
 
   VG_(needs_command_line_options)(tg_process_cmd_line_option,
                                   tg_print_usage,

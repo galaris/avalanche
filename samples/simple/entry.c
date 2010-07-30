@@ -12,17 +12,17 @@ int g(char val)
 {
   val ++;
   int y = 14;
-  if(val < 3)
+  if(val < 23)
     j ++;
   return 1;
 }
 
-int f(char val)
+int f(int y, char val, int* ee)
 {
+  y = *ee;
+  y ++;
   int x = 90;
   x += 11;
-  //if(val < 4)
-  //   j ++;
   g(val);
   return 1;
 }
@@ -39,7 +39,7 @@ int main(int argc, char** argv)
     j ++;
   //l(local[0]);
   //f(local[0]);
-  f(local[1]);
+  f(k, local[1], &k);
   //if(local[1] < 3)
   //  j ++;
   //if(local[2] < 1)
