@@ -520,23 +520,30 @@ void ExecutionManager::run()
         plugin_opts.push_back("--dump-calls=yes");
       }
 
-      if (config->getFilterType() != "")
+      if (config->getFuncFilterType() != "")
       {
         ostringstream tg_filter_type;
-        tg_filter_type << "--func-filter=" << config->getFilterType();
+        tg_filter_type << "--func-filter=" << config->getFuncFilterType();
         plugin_opts.push_back(tg_filter_type.str());
-        for (int i = 0; i < config->getNumberOfFilterFunctions(); i++)
+        for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
         {
           ostringstream tg_fname;
-          tg_fname << "--func-name=" << config->getFilterFunction(i);
+          tg_fname << "--func-name=" << config->getFuncFilterUnit(i);
           plugin_opts.push_back(tg_fname.str()); 
         }
-        if (config->getFilterFile() != "")
+        if (config->getFuncFilterFile() != "")
         {
-          ostringstream tg_filename;
-          tg_filename << "--filter-file=" << config->getFilterFile();
-          plugin_opts.push_back(tg_filename.str());
+          ostringstream tg_func_filter_filename;
+          tg_func_filter_filename << "--func-filter-file=" << config->getFuncFilterFile();
+          plugin_opts.push_back(tg_func_filter_filename.str());
         }
+      }
+ 
+      if (config->getInputFilterFile() != "")
+      {
+        ostringstream tg_input_filter_filename;
+        tg_input_filter_filename << "--input-filter-file=" << config->getInputFilterFile();
+        plugin_opts.push_back(tg_input_filter_filename.str());
       }
 
       if (config->getSuppressSubcalls())

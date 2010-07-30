@@ -106,6 +106,12 @@ void FileBuffer::applySTPSolution(char* buf)
       filename.replace(found, strlen("_dot_"), ".");
       found = filename.find("_dot_");
     }
+    found = filename.find("_hyphen_");
+    while (found != std::string::npos) 
+    {
+      filename.replace(found, strlen("_hyphen_"), "-");
+      found = filename.find("_hyphen_");
+    }
     if (!strcmp(this->name, filename.c_str()))
     {
       char* posbegin = brack + 5;
