@@ -30,6 +30,7 @@
 */
 
 #include "parser.h"
+#include "pub_tool_vki.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcfile.h"
 #include "pub_tool_libcprint.h"
@@ -38,6 +39,7 @@
 
 extern VgHashTable funcNames;
 extern VgHashTable funcSignatures;
+extern VgHashTable inputFilter;
 
 Bool isStandardFunction (Char* objName)
 {
@@ -54,46 +56,14 @@ Bool isCPPFunction (Char* fnName)
           (VG_(strchr) (fnName, ':') != NULL));
 }
 
-/*void parseFunction (Char* fnName, Bool isCPP)
-{
-  Int length = VG_(strlen) (fnName);
-  if (length == 0) return;
-  Bool isWildcard_st = (fnName[0] == '%');
-  Bool isWildcard_end = (fnName[length - 1] == '%');
-  if (!isWildcard_st && !isWildcard_end)
-  {
-     Char* data = VG_(malloc) ("data", sizeof(Char) * length);
-     VG_(memcpy) (data, fnName, length);
-     fnNode* node;
-     node = VG_(malloc)("fnNode", sizeof(fnNode));
-     node->key = hashCode(fnName);
-     node->data = data;
-     if (!isCPP) VG_(HT_add_node) (funcNames, node);
-     else VG_(HT_add_node) (cppfuncNames, node);
-  }
-  else
-  {
-    Int startIndex = 0;
-    if (isWildcard_st) startIndex ++;
-    if (isWildcard_end) fnName[length - 1] = 0;
-    Char* data = VG_(malloc) ("data", sizeof(Char) * (length - startIndex));
-    VG_(memcpy) (data, fnName + startIndex, length - startIndex);
-    fnWcardNode* node;
-    node = VG_(malloc)("fnWcardNode", sizeof(fnNode));
-    node->key = hashCode(fnName + startIndex);
-    node->data = data;
-    node->type = ((isWildcard_st) ? 1 : 0) + ((isWildcard_end) ? -1 : 0);
-    VG_(HT_add_node) (fnWildcards, node);
-  }
-}*/
-    
-
 void parseFnName (Char* fnName)
 {
   Int l = VG_(strlen) (fnName), i = 0, j = 0;
-  if (!l) return;
   Bool isSignature = False;
   Bool nameStarted = False;
+  Char* data;
+  fnNode* node;
+  if (!l) return;
   if (fnName[0] == '$')
   {
     i = 1;
@@ -113,9 +83,8 @@ void parseFnName (Char* fnName)
   {
     fnName[j] = '\0';
   }
-  Char* data = VG_(malloc) ("data", sizeof(Char) * j + 1);
+  data = VG_(malloc) ("data", sizeof(Char) * j + 1);
   VG_(memcpy) (data, fnName, j + 1);
-  fnNode* node;
   node = VG_(malloc)("fnNode", sizeof(fnNode));
   node->key = hashCode(fnName);
   node->data = data;
@@ -126,15 +95,15 @@ void parseFnName (Char* fnName)
 void parseFuncFilterFile (Int fd)
 {
   Int fileLength = VG_(fsize) (fd);
+  Char buf[256];
+  Char c;
+  Int nameOffset = 0;
+  Bool isCommented = False;
   if (fileLength < 2)
   {
     return;
   }
-  Char buf[256];
   VG_(memset) (buf, 0, 256);
-  Char c;
-  Int nameOffset = 0;
-  Bool isCommented = False;
   while ((VG_(read) (fd, &c, 1) > 0) && (fileLength -- > 0))
   {
     if (c == '\n')
@@ -163,14 +132,14 @@ Bool checkWildcards (Char* fnName)
 {
   fnNode* curCheckName;
   VG_(HT_ResetIter) (funcSignatures);
-  while (curCheckName = (fnNode*) VG_(HT_Next) (funcSignatures))
+  while ((curCheckName = (fnNode*) VG_(HT_Next) (funcSignatures)))
   {  
     if (cmpNames(fnName, curCheckName->data)) return True;
   }
   VG_(HT_ResetIter) (funcNames);
   cutTemplates(fnName);
   leaveFnName(fnName);
-  while (curCheckName = (fnNode*) VG_(HT_Next) (funcNames))
+  while ((curCheckName = (fnNode*) VG_(HT_Next) (funcNames)))
   {  
     if (cmpNames(fnName, curCheckName->data))
     {
@@ -184,10 +153,10 @@ Bool cmpNames (Char* fnName, Char* checkName)
 {
   Int sizeFn = VG_(strlen) (fnName);
   Int sizeCh = VG_(strlen) (checkName);
-  if (sizeCh > sizeFn) return False;
   Int iFn = 0, iCh = 0;
-  Char stopWildcardSymbol;
+  Char stopWildcardSymbol = False;
   Bool activeWildcard = False;
+  if (sizeCh > sizeFn) return False;
   for (iFn = 0; iFn < sizeFn; iFn ++)
   {
     if (checkName[iCh] == '?')
@@ -256,6 +225,7 @@ Bool cutTemplates(Char* fnName)
 Bool cutAffixes (Char* fnName)
 {
   Int length = VG_(strlen) (fnName);
+  Int i, j = 0, a_bracketBalance = 0;
 #define CONST_SUFFIX_LENGTH 6
   if (length > CONST_SUFFIX_LENGTH)
   {
@@ -266,7 +236,6 @@ Bool cutAffixes (Char* fnName)
     }
   }
 #undef CONST_SUFFIX_LENGTH
-  Int i, j = 0, a_bracketBalance = 0;
   for (i = 0; i < length; i ++)
   {
     if (fnName[i] == '(') break;
@@ -294,10 +263,12 @@ Bool cutAffixes (Char* fnName)
 Bool leaveFnName (Char* fnName)
 {
   Char* paramStart = VG_(strchr) (fnName, '(');
+  Char* nameStart;
+  Int i, initialI;
   if (paramStart == NULL) return False;
   *paramStart = '\0';
-  Char* nameStart = VG_(strrchr) (fnName, ':');
-  Int i, initialI = (nameStart != NULL) ? (nameStart - fnName + 1) : 0;
+  nameStart = VG_(strrchr) (fnName, ':');
+  initialI = (nameStart != NULL) ? (nameStart - fnName + 1) : 0;
   for (i = initialI; i < VG_(strlen) (fnName) + 1; i ++)
   {
     fnName[i - initialI] = fnName[i];
@@ -306,13 +277,43 @@ Bool leaveFnName (Char* fnName)
   return True;
 }
 
-void printHTs ()
+Bool parseInputFilterFile (Char* fileName)
 {
-  VG_(HT_ResetIter) (funcNames);
-  VG_(printf) ("fnNames:\n");
-  fnNode* cur_n;
-  while (cur_n = (fnNode*) VG_(HT_Next) (funcNames))
+  Char curNumber[20], curSymbol;
+  Int curNumberLength = 0;
+  UInt lastNumber = 0, i;
+  Bool isSequence = False;
+  Int fd = VG_(open) (fileName, VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+  while (VG_(read) (fd, &curSymbol, sizeof(Char)) > 0)
   {
-    VG_(printf) ("%s\n", cur_n->data);
+    if (VG_(isdigit) (curSymbol))
+    {
+      curNumber[curNumberLength ++] = curSymbol;
+      curNumber[curNumberLength] = '\0';
+    }
+    else if (curNumberLength != 0)
+    {
+      VgHashNode* node;
+      if (isSequence)
+      {
+        for (i = lastNumber + 1; i < (UInt) VG_(strtoll10) (curNumber, NULL); i ++)
+        {
+          node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
+          node->key = i;
+          VG_(printf) ("adding untainted offset %d\n", i);
+        }
+        isSequence = False;
+      }
+      else if (curSymbol == '-')
+      {
+        isSequence = True;
+      }
+      lastNumber = (UInt) VG_(strtoll10) (curNumber, NULL);
+      node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
+      node->key = lastNumber;
+      VG_(printf) ("adding untainted offset %d\n", lastNumber);
+      curNumberLength = 0;
+    }
   }
+  return True;
 }

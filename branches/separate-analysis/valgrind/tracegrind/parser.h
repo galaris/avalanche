@@ -44,17 +44,7 @@ struct _fnNode
 
 typedef struct _fnNode fnNode;
 
-struct _fnWcardNode
-{
-  struct _fnWcardNode* next;
-  HWord key;
-  Char* data;
-  Int type; //-1 for text%, 0 for %text%, 1 for %text
-};
-
-typedef struct _fnWcardNode fnWcardNode;
-
-//void parseFunction (Char* fnName, Bool isCPP);
+Bool parseInputFilterFile (Char* fileName);
 void parseFnName (Char* fnName);
 void parseFuncFilterFile (Int fd);
 
@@ -69,7 +59,4 @@ Bool cmpNames (Char* fnName, Char* checkName);
 Bool cutAffixes (Char* fnName);
 Bool leaveFnName (Char* fnName);
 Bool cutTemplates (Char* fnName);
-
-void printHTs ();
-
 #endif
