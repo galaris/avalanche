@@ -8,28 +8,21 @@
 int* i;
 int j = 0;
 
-int g(char val)
+static int g(int val)
 {
   val ++;
-  int y = 14;
-  if(val < 23)
-    j ++;
-  return 1;
 }
 
-int f(int y, char val, int* ee)
+static int f(int val)
 {
-  y = *ee;
-  y ++;
-  int x = 90;
-  x += 11;
+  if(val < 3)
+    j ++;
   g(val);
   return 1;
 }
 
 int main(int argc, char** argv)
 {
-
   int k = 0;
   int  fd1 = open(argv[1], O_RDONLY | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   char local[4];
@@ -37,9 +30,7 @@ int main(int argc, char** argv)
   //printf("%d", (int)local[0]);
   if(local[0] < 5)
     j ++;
-  //l(local[0]);
-  //f(local[0]);
-  f(k, local[1], &k);
+  f(local[1]);
   //if(local[1] < 3)
   //  j ++;
   //if(local[2] < 1)

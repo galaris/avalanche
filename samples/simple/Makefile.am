@@ -1,6 +1,6 @@
 noinst_PROGRAMS = entry divclient multiple_client multiple_client2 writeserver sample2 uninit mleak
 
-CFLAGS = -g
+CFLAGS = -O0 -g
 
 entry_SOURCES = entry.c
 divclient_SOURCES = divclient.c
