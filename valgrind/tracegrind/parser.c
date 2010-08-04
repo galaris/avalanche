@@ -38,7 +38,6 @@
 #include "pub_tool_hashtable.h"
 
 extern VgHashTable funcNames;
-extern VgHashTable funcSignatures;
 extern VgHashTable inputFilter;
 
 Bool isStandardFunction (Char* objName)
@@ -59,16 +58,10 @@ Bool isCPPFunction (Char* fnName)
 void parseFnName (Char* fnName)
 {
   Int l = VG_(strlen) (fnName), i = 0, j = 0;
-  Bool isSignature = False;
   Bool nameStarted = False;
   Char* data;
   fnNode* node;
   if (!l) return;
-  if (fnName[0] == '$')
-  {
-    i = 1;
-    isSignature = True;
-  }
   while (i < l)
   {
     if (fnName[i] == ' ' && !nameStarted)
@@ -88,8 +81,7 @@ void parseFnName (Char* fnName)
   node = VG_(malloc)("fnNode", sizeof(fnNode));
   node->key = hashCode(fnName);
   node->data = data;
-  if (isSignature) VG_(HT_add_node) (funcSignatures, node);
-  else VG_(HT_add_node) (funcNames, node);
+  VG_(HT_add_node) (funcNames, node);
 }
 
 void parseFuncFilterFile (Int fd)
@@ -131,20 +123,24 @@ void parseFuncFilterFile (Int fd)
 Bool checkWildcards (Char* fnName)
 {
   fnNode* curCheckName;
-  VG_(HT_ResetIter) (funcSignatures);
-  while ((curCheckName = (fnNode*) VG_(HT_Next) (funcSignatures)))
-  {  
-    if (cmpNames(fnName, curCheckName->data)) return True;
-  }
+  Bool tmpNameUpdated = False;
   VG_(HT_ResetIter) (funcNames);
-  cutTemplates(fnName);
-  leaveFnName(fnName);
+  Char tmpName[256];
   while ((curCheckName = (fnNode*) VG_(HT_Next) (funcNames)))
-  {  
-    if (cmpNames(fnName, curCheckName->data))
-    {
-      return True;
+  {
+    if (isCPPFunction(curCheckName->data))
+    {  
+      if (!tmpNameUpdated)
+      {
+        VG_(memcpy) (tmpName, fnName, VG_(strlen) (fnName));
+        cutTemplates(tmpName);
+        cutAffixes(tmpName);
+        leaveFnName(tmpName);
+        tmpNameUpdated = True;
+      }
+      if (cmpNames(fnName, curCheckName->data)) return True;
     }
+    else if (cmpNames(tmpName, curCheckName->data)) return True;
   }
   return False;
 }
