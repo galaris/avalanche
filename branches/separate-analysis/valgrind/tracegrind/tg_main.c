@@ -136,7 +136,7 @@ Bool newSB;
 IRSB* printSB;
 
 Bool dumpCalls;
-Int fdfuncFilter;
+Int fdfuncFilter = -1;
 
 Bool inputFilterEnabled;
 VgHashTable inputFilter;
@@ -490,7 +490,7 @@ void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt basicBlock
   Addr64 bbaddr = (((Addr64) basicBlockUpperBytes) << 32) ^ basicBlockLowerBytes;
   curIAddr = addr;
   Bool printName = False;
-  if (dumpCalls)
+  if (dumpCalls && fdfuncFilter >= 0)
   {
     if (printName = getFunctionName(addr, True, False))
     {
@@ -1522,13 +1522,13 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
 #if defined(CUT_ASSERT_WITH_QUERY)
-    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE)\n",
+    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
     queryCounter ++;
 #else
     if (!filterDangerous || useFiltering())
     {
-      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE)\n",
+      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
       queryCounter ++;
     }
@@ -3686,13 +3686,13 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
 #if defined(CUT_ASSERT_WITH_QUERY)
-    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE)\n",
+    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
     queryCounter ++;
 #else
     if (!filterDangerous || useFiltering())
     {
-      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE)\n",
+      VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
     }
     else
@@ -4358,6 +4358,7 @@ static void tg_fini(Int exitcode)
     }
     VG_(close)(fd);
   }
+  if (fdfuncFilter >= 0) VG_(close) (fdfuncFilter);
 }
 
 static Bool tg_process_cmd_line_option(Char* arg)
@@ -4368,6 +4369,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
   Char* funcname;
   Char* funcfilterfile;
   Char* inputfilterfile;
+  Char* dumpfile;
   if (VG_INT_CLO(arg, "--startdepth", depth))
   {
     depth -= 1;
@@ -4456,8 +4458,12 @@ static Bool tg_process_cmd_line_option(Char* arg)
   else if (VG_BOOL_CLO(arg, "--dump-calls", dumpCalls))
   {
     dumpCalls = True;
-    fdfuncFilter = VG_(open) ("calldump.log", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
-    parseFuncFilterFile(fdfuncFilter);
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--dump-file", dumpfile))
+  {
+    fdfuncFilter = VG_(open) (dumpfile, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
+                              VKI_S_IRUSR | VKI_S_IWUSR | VKI_S_IRGRP | VKI_S_IWGRP | VKI_S_IROTH | VKI_S_IWOTH).res;
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))

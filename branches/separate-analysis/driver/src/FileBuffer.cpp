@@ -140,6 +140,7 @@ bool FileBuffer::filterCovgrindOutput()
   }
   int skipLength = checkPId - buf + 2;
   char* bug_start = strstr(buf, "Process terminating");
+  if (bug_start == NULL) return false;
   char* last_bug_line = bug_start;
   char* tmp;
   while ((tmp = strstr(last_bug_line, "by 0x")) != NULL)
