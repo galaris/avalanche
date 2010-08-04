@@ -277,26 +277,30 @@ Bool parseInputFilterFile (Char* fileName)
 {
   Char curNumber[20], curSymbol;
   Int curNumberLength = 0;
-  UInt lastNumber = 0, i;
+  UInt lastNumber = 0, i, newNumber;
   Bool isSequence = False;
+  Bool isHex = False;
   Int fd = VG_(open) (fileName, VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
   while (VG_(read) (fd, &curSymbol, sizeof(Char)) > 0)
   {
-    if (VG_(isdigit) (curSymbol))
+    if (VG_(isdigit) (curSymbol) || curSymbol == 'x' || curSymbol == 'X' || 
+        (curSymbol >= 'a' && curSymbol <= 'f') || (curSymbol >= 'A' && curSymbol <= 'F'))
     {
+      if (!VG_(isdigit) (curSymbol)) isHex = True;
       curNumber[curNumberLength ++] = curSymbol;
       curNumber[curNumberLength] = '\0';
     }
     else if (curNumberLength != 0)
     {
       VgHashNode* node;
+      newNumber = (UInt) ((isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL));
       if (isSequence)
       {
-        for (i = lastNumber + 1; i < (UInt) VG_(strtoll10) (curNumber, NULL); i ++)
+        for (i = lastNumber + 1; i < newNumber; i ++)
         {
           node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
           node->key = i;
-          VG_(printf) ("adding untainted offset %d\n", i);
+         // VG_(printf) ("adding untainted offset %d\n", i);
         }
         isSequence = False;
       }
@@ -304,10 +308,10 @@ Bool parseInputFilterFile (Char* fileName)
       {
         isSequence = True;
       }
-      lastNumber = (UInt) VG_(strtoll10) (curNumber, NULL);
+      lastNumber = newNumber;
       node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
       node->key = lastNumber;
-      VG_(printf) ("adding untainted offset %d\n", lastNumber);
+      //VG_(printf) ("adding untainted offset %d\n", lastNumber);
       curNumberLength = 0;
     }
   }

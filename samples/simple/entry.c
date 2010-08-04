@@ -13,9 +13,9 @@ static int g(int val)
   val ++;
 }
 
-static int f(int val)
+static int f(unsigned long long int val)
 {
-  if(val < 3)
+  if(val > 3)
     j ++;
   g(val);
   return 1;
@@ -30,7 +30,7 @@ int main(int argc, char** argv)
   //printf("%d", (int)local[0]);
   if(local[0] < 5)
     j ++;
-  f(local[1]);
+  f(local[1] + 0x0011111111111111ULL);
   //if(local[1] < 3)
   //  j ++;
   //if(local[2] < 1)

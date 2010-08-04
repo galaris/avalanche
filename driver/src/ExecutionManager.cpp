@@ -482,8 +482,6 @@ void ExecutionManager::run()
     if (config->getDumpCalls())
     {
       dumpRuns = config->getDumpRuns();
-      int fd = open("calldump.log", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-      close(fd);
     }
 
     while (!inputs.empty()) 
@@ -518,6 +516,16 @@ void ExecutionManager::run()
       if (config->getDumpCalls())
       {
         plugin_opts.push_back("--dump-calls=yes");
+        ostringstream tg_call_dump_file;
+        if (config->getDumpRuns() == dumpRuns)
+        {
+          tg_call_dump_file << "--dump-file=calldump.log";
+        }
+        else
+        {
+          tg_call_dump_file << "--dump-file=calldump_" << config->getDumpRuns() - dumpRuns << ".log";
+        }
+        plugin_opts.push_back(tg_call_dump_file.str());
       }
 
       if (config->getFuncFilterType() != "")
@@ -660,8 +668,16 @@ void ExecutionManager::run()
  
       if (config->getDumpCalls())
       {
-        dumpRuns --;
-        if (dumpRuns <= 0) break;
+        if (dumpRuns != config->getDumpRuns())
+        {
+          for (int i = 0; i < fi->files.size(); i++)
+          {
+            stringstream ss(stringstream::in | stringstream::out);
+            ss << "calldump_input_" << config->getDumpRuns() - dumpRuns << "_" << i;
+            fi->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+          }
+        }
+        if ((-- dumpRuns) <= 0) break;
       }
       int actualfd = open("actual.log", O_RDWR);
       bool* actual = new bool[fi->startdepth - 1 + config->getDepth()];
