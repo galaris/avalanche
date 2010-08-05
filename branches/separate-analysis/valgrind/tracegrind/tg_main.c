@@ -1085,7 +1085,9 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
       if (inputFilterEnabled)
       {
         if (VG_(HT_lookup) (inputFilter, curoffs + (index - a)) == NULL)
+        {
           taintMemoryFromFile(index, curoffs + (index - a));
+        }
       }
       else taintMemoryFromFile(index, curoffs + (index - a));
     }
@@ -1155,7 +1157,9 @@ void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_h
       if (inputFilterEnabled)
       {
         if (VG_(HT_lookup) (inputFilter, index - a) == NULL)
+        {
           taintMemoryFromFile(index, index - a);
+        }
       }
       else taintMemoryFromFile(index, index - a);
     }
