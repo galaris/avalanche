@@ -300,7 +300,7 @@ Bool parseInputFilterFile (Char* fileName)
         {
           node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
           node->key = i;
-         // VG_(printf) ("adding untainted offset %d\n", i);
+          VG_(HT_add_node) (inputFilter, node);
         }
         isSequence = False;
       }
@@ -311,7 +311,7 @@ Bool parseInputFilterFile (Char* fileName)
       lastNumber = newNumber;
       node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
       node->key = lastNumber;
-      //VG_(printf) ("adding untainted offset %d\n", lastNumber);
+      VG_(HT_add_node) (inputFilter, node);
       curNumberLength = 0;
     }
   }

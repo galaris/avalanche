@@ -260,43 +260,37 @@ int ExecutionManager::checkAndScore(Input* input)
     string t = string(ctime(&exploittime));
     REPORT(logger, "Crash detected.");
     LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
-    if (sameExploit)
+    if (config->usingSockets() || config->usingDatagrams())
     {
-      REPORT(logger, "Bug was detected previously.");
+      stringstream ss(stringstream::in | stringstream::out);
+      ss << "exploit_" << exploits;
+      REPORT(logger, "Dumping an exploit to file " << ss.str());
+      input->dumpExploit((char*) ss.str().c_str(), false);
+      if (infoAvailable && !sameExploit)
+      {
+        ss << ".log";
+        cv_output.dumpFile((char*) ss.str().c_str());
+        REPORT(logger, "Dumping exploit info to file " << ss.str());
+      }
     }
     else
     {
-      if (config->usingSockets() || config->usingDatagrams())
+      if (infoAvailable && !sameExploit)
       {
         stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits;
-        REPORT(logger, "Dumping an exploit to file " << ss.str());
-        input->dumpExploit((char*) ss.str().c_str(), false);
-        if (infoAvailable)
-        {
-          ss << ".log";
-          cv_output.dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping exploit info to file " << ss.str());
-        }
+        ss << "exploit_" << exploits << ".log";
+        cv_output.dumpFile((char*) ss.str().c_str());
+        REPORT(logger, "Dumping exploit info to file " << ss.str());
       }
-      else
+      for (int i = 0; i < input->files.size(); i++)
       {
-        for (int i = 0; i < input->files.size(); i++)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << "exploit_" << exploits << "_" << i;
-          REPORT(logger, "Dumping an exploit to file " << ss.str());
-          input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
-          if (infoAvailable)
-          {
-            ss << ".log";
-            cv_output.dumpFile((char*) ss.str().c_str());
-            REPORT(logger, "Dumping exploit info to file " << ss.str());
-          }
-        }
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << "exploit_" << exploits << "_" << i;
+        REPORT(logger, "Dumping an exploit to file " << ss.str());
+        input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
       }
-      exploits++;
     }
+    exploits++;
   }
   else if (config->usingMemcheck())
   {
