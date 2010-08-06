@@ -109,3 +109,69 @@ user@machine:$ ./inst/bin/valgrind --tool=memcheck samples/simple/mleak memcheck
 ==8371==         suppressed: 0 bytes in 0 blocks.
 ==8371== Rerun with --leak-check=full to see details of leaked memory.
 }}}
+
+== To carry out separate analysis ==
+
+Normally Avalanche treats the whole input file as a source of tainted data and keeps track of all dangerous operations and conditions which work with tainted data. However, there are options that can be used to narrow the analysis performed by Avalanche.
+[http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c] shows effects of employing these options.
+This sample is a small program, that reads 4 bytes from input file and uses each value in if statement. It fails only if value in the last byte doesn't satisfy the appropriate condition.
+
+Run Avalanche without any additional options:
+
+{{{
+user@machine:$ ./inst/bin/avalanche --filename=samples/simple/seed samples/simple/separate_analysis_sample samples/simple/seed 
+}}}
+
+This results in 8 exploit files (exploit_0_0 .. exploit_7_0). Checking these files with gdb shows that they all trigger the same error:
+
+{{{
+user@machine:$ gdb --args ./samples/simple/separate_analysis_sample exploit_0_0
+GNU gdb 6.8-debian
+Copyright (C) 2008 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "i486-linux-gnu"...
+(gdb) run
+Starting program: /samples/simple/separate_analysis_sample exploit_0_0
+
+Program received signal SIGSEGV, Segmentation fault.
+0x08048501 in main (argc=536870912, argv=0x5bf)
+    at separate_analysis_sample.c:56
+56	  *d = 1;
+}}}
+
+=== Using input mask ===
+
+To specify that some bytes in input file should not be considered as a source of tainted data, use "--input-filter-file=name" option, where name is the name of the file with input mask. Input mask contains ranges or single offsets of bytes that should not be considered as a source of tainted data.
+
+File 'mask' contains the following:
+
+{{{
+0-2
+}}}
+
+Running Avalanche with options:
+
+{{{
+user@machine:$ ./inst/bin/avalanche --input-filter-file=mask --filename=samples/simple/seed samples/simple/separate_analysis_sample samples/simple/seed 
+}}}
+
+will result in exploit_0_0 (since only the condition for the last byte actually leads to error). This exploit file triggers error described above.
+
+Running Avalanche on large applications with appropriate input masks featured considerable decrease in time needed to discover bugs.
+
+=== Using function filtering ===
+
+To specify that danger operations and conditions working with tainted data only from necessary functions are used in generating new inputs, use "--func-filter=type" with "--func-name=name" options. type can be either 'conds' (so that only conditions will be filtered while all danger operations are used in generating new inputs) or 'danger_ops' (vice-versa) or 'all' (so that both conditions and danger operations are filtered). name is the name of the function to use for filtering (you can specify several "--func-name=name" arguments).
+
+Running Avalanche with options:
+
+{{{
+user@machine:$ ./inst/bin/avalanche --func-filter=conds --func-name=f4 filename=samples/simple/seed samples/simple/separate_analysis_sample samples/simple/seed 
+}}}
+
+will result in exploit_0_0 (refer to [http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c] code for understanding reasons for this). This exploit file triggers error described above.
+
+As with input masks running Avalanche with appropriate list of functions featured decrease in time needed to perform analysis.
