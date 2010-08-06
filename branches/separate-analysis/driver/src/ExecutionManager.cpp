@@ -239,6 +239,7 @@ int ExecutionManager::checkAndScore(Input* input)
   FileBuffer* mc_output;
   bool infoAvailable = false;
   bool sameExploit = false;
+  int exploitGroup = 0;
   if ((exitCode == -1) && !killed)
   {
     FileBuffer cv_output("execution.log");
@@ -252,6 +253,7 @@ int ExecutionManager::checkAndScore(Input* input)
           sameExploit = true;
           break;
         }
+        exploitGroup ++;
       }
       if (!sameExploit) exploitLogs.push_back(cv_output);
     }
@@ -266,21 +268,48 @@ int ExecutionManager::checkAndScore(Input* input)
       ss << "exploit_" << exploits;
       REPORT(logger, "Dumping an exploit to file " << ss.str());
       input->dumpExploit((char*) ss.str().c_str(), false);
-      if (infoAvailable && !sameExploit)
+      if (infoAvailable)
       {
-        ss << ".log";
-        cv_output.dumpFile((char*) ss.str().c_str());
-        REPORT(logger, "Dumping exploit info to file " << ss.str());
+        if (!sameExploit)
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "exploit_" << exploits << ".log";
+          cv_output.dumpFile((char*) ss.str().c_str());
+          REPORT(logger, "Dumping exploit info to file " << ss.str());
+        }
+        else
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "exploit_" << exploitGroup << ".log";
+          REPORT(logger, "Bug was detected previously. Exploit info can be found in " << ss.str());
+        }
+      }
+      else
+      {
+        REPORT(logger, "No exploit info is available.");
       }
     }
     else
     {
-      if (infoAvailable && !sameExploit)
+      if (infoAvailable)
       {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits << ".log";
-        cv_output.dumpFile((char*) ss.str().c_str());
-        REPORT(logger, "Dumping exploit info to file " << ss.str());
+        if (!sameExploit)
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "exploit_" << exploits << ".log";
+          cv_output.dumpFile((char*) ss.str().c_str());
+          REPORT(logger, "Dumping exploit info to file " << ss.str());
+        }
+        else
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "exploit_" << exploitGroup << ".log";
+          REPORT(logger, "Bug was detected previously. Exploit info can be found in " << ss.str());
+        }
+      }
+      else
+      {
+        REPORT(logger, "No exploit info is available.");
       }
       for (int i = 0; i < input->files.size(); i++)
       {

@@ -1,4 +1,4 @@
-noinst_PROGRAMS = entry divclient multiple_client multiple_client2 writeserver sample2 uninit mleak
+noinst_PROGRAMS = entry divclient multiple_client multiple_client2 writeserver sample2 uninit mleak separate_analysis_sample
 
 CFLAGS = -O0 -g
 
@@ -10,5 +10,6 @@ writeserver_SOURCES = writeserver.c
 sample2_SOURCES = sample2.c
 uninit_SOURCES = uninit.c
 mleak_SOURCES = mleak.c
+separate_analysis_sample_SOURCES = separate_analysis_sample.c
 
 dist_noinst_DATA = seed

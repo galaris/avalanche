@@ -36,9 +36,10 @@
 #include "pub_tool_libcprint.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_hashtable.h"
+#include "pub_tool_xarray.h"
 
 extern VgHashTable funcNames;
-extern VgHashTable inputFilter;
+extern XArray* inputFilter;
 
 Bool isStandardFunction (Char* objName)
 {
@@ -87,7 +88,7 @@ void parseFnName (Char* fnName)
 void parseFuncFilterFile (Int fd)
 {
   Int fileLength = VG_(fsize) (fd);
-  Char buf[256];
+  Char buf[1024];
   Char c;
   Int nameOffset = 0;
   Bool isCommented = False;
@@ -95,7 +96,7 @@ void parseFuncFilterFile (Int fd)
   {
     return;
   }
-  VG_(memset) (buf, 0, 256);
+  VG_(memset) (buf, 0, 1024);
   while ((VG_(read) (fd, &c, 1) > 0) && (fileLength -- > 0))
   {
     if (c == '\n')
@@ -125,7 +126,7 @@ Bool checkWildcards (Char* fnName)
   fnNode* curCheckName;
   Bool tmpNameUpdated = False;
   VG_(HT_ResetIter) (funcNames);
-  Char tmpName[256];
+  Char tmpName[1024];
   while ((curCheckName = (fnNode*) VG_(HT_Next) (funcNames)))
   {
     if (isCPPFunction(curCheckName->data))
@@ -183,7 +184,7 @@ Bool cmpNames (Char* fnName, Char* checkName)
 Bool cutTemplates(Char* fnName)
 {
   Int a_bracketBalance = 0, i, j = 0, initialI = 0, length = VG_(strlen) (fnName);
-  Char tmpName[256];
+  Char tmpName[1024];
   if (((fnName[0] == '<') ? ++ a_bracketBalance : a_bracketBalance) || 
       ((fnName[0] == '>') ? -- a_bracketBalance : a_bracketBalance)) 
   {
@@ -275,11 +276,12 @@ Bool leaveFnName (Char* fnName)
 
 Bool parseInputFilterFile (Char* fileName)
 {
-  Char curNumber[20], curSymbol;
+  UChar curNumber[20], curSymbol;
   Int curNumberLength = 0;
-  UInt lastNumber = 0, i, newNumber;
+  ULong newNumber, lastNumber = 0;
   Bool isSequence = False;
   Bool isHex = False;
+  Bool firstNumber = True;
   Int fd = VG_(open) (fileName, VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
   while (VG_(read) (fd, &curSymbol, sizeof(Char)) > 0)
   {
@@ -292,28 +294,61 @@ Bool parseInputFilterFile (Char* fileName)
     }
     else if (curNumberLength != 0)
     {
-      VgHashNode* node;
-      newNumber = (UInt) ((isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL));
-      if (isSequence)
-      {
-        for (i = lastNumber + 1; i < newNumber; i ++)
-        {
-          node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
-          node->key = i;
-          VG_(HT_add_node) (inputFilter, node);
-        }
-        isSequence = False;
-      }
-      else if (curSymbol == '-')
-      {
-        isSequence = True;
-      }
-      lastNumber = newNumber;
-      node = VG_(malloc) ("inputfileNode", sizeof(VgHashNode));
-      node->key = lastNumber;
-      VG_(HT_add_node) (inputFilter, node);
       curNumberLength = 0;
+      if (firstNumber)
+      {
+        lastNumber = (isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL);
+        firstNumber = False;
+        if (curSymbol == '-') isSequence = True;
+      }
+      else
+      {
+        offsetPair* newPair = VG_(malloc) ("newPair", sizeof(offsetPair));
+        if (curSymbol == '-')
+        {
+          lastNumber = (isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL);
+          isSequence = True;
+        }
+        else
+        {
+          newNumber = (isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL);
+          if (isSequence)
+          {
+            isSequence = False;
+            newPair->last = newNumber;
+            newPair->first = lastNumber;
+          }
+          else
+          {
+            newPair->last = newNumber;
+            newPair->first = newNumber;
+          }
+          VG_(addToXA) (inputFilter, newPair);
+        }
+      }
+      isHex = False;
     }
   }
   return True;
+}
+
+Bool checkInputOffset (ULong offs)
+{
+  Int i;
+  for (i = 0; i < VG_(sizeXA) (inputFilter); i ++)
+  {
+    offsetPair* elem = (offsetPair*) VG_(indexXA) (inputFilter, i);
+    if (offs >= elem->first && offs <= elem->last) return True;
+  }
+  return False;
+}
+
+void printInputOffsets (void)
+{
+  Int i;
+  for (i = 0; i < VG_(sizeXA) (inputFilter); i ++)
+  {
+    offsetPair* elem = (offsetPair*) VG_(indexXA) (inputFilter, i);
+    VG_(printf) ("%llu %llu\n", elem->first, elem->last);
+  }
 }

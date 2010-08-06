@@ -122,6 +122,7 @@ typedef struct _sizeNode sizeNode;
 UInt queryCounter = 0;
 
 Addr curIAddr;
+Bool enableFiltering = False;
 Bool filterConditions = False;
 Bool filterDangerous = False;
 
@@ -139,7 +140,7 @@ Bool dumpCalls;
 Int fdfuncFilter = -1;
 
 Bool inputFilterEnabled;
-VgHashTable inputFilter;
+XArray* inputFilter;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -203,15 +204,15 @@ Bool getFunctionName(Addr addr, Bool onlyEntry, Bool showOffset)
   Bool continueFlag = False;
   if (onlyEntry)
   {
-    continueFlag = VG_(get_fnname_if_entry) (addr, diFunctionName, 256);
+    continueFlag = VG_(get_fnname_if_entry) (addr, diFunctionName, 1024);
   }
   else if (showOffset)
   {
-    continueFlag = VG_(get_fnname_w_offset) (addr, diFunctionName, 256);
+    continueFlag = VG_(get_fnname_w_offset) (addr, diFunctionName, 1024);
   }
   else
   {
-    continueFlag = VG_(get_fnname) (addr, diFunctionName, 256);
+    continueFlag = VG_(get_fnname) (addr, diFunctionName, 1024);
   }
   if (continueFlag)
   {
@@ -249,6 +250,43 @@ Bool useFiltering()
         return True;
       }
     }
+  }
+  return False;
+}
+
+static
+Bool dumpCall()
+{
+  if (getFunctionName(curIAddr, False, False))
+  {
+    if (cutAffixes(diFunctionName))
+    {
+      Char tmp[1024];
+      VG_(strcpy) (tmp, diFunctionName);
+      cutTemplates(tmp);
+      if (VG_(HT_lookup) (funcNames, hashCode(tmp)) == NULL)
+      {
+        Char b[1024];
+        Char obj[1024];
+        Bool isStandard = False;
+        if (VG_(get_objname) ((Addr)(curIAddr), obj, 1024))
+        {
+          isStandard = isStandardFunction(obj);
+        }
+        if (!isStandard)
+        {
+          Int l;
+          l = VG_(sprintf) (b, "%s\n", diFunctionName, obj);
+          my_write(fdfuncFilter, b, l);
+          fnNode* node;
+          node = VG_(malloc)("fnNode", sizeof(fnNode));
+          node->key = hashCode(tmp);
+          node->data = NULL;
+          VG_(HT_add_node) (funcNames, node);
+        }
+      }
+    }
+    return True;
   }
   return False;
 }
@@ -489,45 +527,8 @@ void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt basicBlock
   Addr64 addr = (((Addr64) iaddrUpperBytes) << 32) ^ iaddrLowerBytes;
   Addr64 bbaddr = (((Addr64) basicBlockUpperBytes) << 32) ^ basicBlockLowerBytes;
   curIAddr = addr;
-  Bool printName = False;
-  if (dumpCalls && fdfuncFilter >= 0)
-  {
-    if (printName = getFunctionName(addr, True, False))
-    {
-      if (cutAffixes(diFunctionName))
-      {
-        Char tmp[256];
-        VG_(strcpy) (tmp, diFunctionName);
-        cutTemplates(tmp);
-        if (VG_(HT_lookup) (funcNames, hashCode(tmp)) == NULL)
-        {
-          Char b[256];
-          Char obj[256];
-          Bool isStandard = False;
-          if (VG_(get_objname) ((Addr)(addr), obj, 256))
-          {
-            isStandard = isStandardFunction(obj);
-          }
-          if (!isStandard)
-          {
-            Int l;
-            l = VG_(sprintf) (b, "%s\n", diFunctionName);
-            my_write(fdfuncFilter, b, l);
-            fnNode* node;
-            node = VG_(malloc)("fnNode", sizeof(fnNode));
-            node->key = hashCode(tmp);
-            node->data = NULL;
-            VG_(HT_add_node) (funcNames, node);
-          }
-        }
-      }
-    }
-  }
 #ifdef CALL_STACK_PRINTOUT
-  if (!dumpCalls)
-  {
-    printName = getFunctionName(addr, True, False);
-  }
+  printName = getFunctionName(addr, True, False);
   if (printName)
   {
     VG_(printf) ("%s\n", diFunctionName);
@@ -1084,7 +1085,7 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
     {
       if (inputFilterEnabled)
       {
-        if (VG_(HT_lookup) (inputFilter, curoffs + (index - a)) == NULL)
+        if (!checkInputOffset(curoffs + (index - a)))
         {
           taintMemoryFromFile(index, curoffs + (index - a));
         }
@@ -1156,7 +1157,7 @@ void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_h
     {
       if (inputFilterEnabled)
       {
-        if (VG_(HT_lookup) (inputFilter, index - a) == NULL)
+        if (!checkInputOffset(index - a))
         {
           taintMemoryFromFile(index, index - a);
         }
@@ -1513,7 +1514,7 @@ static
 void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, UInt rtmp)
 {
 #if defined(CUT_ASSERT_WITH_QUERY)
-  if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL && (!filterDangerous || useFiltering()))
+  if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL && (!filterDangerous || !enableFiltering || useFiltering()))
   {
 #else
   if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL)
@@ -1528,13 +1529,21 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
 #if defined(CUT_ASSERT_WITH_QUERY)
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
+    if (dumpCalls && fdfuncFilter >= 0)
+    {
+      dumpCall();
+    }
     queryCounter ++;
 #else
-    if (!filterDangerous || useFiltering())
+    if (!filterDangerous || !enableFiltering || useFiltering())
     {
       VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
       queryCounter ++;
+      if (dumpCalls && fdfuncFilter >= 0)
+      {
+        dumpCall();
+      }
     }
     else
     {
@@ -2900,7 +2909,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				}
 				break;
 #if defined(CUT_ASSERT_WITH_QUERY)
-      case Iop_DivU64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || useFiltering()))
+      case Iop_DivU64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
       case Iop_DivU64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
 #endif
@@ -2910,10 +2919,18 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 #if defined(CUT_ASSERT_WITH_QUERY)
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                  if (dumpCalls && fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 #else
-				  if (!filterDangerous || useFiltering())
+				  if (!filterDangerous || !enableFiltering || useFiltering())
 				  {
 				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                    if (dumpCalls && fdfuncFilter >= 0)
+                                    {
+                                      dumpCall();
+                                    }
 				  }
 				  else
 				  {
@@ -2935,7 +2952,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				my_write(fddanger, s, l);
 				break;
 #if defined(CUT_ASSERT_WITH_QUERY)
-      case Iop_DivS64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || useFiltering()))
+      case Iop_DivS64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
       case Iop_DivS64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
 #endif
@@ -2945,10 +2962,18 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 #if defined(CUT_ASSERT_WITH_QUERY)
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                  if (dumpCalls && fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 #else
-				  if (!filterDangerous || useFiltering())
+				  if (!filterDangerous || !enableFiltering || useFiltering())
 				  {
 				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                    if (dumpCalls && fdfuncFilter >= 0)
+                                    {
+                                      dumpCall();
+                                    }
 				  }
 				  else
 				  {
@@ -3001,7 +3026,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
     switch (oprt)
     {
 #if defined(CUT_ASSERT_WITH_QUERY)
-      case Iop_DivModU64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || useFiltering()))
+      case Iop_DivModU64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
       case Iop_DivModU64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
 #endif
@@ -3011,10 +3036,18 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 #if defined(CUT_ASSERT_WITH_QUERY)
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                  if (dumpCalls && fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 #else
-				  if (!filterDangerous || useFiltering())
+				  if (!filterDangerous || !enableFiltering || useFiltering())
 				  {
 				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                    if (dumpCalls && fdfuncFilter >= 0)
+                                    {
+                                      dumpCall();
+                                    }
 				  }
 				  else
 				  {
@@ -3044,7 +3077,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				my_write(fddanger, s, l);
 				break;
 #if defined(CUT_ASSERT_WITH_QUERY)
-      case Iop_DivModS64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || useFiltering()))
+      case Iop_DivModS64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
       case Iop_DivModS64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
 #endif
@@ -3054,10 +3087,18 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 #if defined(CUT_ASSERT_WITH_QUERY)
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                  if (dumpCalls && fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 #else
-				  if (!filterDangerous || useFiltering())
+				  if (!filterDangerous || !enableFiltering || useFiltering())
 				  {
 				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                    if (dumpCalls && fdfuncFilter >= 0)
+                                    {
+                                      dumpCall();
+                                    }
 				  }
 				  else
 				  {
@@ -3434,7 +3475,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				}
 				break;
 #if defined(CUT_ASSERT_WITH_QUERY)
-      case Iop_DivU32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || useFiltering()))
+      case Iop_DivU32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
       case Iop_DivU32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
 #endif
@@ -3444,10 +3485,18 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 #if defined(CUT_ASSERT_WITH_QUERY)
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                  if (dumpCalls && fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 #else
-				  if (!filterDangerous || useFiltering())
+				  if (!filterDangerous || !enableFiltering || useFiltering())
 				  {
 				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                   if (dumpCalls && fdfuncFilter >= 0)
+                                    {
+                                      dumpCall();
+                                    }
 				  }
 				  else
 				  {
@@ -3469,7 +3518,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				my_write(fddanger, s, l);
 				break;
 #if defined(CUT_ASSERT_WITH_QUERY)
-      case Iop_DivS32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || useFiltering()))
+      case Iop_DivS32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
       case Iop_DivS32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
 #endif
@@ -3479,10 +3528,18 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 #if defined(CUT_ASSERT_WITH_QUERY)
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                  if (dumpCalls && fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 #else
-				  if (!filterDangerous || useFiltering())
+				  if (!filterDangerous || !enableFiltering || useFiltering())
 				  {
 				    l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
+                                    if (dumpCalls && fdfuncFilter >= 0)
+                                    {
+                                      dumpCall();
+                                    }
 				  }
 				  else
 				  {
@@ -3678,7 +3735,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
   UShort size = curNode->temps[tmp].size;
   UWord addr = (UWord) storeAddr;
 #if defined(CUT_ASSERT_WITH_QUERY)
-  if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL && (!filterDangerous || useFiltering()))
+  if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL && (!filterDangerous || !enableFiltering || useFiltering()))
 #else
   if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL)
 #endif
@@ -3692,12 +3749,20 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 #if defined(CUT_ASSERT_WITH_QUERY)
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
+    if (dumpCalls && fdfuncFilter >= 0)
+    {
+      dumpCall();
+    }
     queryCounter ++;
 #else
-    if (!filterDangerous || useFiltering())
+    if (!filterDangerous || !enableFiltering || useFiltering())
     {
       VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
+      if (dumpCalls && fdfuncFilter >= 0)
+      {
+        dumpCall();
+      }
     }
     else
     {
@@ -3856,7 +3921,7 @@ static
 void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
 {
 #if defined(CUT_ASSERT_WITH_QUERY)
-  if (VG_(HT_lookup)(taintedTemps, tmp) != NULL && (!filterConditions || useFiltering()))
+  if (VG_(HT_lookup)(taintedTemps, tmp) != NULL && (!filterConditions || !enableFiltering || useFiltering()))
 #else
   if (VG_(HT_lookup)(taintedTemps, tmp) != NULL)
 #endif
@@ -3912,10 +3977,14 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
 #if defined(CUT_ASSERT_WITH_QUERY)
     if (curdepth >= depth)
 #else
-    if (curdepth >= depth && (!filterConditions || useFiltering()))
+    if (curdepth >= depth && (!filterConditions || !enableFiltering || useFiltering()))
 #endif
     {
       l = VG_(sprintf)(s, "QUERY(FALSE);\n"); queryCounter ++;
+      if (dumpCalls && fdfuncFilter >= 0)
+      {
+        dumpCall();
+      }
       my_write(fdtrace, s, l);
     }
     curdepth++;
@@ -4363,6 +4432,7 @@ static void tg_fini(Int exitcode)
     VG_(close)(fd);
   }
   if (fdfuncFilter >= 0) VG_(close) (fdfuncFilter);
+  if (inputFilterEnabled) VG_(deleteXA) (inputFilter);
 }
 
 static Bool tg_process_cmd_line_option(Char* arg)
@@ -4391,19 +4461,22 @@ static Bool tg_process_cmd_line_option(Char* arg)
   else if (VG_STR_CLO(arg, "--func-name", funcname))
   {
     parseFnName(funcname);
+    enableFiltering = True;
     return True;
   }
   else if (VG_STR_CLO(arg, "--func-filter-file", funcfilterfile))
   {
     Int fd = VG_(open)(funcfilterfile, VKI_O_RDWR, 0).res;
     parseFuncFilterFile(fd);
+    enableFiltering = True;
     VG_(close)(fd);
     return True;
   }
   else if (VG_STR_CLO(arg, "--input-filter-file", inputfilterfile))
   {
-    inputFilter = VG_(HT_construct) ("inputFilter");
+    inputFilter = VG_(newXA) (VG_(malloc), "inputFilter", VG_(free), sizeof(offsetPair));
     parseInputFilterFile(inputfilterfile);
+   // printInputOffsets();
     inputFilterEnabled = True;
     return True;
   }
@@ -4591,7 +4664,7 @@ static void tg_pre_clo_init(void)
  
   funcNames = VG_(HT_construct)("funcNames");
   
-  diFunctionName = VG_(malloc) ("diFunctionName", 256 * sizeof(Char));
+  diFunctionName = VG_(malloc) ("diFunctionName", 1024 * sizeof(Char));
       
   fdtrace = VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
   fddanger = VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
