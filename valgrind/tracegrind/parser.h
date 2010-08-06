@@ -44,7 +44,17 @@ struct _fnNode
 
 typedef struct _fnNode fnNode;
 
+struct _offsetPair
+{
+  ULong first;
+  ULong last;
+};
+
+typedef struct _offsetPair offsetPair;
+
 Bool parseInputFilterFile (Char* fileName);
+Bool checkInputOffset (ULong offs);
+void printInputOffsets (void);
 void parseFnName (Char* fnName);
 void parseFuncFilterFile (Int fd);
 

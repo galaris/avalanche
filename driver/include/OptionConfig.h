@@ -44,7 +44,7 @@ public:
                     dumpCalls(false),
                     dumpRuns(1),
                     leaks(false),
-                    funcFilterType(std::string("")),
+                    funcFilterType(std::string("all")),
                     funcFilterFile(std::string("")),
                     depth(100),
                     alarm(300),
