@@ -110,7 +110,7 @@ user@machine:$ ./inst/bin/valgrind --tool=memcheck samples/simple/mleak memcheck
 ==8371== Rerun with --leak-check=full to see details of leaked memory.
 }}}
 
-== To carry out separate analysis ==
+== Input masks and function filtering ==
 
 *Warning! The features described below are under development and may not work 100%! The sources may be downloaded from a [http://code.google.com/p/avalanche/source/browse/#svn/branches/separate-analysis separate branch of repository].*
 
@@ -144,10 +144,6 @@ Program received signal SIGSEGV, Segmentation fault.
 56	  *d = 1;
 }}}
 
-=== Using input mask ===
-
-*Warning! The features described below are under development and may not work 100%! The sources may be downloaded from a [http://code.google.com/p/avalanche/source/browse/#svn/branches/separate-analysis separate branch of repository].*
-
 To specify that some bytes in input file should not be considered as a source of tainted data, use "--input-filter-file=name" option, where name is the name of the file with input mask. Input mask contains ranges or single offsets of bytes that should not be considered as a source of tainted data.
 
 File 'mask' contains the following:
@@ -165,10 +161,6 @@ user@machine:$ ./inst/bin/avalanche --input-filter-file=mask --filename=samples/
 will result in exploit_0_0 (since only the condition for the last byte actually leads to error). This exploit file triggers error described above.
 
 Running Avalanche on large applications with appropriate input masks featured considerable decrease in time needed to discover bugs.
-
-=== Using function filtering ===
-
-*Warning! The features described below are under development and may not work 100%! The sources may be downloaded from a [http://code.google.com/p/avalanche/source/browse/#svn/branches/separate-analysis separate branch of repository].*
 
 To specify that danger operations and conditions working with tainted data only from necessary functions are used in generating new inputs, use "--func-filter=type" with "--func-name=name" options. type can be either 'conds' (so that only conditions will be filtered while all danger operations are used in generating new inputs) or 'danger_ops' (vice-versa) or 'all' (so that both conditions and danger operations are filtered). name is the name of the function to use for filtering (you can specify several "--func-name=name" arguments).
 
