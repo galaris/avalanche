@@ -112,6 +112,8 @@ user@machine:$ ./inst/bin/valgrind --tool=memcheck samples/simple/mleak memcheck
 
 == To carry out separate analysis ==
 
+*Warning! The features described below are under development and may not work 100%! The sources may be downloaded from [http://code.google.com/p/avalanche/source/browse/#svn/branches/separate-analysis a separate branch of repository].*
+
 Normally Avalanche treats the whole input file as a source of tainted data and keeps track of all dangerous operations and conditions which work with tainted data. However, there are options that can be used to narrow the analysis performed by Avalanche.
 [http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c] shows effects of employing these options.
 This sample is a small program, that reads 4 bytes from input file and uses each value in if statement. It fails only if value in the last byte doesn't satisfy the appropriate condition.
@@ -144,6 +146,8 @@ Program received signal SIGSEGV, Segmentation fault.
 
 === Using input mask ===
 
+*Warning! The features described below are under development and may not work 100%! The sources may be downloaded from [http://code.google.com/p/avalanche/source/browse/#svn/branches/separate-analysis a separate branch of repository].*
+
 To specify that some bytes in input file should not be considered as a source of tainted data, use "--input-filter-file=name" option, where name is the name of the file with input mask. Input mask contains ranges or single offsets of bytes that should not be considered as a source of tainted data.
 
 File 'mask' contains the following:
@@ -163,6 +167,8 @@ will result in exploit_0_0 (since only the condition for the last byte actually 
 Running Avalanche on large applications with appropriate input masks featured considerable decrease in time needed to discover bugs.
 
 === Using function filtering ===
+
+*Warning! The features described below are under development and may not work 100%! The sources may be downloaded from [http://code.google.com/p/avalanche/source/browse/#svn/branches/separate-analysis a separate branch of repository].*
 
 To specify that danger operations and conditions working with tainted data only from necessary functions are used in generating new inputs, use "--func-filter=type" with "--func-name=name" options. type can be either 'conds' (so that only conditions will be filtered while all danger operations are used in generating new inputs) or 'danger_ops' (vice-versa) or 'all' (so that both conditions and danger operations are filtered). name is the name of the function to use for filtering (you can specify several "--func-name=name" arguments).
 
