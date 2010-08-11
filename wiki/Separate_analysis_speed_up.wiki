@@ -187,3 +187,10 @@ produces a number of [http://avalanche.googlecode.com/files/exploit_5_0 exploit]
 inst/bin/avalanche --input-filter-file=[http://avalanche.googlecode.com/files/mask_mono mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/Hello.exe Hello.exe]  mono-2.6.7/inst/bin/mono mono-2.6.7/inst/bin/Hello.exe
 
 [http://avalanche.googlecode.com/files/exploit_0_0 exploit]
+
+==pbc_dump (parrot)==
+
+inst/bin/avalanche --input-filter-file=[http://avalanche.googlecode.com/files/mask_pbc_dump mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/PGE.pbc PGE.pbc] parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
+
+[http://avalanche.googlecode.com/files/pbc_dump_exploit_0_0 exploit]
+[http://avalanche.googlecode.com/files/pbc_dump_exploit_1_0 exploit]
