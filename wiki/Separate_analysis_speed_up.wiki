@@ -181,3 +181,9 @@ Avalanche worked for 280 seconds and exited normally, no new bugs were found.
 inst/bin/avalanche --debug --input-filter-file=[http://avalanche.googlecode.com/files/mask mask] --verbose --filename=!TestArrays.dll ./mono-2.6.7/mono/dis/monodis !TestArrays.dll
 
 produces a number of [http://avalanche.googlecode.com/files/exploit_5_0 exploit] files
+
+==Mono==
+
+inst/bin/avalanche --input-filter-file=[http://avalanche.googlecode.com/files/mask_mono mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/Hello.exe Hello.exe]  mono-2.6.7/inst/bin/mono !mono-2.6.7/inst/bin/Hello.exe
+
+[http://avalanche.googlecode.com/files/exploit_0_0 exploit]
