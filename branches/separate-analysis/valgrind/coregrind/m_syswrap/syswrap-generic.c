@@ -3546,6 +3546,7 @@ POST(sys_nanosleep)
 
 PRE(sys_open)
 {
+   VG_(printf)("PRE sys_open ARG1=%s\n", ARG1);
    HChar  name[30];
    SysRes sres;
 
@@ -3603,6 +3604,7 @@ HWord hashCode(Char* str)
 
 POST(sys_open)
 {
+   VG_(printf)("POST sys_open ARG1=%s, RES=%d\n", ARG1, RES);
    vg_assert(SUCCESS);
    if (fds == NULL) 
    {

@@ -46,11 +46,12 @@ static Logger *logger = Logger::getLogger();
 
 
 PluginExecutor::PluginExecutor(bool debug_full_enabled,
+			       bool traceChildren,
                                const string &install_dir,
                                const vector<string> &cmd,
                                const vector<string> &tg_args,
 			       Kind kind): 
-                                   debug_full(debug_full_enabled), kind(kind)
+                                   debug_full(debug_full_enabled), traceChildren(traceChildren), kind(kind)
 {
     if (cmd.size() < 1) {
         LOG(logger, "No program name");
@@ -59,7 +60,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     prog = strdup((install_dir + "valgrind").c_str());
 
     // last NULL element is needed by execvp()
-    args = (char **)calloc(cmd.size() + tg_args.size() + 3, sizeof(char *)); 
+    args = (char **)calloc(cmd.size() + tg_args.size() + 4, sizeof(char *)); 
 
     args[0] = strdup(prog);
     switch (kind)
@@ -70,12 +71,21 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
                        break;      
       case COVGRIND:   args[1] = strdup("--tool=covgrind");
     }
+
+    if (traceChildren)
+    {
+      args[2] = strdup("--trace-children=yes");
+    }
+    else
+    {
+      args[2] = strdup("--trace-children=no");
+    }
     
     for (size_t i = 0; i < tg_args.size(); i++)
-        args[i + 2] = strdup(tg_args[i].c_str());
+        args[i + 3] = strdup(tg_args[i].c_str());
 
     for (size_t i = 0; i < cmd.size(); i++)
-        args[i + tg_args.size() + 2] = strdup(cmd[i].c_str());
+        args[i + tg_args.size() + 3] = strdup(cmd[i].c_str());
 
     output = NULL;
 }

@@ -121,7 +121,7 @@ void ExecutionManager::runUninstrumented(Input* input)
     alarm(config->getAlarm());
     killed = false;
 
-    PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
+    PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
     curSockets = 0;
     cv_start = time(NULL);
     incv = true;
@@ -228,7 +228,7 @@ int ExecutionManager::checkAndScore(Input* input)
 
   plugin_opts.push_back("--log-file=execution.log");
 
-  PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
+  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
   curSockets = 0;
   cv_start = time(NULL);
   incv = true;
@@ -273,20 +273,20 @@ int ExecutionManager::checkAndScore(Input* input)
         if (!sameExploit)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "exploit_" << exploits << ".log";
+          ss << "stacktrace_" << exploits << ".log";
           cv_output.dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping exploit info to file " << ss.str());
+          REPORT(logger, "Dumping stack trace to file " << ss.str());
         }
         else
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "exploit_" << exploitGroup << ".log";
-          REPORT(logger, "Bug was detected previously. Exploit info can be found in " << ss.str());
+          ss << "stacktrace_" << exploitGroup << ".log";
+          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
         }
       }
       else
       {
-        REPORT(logger, "No exploit info is available.");
+        REPORT(logger, "No stack trace is available.");
       }
     }
     else
@@ -296,20 +296,20 @@ int ExecutionManager::checkAndScore(Input* input)
         if (!sameExploit)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "exploit_" << exploits << ".log";
+          ss << "stacktrace_" << exploits << ".log";
           cv_output.dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping exploit info to file " << ss.str());
+          REPORT(logger, "Dumping stack trace to file " << ss.str());
         }
         else
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "exploit_" << exploitGroup << ".log";
-          REPORT(logger, "Bug was detected previously. Exploit info can be found in " << ss.str());
+          ss << "stacktrace_" << exploitGroup << ".log";
+          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
         }
       }
       else
       {
-        REPORT(logger, "No exploit info is available.");
+        REPORT(logger, "No stack trace is available.");
       }
       for (int i = 0; i < input->files.size(); i++)
       {
@@ -625,7 +625,7 @@ void ExecutionManager::run()
         plugin_opts.push_back("--check-prediction=yes");
       }
       
-      PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
+      PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
       tg_start = time(NULL);
       intg = true;
       if (config->getTracegrindAlarm() == 0)
