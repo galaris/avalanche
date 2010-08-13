@@ -49,6 +49,7 @@ class PluginExecutor : public Executor
 {
 public:
     PluginExecutor(bool debug_full_enable,
+	           bool traceChildern,
                    const std::string &install_dir,
                    const std::vector<std::string> &cmd,
                    const std::vector<std::string> &tg_args,
@@ -60,6 +61,7 @@ public:
 
 private:
     bool debug_full;
+    bool traceChildren;
     Kind kind;
     FileBuffer* output;
 };

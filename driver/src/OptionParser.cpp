@@ -94,6 +94,9 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
         }
+        else if (arg_vec[i] == "--trace-children") {
+            config->setTraceChildren();
+        }
         else if (arg_vec[i] == "--suppress-subcalls") {
             config->setSuppressSubcalls();
         }

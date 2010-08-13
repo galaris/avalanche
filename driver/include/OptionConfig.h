@@ -38,6 +38,7 @@ public:
     OptionConfig(): debug(false),
                     verbose(false),
 		    sockets(false),
+		    traceChildren(false),
                     datagrams(false),
                     useMemcheck(false),
                     suppressSubcalls(false),
@@ -55,6 +56,7 @@ public:
 
     OptionConfig(const OptionConfig *opt_config)
     {
+        traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
         verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
@@ -110,6 +112,12 @@ public:
     
     bool getDebug() const
     { return debug; }
+
+    void setTraceChildren()
+    { traceChildren = true; }
+    
+    bool getTraceChildren() const
+    { return traceChildren; }
 
     void setDumpCalls()
     { dumpCalls = true; }
@@ -225,6 +233,7 @@ private:
     bool                     leaks;
     bool                     suppressSubcalls;
     bool                     dumpCalls;
+    bool 		     traceChildren;
     std::string              funcFilterType;
     std::string              funcFilterFile;
     std::size_t              depth;

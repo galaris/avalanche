@@ -1034,7 +1034,7 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
   }
   else if ((syscallno == __NR_clone) && !res.isError && (res.res == 0))
   {
-    //VG_(printf)("__NR_clone\n");
+    VG_(printf)("__NR_clone\n");
     //VG_(exit)(0);
   }
   else if (syscallno == __NR_open)
@@ -1085,7 +1085,7 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
     {
       if (inputFilterEnabled)
       {
-        if (!checkInputOffset(curoffs + (index - a)))
+        if (checkInputOffset(curoffs + (index - a)))
         {
           taintMemoryFromFile(index, curoffs + (index - a));
         }
@@ -1157,7 +1157,7 @@ void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_h
     {
       if (inputFilterEnabled)
       {
-        if (!checkInputOffset(index - a))
+        if (checkInputOffset(index - a))
         {
           taintMemoryFromFile(index, index - a);
         }
@@ -2861,6 +2861,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  //break;
 				}
                                 value2 = getLongDecimalValue(arg2, value2);
+				//VG_(printf)("Iop_Shl64 arg2->tag=%x value2LowerBytes=%lx value2UpperBytes=%lx value2=%llx\n", arg2->tag, value2LowerBytes, value2UpperBytes, value2);
 				if (value2 == 0)
                                 {
                                   l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, ltmp, curvisited);
@@ -2871,6 +2872,12 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
                                 }
+				else if (value2 >= 64)
+				{
+				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=0hex0000000000000000);\n", curblock, ltmp, curvisited);
+				  my_write(fdtrace, s, l);
+				  my_write(fddanger, s, l);
+				}
                                 else
                                 {
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=(", curblock, ltmp, curvisited);
@@ -3988,7 +3995,7 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
       my_write(fdtrace, s, l);
     }
     curdepth++;
-    if (curdepth > depth + invertdepth)
+    if ((curdepth > depth + invertdepth) && (fdfuncFilter == -1))
     {
       dump(fdtrace);
       dump(fddanger);
