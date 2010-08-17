@@ -551,23 +551,27 @@ void ExecutionManager::run()
         plugin_opts.push_back(tg_call_dump_file.str());
       }
 
-      if (config->getFuncFilterType() != "")
+      ostringstream tg_check_danger;
+      if (config->getCheckDanger())
       {
-        ostringstream tg_filter_type;
-        tg_filter_type << "--func-filter=" << config->getFuncFilterType();
-        plugin_opts.push_back(tg_filter_type.str());
-        for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
-        {
-          ostringstream tg_fname;
-          tg_fname << "--func-name=" << config->getFuncFilterUnit(i);
-          plugin_opts.push_back(tg_fname.str()); 
-        }
-        if (config->getFuncFilterFile() != "")
-        {
-          ostringstream tg_func_filter_filename;
-          tg_func_filter_filename << "--func-filter-file=" << config->getFuncFilterFile();
-          plugin_opts.push_back(tg_func_filter_filename.str());
-        }
+        tg_check_danger << "--check-danger=yes";
+      }
+      else
+      {
+        tg_check_danger << "--check-danger=no";
+      }
+      plugin_opts.push_back(tg_check_danger.str());
+      for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
+      {
+        ostringstream tg_fname;
+        tg_fname << "--func-name=" << config->getFuncFilterUnit(i);
+        plugin_opts.push_back(tg_fname.str()); 
+      }
+      if (config->getFuncFilterFile() != "")
+      {
+        ostringstream tg_func_filter_filename;
+        tg_func_filter_filename << "--func-filter-file=" << config->getFuncFilterFile();
+        plugin_opts.push_back(tg_func_filter_filename.str());
       }
  
       if (config->getInputFilterFile() != "")
@@ -707,76 +711,79 @@ void ExecutionManager::run()
       read(actualfd, actual, (fi->startdepth - 1 + config->getDepth()) * sizeof(bool));
       close(actualfd);
 
-      FileBuffer dtrace("dangertrace.log");
-      char* dquery;
-      while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
+      if (config->getCheckDanger())
       {
-        //dump to the separate file
-        unsigned int oldsize = dtrace.size;
-        dtrace.size = (dquery - dtrace.buf) + 13;
-        //dtrace.dumpFile(".avalanche/curdtrace.log");
-        dtrace.dumpFile("curdtrace.log");
-        //replace QUERY(FALSE); with newlines
-        int k = 0;
-        for (; k < 13; k++)
+        FileBuffer dtrace("dangertrace.log");
+        char* dquery;
+        while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
         {
-          dquery[k] = '\n';
-        }
-        k = -1;
-        while (dquery[k] != '\n')
-        {
-          dquery[k] = '\n';
-          k--;
-        }
-        //restore the FileBuffer size
-        dtrace.size = oldsize;
-        //set up the STP_Input to the newly dumped trace
-        STP_Input si;
-        //si.setFile(".avalanche/curdtrace.log");
-        si.setFile("curdtrace.log");
-        //the rest stuff
-        STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-        stp_start = time(NULL);
-        instp = true;
-        nokill = true;
-        STP_Output *stp_output = stp_exe.run(&si);
-        nokill = false;
-        instp = false;
-        stp_end = time(NULL);
-        stp_time += stp_end - stp_start;
-        if (stp_output == NULL)
-        {
-          ERR(logger, "STP has encountered an error");
-          FileBuffer f("curdtrace.log");
-          ERR(logger, "curdtrace.log:\n" << string(f.buf));
-          continue;
-        }
-        if (stp_output->getFile() != NULL)
-        {
-          FileBuffer f(stp_output->getFile());
-          DBG(logger, "stp output:\n" << string(f.buf));
-          Input* next = new Input();
-          for (int i = 0; i < fi->files.size(); i++)
-          { 
-            FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
-            if (fb == NULL)
-            {
-              delete next;
-              next = NULL;
-              break;
-            }
-            else
-            {
-              next->files.push_back(fb);
-            }
-          }
-          if (next != NULL)
+          //dump to the separate file
+          unsigned int oldsize = dtrace.size;
+          dtrace.size = (dquery - dtrace.buf) + 13;
+          //dtrace.dumpFile(".avalanche/curdtrace.log");
+          dtrace.dumpFile("curdtrace.log");
+          //replace QUERY(FALSE); with newlines
+          int k = 0;
+          for (; k < 13; k++)
           {
-            runUninstrumented(next);
-            delete next;
+            dquery[k] = '\n';
           }
+          k = -1;
+          while (dquery[k] != '\n')
+          {
+            dquery[k] = '\n';
+            k--;
+          }
+          //restore the FileBuffer size
+          dtrace.size = oldsize;
+          //set up the STP_Input to the newly dumped trace
+          STP_Input si;
+          //si.setFile(".avalanche/curdtrace.log");
+          si.setFile("curdtrace.log");
+          //the rest stuff
+          STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
+          stp_start = time(NULL);
+          instp = true;
+          nokill = true;
+          STP_Output *stp_output = stp_exe.run(&si);
+          nokill = false;
+          instp = false;
+          stp_end = time(NULL);
+          stp_time += stp_end - stp_start;
+          if (stp_output == NULL)
+          {
+            ERR(logger, "STP has encountered an error");
+            FileBuffer f("curdtrace.log");
+            ERR(logger, "curdtrace.log:\n" << string(f.buf));
+            continue;
+          }
+          if (stp_output->getFile() != NULL)
+          {
+            FileBuffer f(stp_output->getFile());
+            DBG(logger, "stp output:\n" << string(f.buf));
+            Input* next = new Input();
+            for (int i = 0; i < fi->files.size(); i++)
+            { 
+              FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
+              if (fb == NULL)
+              {
+                delete next;
+                next = NULL;
+                break;
+              }
+              else
+              {
+                next->files.push_back(fb);
+              }
+            }
+            if (next != NULL)
+            {
+              runUninstrumented(next);
+              delete next;
+            }
+          }
+          delete stp_output;
         }
-        delete stp_output;
       }
 
       FileBuffer trace("trace.log");
