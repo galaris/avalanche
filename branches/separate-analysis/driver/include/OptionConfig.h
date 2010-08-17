@@ -36,6 +36,7 @@ class OptionConfig
 {
 public:
     OptionConfig(): debug(false),
+		    checkDanger(false),
                     verbose(false),
 		    sockets(false),
 		    traceChildren(false),
@@ -45,7 +46,6 @@ public:
                     dumpCalls(false),
                     dumpRuns(1),
                     leaks(false),
-                    funcFilterType(std::string("all")),
                     funcFilterFile(std::string("")),
                     depth(100),
                     alarm(300),
@@ -58,6 +58,7 @@ public:
     {
         traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
+        checkDanger     = opt_config->checkDanger;
         verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
         datagrams       = opt_config->datagrams;
@@ -71,8 +72,7 @@ public:
         port	        = opt_config->port;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
-        funcFilterType      = opt_config->funcFilterType;
-        funcFilterFile      = opt_config->funcFilterFile;
+        funcFilterFile  = opt_config->funcFilterFile;
         funcFilterUnits = opt_config->funcFilterUnits;
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
@@ -88,12 +88,6 @@ public:
     
     const std::string &getValgrind() const
     { return valgrind; }
-
-    void setFuncFilterType(const std::string &filter)
-    { funcFilterType = filter; }
-    
-    const std::string getFuncFilterType() const
-    { return funcFilterType; }
 
     void setFuncFilterFile(const std::string &fileName)
     { funcFilterFile = fileName; }
@@ -136,6 +130,12 @@ public:
     
     bool getVerbose() const
     { return verbose; }
+
+    void setCheckDanger()
+    { checkDanger = true; }
+    
+    bool getCheckDanger() const
+    { return checkDanger; }
 
     void setUsingSockets()
     { sockets = true; }
@@ -230,11 +230,11 @@ private:
     bool		     sockets;
     bool                     datagrams;
     bool                     useMemcheck;
+    bool                     checkDanger;
     bool                     leaks;
     bool                     suppressSubcalls;
     bool                     dumpCalls;
     bool 		     traceChildren;
-    std::string              funcFilterType;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;

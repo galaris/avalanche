@@ -94,6 +94,9 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
         }
+        else if (arg_vec[i] == "--check-danger") {
+            config->setCheckDanger();
+        }
         else if (arg_vec[i] == "--trace-children") {
             config->setTraceChildren();
         }
@@ -106,10 +109,6 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i].find("--dump-runs=") != string::npos) {
             string num = arg_vec[i].substr(strlen("--dump-runs="));
             config->setDumpRuns(atoi(num.c_str()));
-        }
-        else if (arg_vec[i].find("--func-filter=") != string::npos) {
-            string filter = arg_vec[i].substr(strlen("--func-filter="));
-            config->setFuncFilterType(filter);
         }
         else if (arg_vec[i] == "--verbose") {
             config->setVerbose();

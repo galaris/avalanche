@@ -117,12 +117,8 @@ struct _sizeNode
 
 typedef struct _sizeNode sizeNode;
 
-UInt queryCounter = 0;
-
 Addr curIAddr;
 Bool enableFiltering = False;
-Bool filterConditions = False;
-Bool filterDangerous = False;
 
 Bool suppressSubcalls = False;
 
@@ -134,7 +130,7 @@ Char* diVarName;
 Bool newSB;
 IRSB* printSB;
 
-Bool dumpCalls;
+Bool dumpCalls = False;
 Int fdfuncFilter = -1;
 
 Bool inputFilterEnabled;
@@ -195,6 +191,8 @@ Int curdepth;
 Int memory = 0;
 Int registers = 0;
 UInt curvisited;
+
+Bool checkDanger = False;
 
 static
 Bool getFunctionName(Addr addr, Bool onlyEntry, Bool showOffset)
@@ -1511,7 +1509,7 @@ void instrumentPutConst(IRStmt* clone, UInt offset)
 static
 void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, UInt rtmp)
 {
-  if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL && (!filterDangerous || !enableFiltering || useFiltering()))
+  if (checkDanger && (VG_(HT_lookup)(taintedTemps, rtmp) != NULL) && (!enableFiltering || useFiltering()))
   {
     Char s[256];
     Int l = 0;
@@ -1521,11 +1519,10 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
-    if (dumpCalls && fdfuncFilter >= 0)
+    if (dumpCalls && (fdfuncFilter >= 0))
     {
       dumpCall();
     }
-    queryCounter ++;
     l = VG_(sprintf)(s, format, curblock, rtmp, curvisited, seg->start);
     my_write(fddanger, s, l);
 
@@ -2890,13 +2887,13 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  my_write(fddanger, s, l);
 				}
 				break;
-      case Iop_DivU64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
+      case Iop_DivU64:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
-                                  if (dumpCalls && fdfuncFilter >= 0)
+				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (dumpCalls && (fdfuncFilter >= 0))
                                   {
                                     dumpCall();
                                   }
@@ -2914,13 +2911,13 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivS64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
+      case Iop_DivS64:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
-                                  if (dumpCalls && fdfuncFilter >= 0)
+				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (dumpCalls && (fdfuncFilter >= 0))
                                   {
                                     dumpCall();
                                   }
@@ -2969,13 +2966,13 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 #endif
     switch (oprt)
     {
-      case Iop_DivModU64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
+      case Iop_DivModU64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
-                                  if (dumpCalls && fdfuncFilter >= 0)
+				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (dumpCalls && (fdfuncFilter >= 0))
                                   {
                                     dumpCall();
                                   }
@@ -3001,13 +2998,13 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivModS64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
+      case Iop_DivModS64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
-                                  if (dumpCalls && fdfuncFilter >= 0)
+				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (dumpCalls && (fdfuncFilter >= 0))
                                   {
                                     dumpCall();
                                   }
@@ -3380,13 +3377,13 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  my_write(fddanger, s, l);
 				}
 				break;
-      case Iop_DivU32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
+      case Iop_DivU32:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
-                                  if (dumpCalls && fdfuncFilter >= 0)
+				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (dumpCalls && (fdfuncFilter >= 0))
                                   {
                                     dumpCall();
                                   }
@@ -3404,13 +3401,13 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivS32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r) && (!filterDangerous || !enableFiltering || useFiltering()))
+      case Iop_DivS32:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n"); queryCounter ++;
-                                  if (dumpCalls && fdfuncFilter >= 0)
+				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (dumpCalls && (fdfuncFilter >= 0))
                                   {
                                     dumpCall();
                                   }
@@ -3602,7 +3599,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 {
   UShort size = curNode->temps[tmp].size;
   UWord addr = (UWord) storeAddr;
-  if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL && (!filterDangerous || !enableFiltering || useFiltering()))
+  if (checkDanger && (VG_(HT_lookup)(taintedTemps, ltmp) != NULL) && (!enableFiltering || useFiltering()))
   {
     Char s[256];
     Int l = 0;
@@ -3612,11 +3609,10 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
-    if (dumpCalls && fdfuncFilter >= 0)
+    if (dumpCalls && (fdfuncFilter >= 0))
     {
       dumpCall();
     }
-    queryCounter ++;
     l = VG_(sprintf)(s, format, curblock, ltmp, curvisited, seg->start);
     my_write(fddanger, s, l);
   }
@@ -3767,7 +3763,7 @@ void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
 static
 void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
 {
-  if (VG_(HT_lookup)(taintedTemps, tmp) != NULL && (!filterConditions || !enableFiltering || useFiltering()))
+  if ((VG_(HT_lookup)(taintedTemps, tmp) != NULL) && (!enableFiltering || useFiltering()))
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
@@ -3819,8 +3815,8 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     }
     if (curdepth >= depth)
     {
-      l = VG_(sprintf)(s, "QUERY(FALSE);\n"); queryCounter ++;
-      if (dumpCalls && fdfuncFilter >= 0)
+      l = VG_(sprintf)(s, "QUERY(FALSE);\n");
+      if (dumpCalls && (fdfuncFilter >= 0))
       {
         dumpCall();
       }
@@ -4350,30 +4346,12 @@ static Bool tg_process_cmd_line_option(Char* arg)
     VG_(HT_add_node)(inputfiles, node);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--func-filter", filtertype))
-  {
-    if (!VG_(strcmp) (filtertype, "all"))
-    {
-      filterConditions = True;
-      filterDangerous = True;
-    }
-    else if (!VG_(strcmp) (filtertype, "conds"))
-    {
-      filterConditions = True;
-    }
-    else if (!VG_(strcmp) (filtertype, "danger_ops"))
-    {
-      filterDangerous = True;
-    }
-    else
-    {
-      return False;
-    }
-    return True;
-  }
   else if (VG_BOOL_CLO(arg, "--dump-calls", dumpCalls))
   {
-    dumpCalls = True;
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))
+  {
     return True;
   }
   else if (VG_STR_CLO(arg, "--dump-file", dumpfile))
@@ -4384,7 +4362,6 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
   {
-    suppressSubcalls = True;
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--sockets",  sockets))
