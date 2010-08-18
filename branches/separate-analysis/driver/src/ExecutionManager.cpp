@@ -534,7 +534,6 @@ void ExecutionManager::run()
       vector<string> plugin_opts;
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
-      plugin_opts.push_back("--dump-prediction=yes");
 
       if (config->getDumpCalls())
       {
@@ -549,6 +548,10 @@ void ExecutionManager::run()
           tg_call_dump_file << "--dump-file=calldump_" << config->getDumpRuns() - dumpRuns << ".log";
         }
         plugin_opts.push_back(tg_call_dump_file.str());
+      }
+      else
+      {
+        plugin_opts.push_back("--dump-prediction=yes");
       }
 
       ostringstream tg_check_danger;

@@ -4413,8 +4413,10 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if VG_BOOL_CLO(arg, "--dump-prediction",  dumpPrediction)
   {
-    dumpPrediction = True;
-    actual = VG_(malloc)("prediction", (depth + invertdepth) * sizeof(Bool));
+    if (dumpPrediction)
+    {
+      actual = VG_(malloc)("prediction", (depth + invertdepth) * sizeof(Bool));
+    }
     return True;
   }
   else
