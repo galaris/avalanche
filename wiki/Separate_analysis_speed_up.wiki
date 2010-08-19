@@ -194,3 +194,9 @@ inst/bin/avalanche --input-filter-file=[http://avalanche.googlecode.com/files/ma
 
 [http://avalanche.googlecode.com/files/pbc_dump_exploit_0_0 exploit]
 [http://avalanche.googlecode.com/files/pbc_dump_exploit_1_0 exploit]
+
+==llc (llvm)==
+
+inst/bin/avalanche --debug --verbose  --input-filter-file=[http://avalanche.googlecode.com/files/mask_llvm mask_llvm] --filename=[http://avalanche.googlecode.com/files/hello.bc hello.bc] llvm-2.7/inst/bin/llc hello.bc
+
+a significant speedup for detection of [http://avalanche.googlecode.com/files/exploit_126_0 exploit]
