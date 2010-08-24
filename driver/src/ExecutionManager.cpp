@@ -580,7 +580,7 @@ void ExecutionManager::run()
       if (config->getInputFilterFile() != "")
       {
         ostringstream tg_input_filter_filename;
-        tg_input_filter_filename << "--input-filter-file=" << config->getInputFilterFile();
+        tg_input_filter_filename << "--mask=" << config->getInputFilterFile();
         plugin_opts.push_back(tg_input_filter_filename.str());
       }
 
