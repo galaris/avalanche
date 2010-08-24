@@ -130,7 +130,6 @@ Char* diVarName;
 Bool newSB;
 IRSB* printSB;
 
-Bool dumpCalls = False;
 Int fdfuncFilter = -1;
 
 Bool inputFilterEnabled;
@@ -1519,7 +1518,7 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
-    if (dumpCalls && (fdfuncFilter >= 0))
+    if (fdfuncFilter >= 0)
     {
       dumpCall();
     }
@@ -2893,7 +2892,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (dumpCalls && (fdfuncFilter >= 0))
+                                  if (fdfuncFilter >= 0)
                                   {
                                     dumpCall();
                                   }
@@ -2917,7 +2916,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (dumpCalls && (fdfuncFilter >= 0))
+                                  if (fdfuncFilter >= 0)
                                   {
                                     dumpCall();
                                   }
@@ -2972,7 +2971,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (dumpCalls && (fdfuncFilter >= 0))
+                                  if (fdfuncFilter >= 0)
                                   {
                                     dumpCall();
                                   }
@@ -3004,7 +3003,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (dumpCalls && (fdfuncFilter >= 0))
+                                  if (fdfuncFilter >= 0)
                                   {
                                     dumpCall();
                                   }
@@ -3383,7 +3382,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (dumpCalls && (fdfuncFilter >= 0))
+                                  if (fdfuncFilter >= 0)
                                   {
                                     dumpCall();
                                   }
@@ -3407,7 +3406,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (dumpCalls && (fdfuncFilter >= 0))
+                                  if (fdfuncFilter >= 0)
                                   {
                                     dumpCall();
                                   }
@@ -3609,7 +3608,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
-    if (dumpCalls && (fdfuncFilter >= 0))
+    if (fdfuncFilter >= 0)
     {
       dumpCall();
     }
@@ -3816,7 +3815,7 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     if (curdepth >= depth)
     {
       l = VG_(sprintf)(s, "QUERY(FALSE);\n");
-      if (dumpCalls && (fdfuncFilter >= 0))
+      if (fdfuncFilter >= 0)
       {
         dumpCall();
       }
@@ -3827,10 +3826,6 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     {
       dump(fdtrace);
       dump(fddanger);
-      if (dumpCalls)
-      {
-        dump(fdfuncFilter);
-      }
       if (dumpPrediction)
       {
         SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
@@ -4237,7 +4232,7 @@ static void tg_fini(Int exitcode)
 {
   dump(fdtrace);
   dump(fddanger);
-  if (dumpCalls)
+  if (fdfuncFilter >= 0)
   {
     dump(fdfuncFilter);
   }
@@ -4344,10 +4339,6 @@ static Bool tg_process_cmd_line_option(Char* arg)
     node->filename = inputfile;
     node->declared = False;
     VG_(HT_add_node)(inputfiles, node);
-    return True;
-  }
-  else if (VG_BOOL_CLO(arg, "--dump-calls", dumpCalls))
-  {
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))

@@ -44,7 +44,6 @@ public:
                     useMemcheck(false),
                     suppressSubcalls(false),
                     dumpCalls(false),
-                    dumpRuns(1),
                     leaks(false),
                     funcFilterFile(std::string("")),
                     depth(100),
@@ -76,7 +75,6 @@ public:
         funcFilterUnits = opt_config->funcFilterUnits;
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
-        dumpRuns        = opt_config->dumpRuns;
         inputFilterFile = opt_config->inputFilterFile;
     }
 
@@ -173,12 +171,6 @@ public:
     unsigned int getAlarm() const
     { return alarm; }
 
-    void setDumpRuns(unsigned int num)
-    { dumpRuns = num; }
-
-    unsigned int getDumpRuns() const
-    { return dumpRuns; }
-
     void addFuncFilterUnit(const std::string &fn)
     { funcFilterUnits.push_back(fn); }
 
@@ -245,7 +237,6 @@ private:
     std::string		     host;
     unsigned int	     port;
     std::vector<std::string> funcFilterUnits;
-    unsigned int             dumpRuns;
     std::string              inputFilterFile;
 };
 

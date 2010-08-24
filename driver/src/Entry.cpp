@@ -96,7 +96,6 @@ static void printHelpBanner()
         "    --check-danger               enable emition of special checking constraints\n"
 	"                                 for memory access operations and divisions (slows down the analysis)\n"
 	"    --dump-calls                 enables dumping list of called functions to calldump.log\n"
-	"    --dump-runs=<num>            number of Tracegrind runs to create list of called functions (default is 1)\n"
 	"    --func-name=<name>           the name of function that should be used for function separate analysis\n"
 	"    --func-filter-file=<name>    the path to the file with the list of functions that\n"
 	"                                 should be used for function separate analysis\n"
