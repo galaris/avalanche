@@ -4307,7 +4307,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
     VG_(close)(fd);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--input-filter-file", inputfilterfile))
+  else if (VG_STR_CLO(arg, "--mask", inputfilterfile))
   {
     inputFilter = VG_(newXA) (VG_(malloc), "inputFilter", VG_(free), sizeof(offsetPair));
     parseInputFilterFile(inputfilterfile);
