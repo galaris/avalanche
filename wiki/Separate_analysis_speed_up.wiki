@@ -57,7 +57,7 @@ user@machine:$ hexdump seed
 }}}
 3) launching with
 {{{
-user@machine:$ ./inst/bin/avalanche --input-filter-file=mask --filename=seed ../libquicktime-1.1.3/inst/bin/qtdump seed 
+user@machine:$ ./inst/bin/avalanche --mask=mask --filename=seed ../libquicktime-1.1.3/inst/bin/qtdump seed 
 }}}
 
 
@@ -159,7 +159,7 @@ user@machine:$hexdump seed
 
 3) launching with
 {{{
-user@machine:$ ./inst/bin/avalanche --func-filter=conds --func-name=swf_ReadSWF2 --suppress-subcalls --input-filter-file=mask --filename=seed ../swftools-0.9.0/inst/bin/swfdump seed 
+user@machine:$ ./inst/bin/avalanche --func-filter=conds --func-name=swf_ReadSWF2 --suppress-subcalls --mask=mask --filename=seed ../swftools-0.9.0/inst/bin/swfdump seed 
 }}}
 
 Results:
@@ -178,25 +178,25 @@ Avalanche worked for 280 seconds and exited normally, no new bugs were found.
 
 ==Monodis==
 
-inst/bin/avalanche --trace-children --debug --input-filter-file=[http://avalanche.googlecode.com/files/mask mask] --verbose --filename=!TestArrays.dll ./mono-2.6.7/mono/dis/monodis !TestArrays.dll
+inst/bin/avalanche --trace-children --debug --mask=[http://avalanche.googlecode.com/files/mask mask] --verbose --filename=!TestArrays.dll ./mono-2.6.7/mono/dis/monodis !TestArrays.dll
 
 produces a number of [http://avalanche.googlecode.com/files/exploit_5_0 exploit] files
 
 ==Mono==
 
-inst/bin/avalanche --trace-children --input-filter-file=[http://avalanche.googlecode.com/files/mask_mono mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/Hello.exe Hello.exe]  mono-2.6.7/inst/bin/mono mono-2.6.7/inst/bin/Hello.exe
+inst/bin/avalanche --trace-children --mask=[http://avalanche.googlecode.com/files/mask_mono mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/Hello.exe Hello.exe]  mono-2.6.7/inst/bin/mono mono-2.6.7/inst/bin/Hello.exe
 
 [http://avalanche.googlecode.com/files/exploit_0_0 exploit]
 
 ==pbc_dump (parrot)==
 
-inst/bin/avalanche --input-filter-file=[http://avalanche.googlecode.com/files/mask_pbc_dump mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/PGE.pbc PGE.pbc] parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
+inst/bin/avalanche --mask=[http://avalanche.googlecode.com/files/mask_pbc_dump mask] --debug --verbose --filename=[http://avalanche.googlecode.com/files/PGE.pbc PGE.pbc] parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
 
 [http://avalanche.googlecode.com/files/pbc_dump_exploit_0_0 exploit]
 [http://avalanche.googlecode.com/files/pbc_dump_exploit_1_0 exploit]
 
 ==llc (llvm)==
 
-inst/bin/avalanche --debug --verbose  --input-filter-file=[http://avalanche.googlecode.com/files/mask_llvm mask_llvm] --filename=[http://avalanche.googlecode.com/files/hello.bc hello.bc] llvm-2.7/inst/bin/llc hello.bc
+inst/bin/avalanche --debug --verbose  --mask=[http://avalanche.googlecode.com/files/mask_llvm mask_llvm] --filename=[http://avalanche.googlecode.com/files/hello.bc hello.bc] llvm-2.7/inst/bin/llc hello.bc
 
 a significant speedup for detection of [http://avalanche.googlecode.com/files/exploit_126_0 exploit]
