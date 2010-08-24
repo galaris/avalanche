@@ -106,10 +106,6 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i] == "--dump-calls") {
             config->setDumpCalls();
         }
-        else if (arg_vec[i].find("--dump-runs=") != string::npos) {
-            string num = arg_vec[i].substr(strlen("--dump-runs="));
-            config->setDumpRuns(atoi(num.c_str()));
-        }
         else if (arg_vec[i] == "--verbose") {
             config->setVerbose();
         }
