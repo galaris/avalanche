@@ -66,6 +66,7 @@ VgHashTable fds = NULL;
 VgHashTable inputfiles = NULL;
 HChar* curfile;
 Int cursocket = -1;
+Int curfilenum = -1;
 Int boundSocket = -1;
 Int listeningSocket = -1;
 ULong curoffs;
@@ -77,6 +78,7 @@ Bool sockets = False;
 Bool datagrams = False;
 Bool isRecv = False;
 Int socketsNum = 0;
+Int fileNum = 0;
 UShort port;
 UChar ip1, ip2, ip3, ip4;
 
@@ -1246,7 +1248,7 @@ ML_(generic_POST_sys_socket) ( ThreadId tid, SysRes res, UWord arg0, UWord arg1,
      {
        node = VG_(malloc)("fdsNode", sizeof(fdsNode));
        node->key = res.res;
-       node->size = socketsNum++;
+       node->seqnum = socketsNum++;
        node->name = NULL;
        node->offs = 0;
        VG_(HT_add_node)(fds, node);
@@ -1256,7 +1258,7 @@ ML_(generic_POST_sys_socket) ( ThreadId tid, SysRes res, UWord arg0, UWord arg1,
        node->name = NULL;
        node->offs = 0;
      }
-     cursocket = node->size;
+     cursocket = node->seqnum;
    }
    else
    {
@@ -1342,7 +1344,7 @@ ML_(generic_POST_sys_accept) ( ThreadId tid,
      {
        node = VG_(malloc)("fdsNode", sizeof(fdsNode));
        node->key = res.res;
-       node->size = socketsNum++;
+       node->seqnum = socketsNum++;
        node->name = NULL;
        node->offs = 0;
        VG_(HT_add_node)(fds, node);
@@ -1352,7 +1354,7 @@ ML_(generic_POST_sys_accept) ( ThreadId tid,
        node->name = NULL;
        node->offs = 0;
      }
-     cursocket = node->size;
+     cursocket = node->seqnum;
    }
    else
    {
@@ -1445,7 +1447,7 @@ ML_(generic_POST_sys_recvfrom) ( ThreadId tid,
      fdsNode* node = VG_(HT_lookup)(fds, arg0);
      if (node != NULL)
      {
-       cursocket = node->size;
+       cursocket = node->seqnum;
        curoffs = node->offs;
        //MSG_PEEK = 0x02
        if ((arg3 & 0x02) == 0)
@@ -1502,7 +1504,7 @@ ML_(generic_POST_sys_recv) ( ThreadId tid,
      fdsNode* node = VG_(HT_lookup)(fds, arg0);
      if (node != NULL)
      {
-       cursocket = node->size;
+       cursocket = node->seqnum;
        curoffs = node->offs;
        //MSG_PEEK = 0x02
        if ((arg3 & 0x02) == 0)
@@ -1568,7 +1570,7 @@ ML_(generic_PRE_sys_connect) ( ThreadId tid,
          {
            node = VG_(malloc)("fdsNode", sizeof(fdsNode));
            node->key = arg0;
-           node->size = socketsNum++;
+           node->seqnum = socketsNum++;
            node->name = NULL;
            node->offs = 0;
            VG_(HT_add_node)(fds, node);
@@ -1578,7 +1580,7 @@ ML_(generic_PRE_sys_connect) ( ThreadId tid,
            node->name = NULL;
            node->offs = 0;
          }
-         cursocket = node->size;
+         cursocket = node->seqnum;
        }
        else
        {
@@ -2054,15 +2056,18 @@ ML_(generic_PRE_sys_mmap) ( ThreadId tid,
        curfile = node->name;
        cursize = node->size;
        curoffs = arg6;
+       curfilenum = node->seqnum;
      }
      else
      {
        curfile = NULL;
+       curfilenum = -1;
      }
    }
    else
    {
      curfile = NULL;
+     curfilenum = -1;
    }
 
 
@@ -2929,6 +2934,7 @@ POST(sys_close)
       VG_(printf)("caught close arg=%ld\n", ARG1);
       VG_(HT_remove)(fds, ARG1);
       curfile = NULL;
+      curfilenum = -1;
       cursocket = -1;
       cursize = 0;
       curoffs = 0;
@@ -3551,6 +3557,7 @@ PRE(sys_open)
    SysRes sres;
 
    curfile = NULL;
+   curfilenum = -1;
 
    if (ARG2 & VKI_O_CREAT) {
       // 3-arg version
@@ -3706,6 +3713,7 @@ POST(sys_open)
        node->key = RES;
        node->name = name;
        node->offs = 0;
+       node->seqnum = fileNum++;
        VG_(HT_add_node)(fds, node);
      }
      else
@@ -3722,10 +3730,12 @@ POST(sys_open)
      VG_(fstat)(RES,  &fileInfo);
      node->size = fileInfo.st_size; 
      curfile = node->name;
+     curfilenum = node->seqnum;
    }
    else
    {
      curfile = NULL;
+     curfilenum = -1;
    }
    if (!ML_(fd_allowed)(RES, "open", tid, True)) {
       VG_(close)(RES);
@@ -3748,17 +3758,20 @@ PRE(sys_read)
        curfile = node->name;
        curoffs = node->offs;
        cursize = node->size;
+       curfilenum = node->seqnum;
        node->offs = node->offs + (ULong) ARG3 < cursize ? node->offs + (ULong) ARG3 : cursize;
        VG_(printf)("caught read, curfile=%s curoffs=%d cursize=%d\n", curfile, curoffs, cursize);
      }
      else
      {
        curfile = NULL;
+       curfilenum = -1;
      }
    }
    else
    {
      curfile = NULL;
+     curfilenum = -1;
    }
    PRINT("sys_read ( %ld, %#lx, %llu )", ARG1, ARG2, (ULong)ARG3);
    PRE_REG_READ3(ssize_t, "read",
@@ -3777,7 +3790,7 @@ POST(sys_read)
      fdsNode* node = VG_(HT_lookup)(fds, ARG1);
      if (node != NULL)
      {
-       cursocket = node->size;
+       cursocket = node->seqnum;
        curoffs = node->offs;
        node->offs = node->offs + RES;
        VG_(printf)("caught read from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
