@@ -10,6 +10,8 @@
 
    Copyright (C) 2010 Mikhail Ermakov
       mermakov@ispras.ru
+   Copyright (C) 2010 Ildar Isaev
+      iisaev@ispras.ru
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -39,7 +41,7 @@
 #include "pub_tool_xarray.h"
 
 extern VgHashTable funcNames;
-extern XArray* inputFilter;
+XArray** inputFilter;
 
 Bool isStandardFunction (Char* objName)
 {
@@ -274,81 +276,137 @@ Bool leaveFnName (Char* fnName)
   return True;
 }
 
-Bool parseInputFilterFile (Char* fileName)
+Bool parseMask(Char* filename)
 {
-  UChar curNumber[20], curSymbol;
-  Int curNumberLength = 0;
-  ULong newNumber, lastNumber = 0;
-  Bool isSequence = False;
-  Bool isHex = False;
-  Bool firstNumber = True;
-  Int fd = VG_(open) (fileName, VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
-  while (VG_(read) (fd, &curSymbol, sizeof(Char)) > 0)
+  inputFilter = VG_(newXA)(VG_(malloc), "inputFilter", VG_(free), sizeof(XArray*));
+  Int fd = VG_(open)(filename, VKI_O_RDWR | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+  struct vg_stat fileInfo;
+  VG_(fstat)(fd,  &fileInfo);
+  Long size = fileInfo.st_size; 
+  Char* buf = (Char*) VG_(malloc)("buf", size + 1);
+  VG_(read)(fd, buf, size);
+  buf[size] = '\0';
+  VG_(close)(fd);
+  Char* str = buf;
+  Char** endptr = &str;
+  XArray* curfilter = VG_(newXA)(VG_(malloc), "chunk", VG_(free), sizeof(offsetPair));
+  Int i = 0;
+  for (;;)
   {
-    if (VG_(isdigit) (curSymbol) || curSymbol == 'x' || curSymbol == 'X' || 
-        (curSymbol >= 'a' && curSymbol <= 'f') || (curSymbol >= 'A' && curSymbol <= 'F'))
+    while (VG_(isspace)(*str))
     {
-      if (!VG_(isdigit) (curSymbol)) isHex = True;
-      curNumber[curNumberLength ++] = curSymbol;
-      curNumber[curNumberLength] = '\0';
-    }
-    else if (curNumberLength != 0)
-    {
-      curNumberLength = 0;
-      if (firstNumber)
+      while (VG_(isspace)(*str) && (*str != '\n'))
       {
-        lastNumber = (isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL);
-        firstNumber = False;
-        if (curSymbol == '-') isSequence = True;
+        str++;
+      }
+      if (*str == '\n')
+      {
+        VG_(addToXA)(inputFilter, &curfilter);
+        curfilter = VG_(newXA)(VG_(malloc), "chunk", VG_(free), sizeof(offsetPair));
+        str++;
+      }
+    }
+    Char* str0 = str;
+    Long p1 = VG_(strtoll16)(str, endptr);
+    if ((*endptr == str0) && (p1 == 0))
+    {
+      str = *endptr;
+      if (*str == '\0')
+      {
+        break;
+      }
+      while (VG_(isspace)(*str) && (*str != '\n'))
+      {
+        str++;
+      }
+      if (*str != '\n')
+      {
+        return False;
       }
       else
       {
-        offsetPair* newPair = VG_(malloc) ("newPair", sizeof(offsetPair));
-        if (curSymbol == '-')
-        {
-          lastNumber = (isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL);
-          isSequence = True;
-        }
-        else
-        {
-          newNumber = (isHex) ? VG_(strtoll16) (curNumber, NULL) : VG_(strtoll10) (curNumber, NULL);
-          if (isSequence)
-          {
-            isSequence = False;
-            newPair->last = newNumber;
-            newPair->first = lastNumber;
-          }
-          else
-          {
-            newPair->last = newNumber;
-            newPair->first = newNumber;
-          }
-          VG_(addToXA) (inputFilter, newPair);
-        }
+        VG_(addToXA)(inputFilter, &curfilter);
+        curfilter = VG_(newXA)(VG_(malloc), "chunk", VG_(free), sizeof(offsetPair));
+        str++;
+        continue;
       }
-      isHex = False;
+    }
+    Long p2 = p1;
+    str = *endptr;
+    while (VG_(isspace)(*str) && (*str != '\n'))
+    {
+      str++;
+    }
+    if (*str == '-')
+    {
+      str++;
+      str0 = str;
+      p2 = VG_(strtoll16)(str, endptr);
+      if ((*endptr == str0) && (p2 == 0))
+      {
+        return False;
+      }
+    }
+    offsetPair* newPair = VG_(malloc) ("newPair", sizeof(offsetPair));
+    newPair->first = p1;
+    newPair->last = p2;
+    //VG_(printf)("p1=%x\n", p1);
+    //VG_(printf)("p2=%x\n", p2);
+    VG_(addToXA)(curfilter, newPair);
+    str = *endptr;
+    while (VG_(isspace)(*str) && (*str != '\n'))
+    {
+      str++;
+    }
+    if (*str == '\n')
+    {
+      VG_(addToXA)(inputFilter, &curfilter);
+      curfilter = VG_(newXA)(VG_(malloc), "chunk", VG_(free), sizeof(offsetPair));
+      str++;
+    }
+    if (*str == '\0')
+    {
+      break;
     }
   }
+  VG_(free)(buf);
   return True;
 }
 
-Bool checkInputOffset (ULong offs)
+Bool checkInputOffset(Int curfilenum, ULong offs)
 {
-  Int i;
-  for (i = 0; i < VG_(sizeXA) (inputFilter); i ++)
+  if (curfilenum > VG_(sizeXA)(inputFilter))
   {
-    offsetPair* elem = (offsetPair*) VG_(indexXA) (inputFilter, i);
-    if (offs >= elem->first && offs <= elem->last) return True;
+    return True;
+  }
+  XArray** curfilter = (XArray**) VG_(indexXA)(inputFilter, curfilenum);
+  Int i = 0;
+  for (; i < VG_(sizeXA)(*curfilter); i++)
+  {
+    offsetPair* elem = (offsetPair*) VG_(indexXA)(*curfilter, i);
+    if ((offs >= elem->first) && (offs <= elem->last)) 
+    {
+      return True;
+    }
   }
   return False;
 }
 
-void printInputOffsets (void)
+void printInputOffsets()
 {
-  Int i;
-  for (i = 0; i < VG_(sizeXA) (inputFilter); i ++)
+  Int i = 0;
+  VG_(printf)("VG_(sizeXA)(inputFilter)=%d\n", VG_(sizeXA)(inputFilter));
+  for (; i < VG_(sizeXA)(inputFilter); i++)
   {
-    offsetPair* elem = (offsetPair*) VG_(indexXA) (inputFilter, i);
-    VG_(printf) ("%llu %llu\n", elem->first, elem->last);
+    XArray** curfilter = (XArray**) VG_(indexXA)(inputFilter, i);
+    VG_(printf)("VG_(sizeXA)(curfilter)=%d\n", VG_(sizeXA)(*curfilter));
+    Int j = 0;
+    for (; j < VG_(sizeXA)(*curfilter); j++)
+    {
+      offsetPair* elem = (offsetPair*) VG_(indexXA)(*curfilter, j);
+      VG_(printf)("p1=%x ", elem->first);
+      VG_(printf)("p2=%x ", elem->last);
+    }
+    VG_(printf)("\n");
   }
 }

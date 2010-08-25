@@ -133,7 +133,6 @@ IRSB* printSB;
 Int fdfuncFilter = -1;
 
 Bool inputFilterEnabled;
-XArray* inputFilter;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -144,6 +143,7 @@ VgHashTable startAddr;
 extern VgHashTable fds;
 extern HChar* curfile;
 extern Int cursocket;
+extern Int curfilenum;
 extern ULong curoffs;
 extern ULong cursize;
 
@@ -1080,7 +1080,7 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
     {
       if (inputFilterEnabled)
       {
-        if (checkInputOffset(curoffs + (index - a)))
+        if (checkInputOffset(curfilenum, curoffs + (index - a)))
         {
           taintMemoryFromFile(index, curoffs + (index - a));
         }
@@ -1128,14 +1128,34 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
         {
           replace_data[cursocket].data[curoffs + (index - a)] = *((UChar*) index);
         }
-        taintMemoryFromSocket(index, curoffs + (index - a));
+        if (inputFilterEnabled)
+        {
+          if (checkInputOffset(cursocket, curoffs + (index - a)))
+          {
+            taintMemoryFromSocket(index, curoffs + (index - a));
+          }
+        }
+        else
+        {
+          taintMemoryFromSocket(index, curoffs + (index - a));
+        }
       }
     }
     else
     {
       for (index = a; index < a + size; index++)
       {
-        taintMemoryFromSocket(index, curoffs + (index - a));
+        if (inputFilterEnabled)
+        {
+          if (checkInputOffset(cursocket, curoffs + (index - a)))
+          {
+            taintMemoryFromSocket(index, curoffs + (index - a));
+          }
+        }
+        else
+        {
+          taintMemoryFromSocket(index, curoffs + (index - a));
+        }
       }
     }
   }
@@ -1152,7 +1172,7 @@ void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_h
     {
       if (inputFilterEnabled)
       {
-        if (checkInputOffset(index - a))
+        if (checkInputOffset(curfilenum, index - a))
         {
           taintMemoryFromFile(index, index - a);
         }
@@ -4261,8 +4281,14 @@ static void tg_fini(Int exitcode)
     }
     VG_(close)(fd);
   }
-  if (fdfuncFilter >= 0) VG_(close) (fdfuncFilter);
-  if (inputFilterEnabled) VG_(deleteXA) (inputFilter);
+  if (fdfuncFilter >= 0) 
+  {
+    VG_(close)(fdfuncFilter);
+  }
+//  if (inputFilterEnabled) 
+//  {
+//    VG_(deleteXA)(inputFilter);
+//  }
 }
 
 static Bool tg_process_cmd_line_option(Char* arg)
@@ -4304,9 +4330,13 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_STR_CLO(arg, "--mask", inputfilterfile))
   {
-    inputFilter = VG_(newXA) (VG_(malloc), "inputFilter", VG_(free), sizeof(offsetPair));
-    parseInputFilterFile(inputfilterfile);
-   // printInputOffsets();
+    if (!parseMask(inputfilterfile))
+    {
+      VG_(printf)("couldn't parse mask file\n");
+      VG_(exit)(1);
+    }
+    //VG_(printf)("printInputOffsets\n");
+    //printInputOffsets();
     inputFilterEnabled = True;
     return True;
   }
