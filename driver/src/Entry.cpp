@@ -39,6 +39,7 @@
 #include "OptionConfig.h"
 #include "OptionParser.h"
 #include "Input.h"
+#include "Chunk.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -75,6 +76,7 @@ extern bool instp;
 extern bool inpure;
 extern pid_t tg_pid, cv_pid, stp_pid, pure_pid;
 extern Input* initial;
+extern vector<Chunk*> report;
 
 static void printHelpBanner()
 {
@@ -147,6 +149,12 @@ void sig_hndlr(int signo)
   sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
   LOG(logger, s);
   initial->dumpFiles();
+  REPORT(logger, "\nExploits report:");
+  for (int i = 0; i < report.size(); i++)
+  {
+    report.at(i)->print(i);
+  }
+  REPORT(logger, "");
   exit(0);
 }
 
@@ -185,6 +193,12 @@ int main(int argc, char *argv[])
     sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
     LOG(logger, s);
     initial->dumpFiles();
+    REPORT(logger, "\nExploits report:");
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(i);
+    }
+    REPORT(logger, "");
     return EXIT_SUCCESS;
 }
 

@@ -1,15 +1,13 @@
-// $Id: ExecutionManager.h 80 2009-10-30 18:55:50Z iisaev $
+
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*-------------------------------- ExecutionManager.h ------------------------------------*/
+/*-------------------------------------- Chunk.h -----------------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Ildar Isaev
+   Copyright (C) 2010 Ildar Isaev
       iisaev@ispras.ru
-   Copyright (C) 2009 Nick Lugovskoy
-      lugovskoy@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -24,52 +22,27 @@
    limitations under the License.
 */
 
-#ifndef __EXECUTION_MANAGER__H__
-#define __EXECUTION_MANAGER__H__
+#ifndef __CHUNK__H__
+#define __CHUNK__H__
 
-#include <cstddef>
-#include <string>
-#include <set>
+#include <vector>
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+class FileBuffer;
 
-
-class OptionConfig;
-class Input;
-
-class ExecutionManager
+class Chunk
 {
-public:
-    ExecutionManager(OptionConfig *opt_config);
-
-    void run();
-
-    void emulateClient();
-
-    void emulateServer();
-
-    void setupServer();
-
-    void makefifo();
-   
-    void cleanfifo();
-
-    int checkAndScore(Input* input);
-
-    void updateInput(Input* input);
-  
-    ~ExecutionManager();
-
 private:
-    OptionConfig *config;
-    std::size_t   cond_depth;
-    std::set<unsigned int> basicBlocksCovered;
-    int exploits;
-    int divergences;
+  FileBuffer* trace;
+  std::vector<std::pair<int, int> > exploitGroups;
+public:
+  Chunk(FileBuffer* trace, int exploitNum, int inputNum);
+
+  void addGroup(int exploitNum, int inputNum);
+  
+  FileBuffer* getTrace();
+
+  void print(int chunkNum);
 };
 
-
-#endif //__EXECUTION_MANAGER__H__
+#endif
 
