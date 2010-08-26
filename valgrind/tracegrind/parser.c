@@ -377,7 +377,7 @@ Bool checkInputOffset(Int curfilenum, ULong offs)
 {
   if (curfilenum > VG_(sizeXA)(inputFilter))
   {
-    return True;
+    return False;
   }
   XArray** curfilter = (XArray**) VG_(indexXA)(inputFilter, curfilenum);
   Int i = 0;
