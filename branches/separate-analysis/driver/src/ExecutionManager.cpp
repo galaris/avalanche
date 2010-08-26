@@ -26,6 +26,7 @@
 
 #include "ExecutionManager.h"
 #include "Logger.h"
+#include "Chunk.h"
 #include "OptionConfig.h"
 #include "PluginExecutor.h"
 #include "ProgExecutor.h"
@@ -71,7 +72,7 @@ extern pid_t child_pid;
 bool killed = false;
 bool nokill = false;
 
-static Logger *logger = Logger::getLogger();
+Logger *logger = Logger::getLogger();
 Input* initial;
 int allSockets = 0;
 int curSockets;
@@ -79,7 +80,8 @@ int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
-vector <FileBuffer> exploitLogs;
+  
+vector<Chunk*> report;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -89,95 +91,6 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     config      = new OptionConfig(opt_config);
     exploits    = 0;
     divergences = 0;
-}
-
-void ExecutionManager::runUninstrumented(Input* input)
-{
-  if (config->usingSockets() || config->usingDatagrams())
-  {
-    input->dumpExploit("replace_data", false);
-
-    vector<string> plugin_opts;
-    if (config->usingSockets())
-    {
-      ostringstream cv_host;
-      cv_host << "--host=" << config->getHost();
-      plugin_opts.push_back(cv_host.str());
-
-      ostringstream cv_port;
-      cv_port << "--port=" << config->getPort();
-      plugin_opts.push_back(cv_port.str());
-  
-      plugin_opts.push_back("--sockets=yes");
-    }
-    else
-    {
-      plugin_opts.push_back("--datagrams=yes");
-    }
-    
-    plugin_opts.push_back("--replace=replace_data");
-    plugin_opts.push_back("--no-coverage=yes");
-
-    alarm(config->getAlarm());
-    killed = false;
-
-    PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
-    curSockets = 0;
-    cv_start = time(NULL);
-    incv = true;
-    int exitCode = plugin_exe.run();
-    incv = false;  
-    cv_end = time(NULL);
-    cv_time += cv_end - cv_start;
-    if ((exitCode == -1) && !killed)
-    {
-      time_t exploittime;
-      time(&exploittime);
-      string t = string(ctime(&exploittime));
-      LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << "exploit_" << exploits;
-      REPORT(logger, "Crash detected. Dumping exploit input to file " << ss.str());
-      input->dumpExploit((char*) ss.str().c_str(), false);
-      exploits++;
-    }
-    else
-    {
-      DBG(logger, "no failure after successful invertation of danger condition");
-    }
-  }
-  else
-  {
-    input->dumpFiles();
-    vector<string> plugin_opts;
-    ProgExecutor prog_exe(config->getProgAndArg());
-    pure_start = time(NULL);
-    inpure = true;
-    int exitCode = prog_exe.run();
-    inpure = false;
-    pure_end = time(NULL);
-    pure_time += pure_end - pure_start;
-    if (exitCode == -1)
-    {
-      time_t exploittime;
-      time(&exploittime);
-      string t = string(ctime(&exploittime));
-      REPORT(logger, "Crash detected."); 
-      LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));
-      for (int i = 0; i < input->files.size(); i++)
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits << "_" << i;
-        REPORT(logger, "Dumping exploit input to file " << ss.str());
-        input->files.at(i)->dumpFile((char*) ss.str().c_str());
-      }
-      exploits++;
-    }
-    else
-    {
-      DBG(logger, "no failure after successful invertation of danger condition");
-    }
-  }
 }
 
 int ExecutionManager::checkAndScore(Input* input)
@@ -242,20 +155,55 @@ int ExecutionManager::checkAndScore(Input* input)
   int exploitGroup = 0;
   if ((exitCode == -1) && !killed)
   {
-    FileBuffer cv_output("execution.log");
-    infoAvailable = cv_output.filterCovgrindOutput();
+    FileBuffer* cv_output = new FileBuffer("execution.log");
+    bool deleteBuffer = true;
+    infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
     {
-      for (vector <FileBuffer>::iterator fb = exploitLogs.begin(); fb != exploitLogs.end(); fb ++)
+      for (vector<Chunk*>::iterator it = report.begin(); it != report.end(); it++, exploitGroup++)
       {
-        if (*fb == cv_output)
+        if (((*it)->getTrace() != NULL) && (*(*it)->getTrace() == *cv_output))
         {
           sameExploit = true;
+          if (config->usingSockets() || config->usingDatagrams())
+          {
+            (*it)->addGroup(exploits, -1);
+          }
+          else
+          {
+            (*it)->addGroup(exploits, input->files.size());
+          }
           break;
         }
-        exploitGroup ++;
       }
-      if (!sameExploit) exploitLogs.push_back(cv_output);
+      if (!sameExploit) 
+      {
+        Chunk* ch;
+        if (config->usingSockets() || config->usingDatagrams())
+        {
+          ch = new Chunk(cv_output, exploits, -1);
+        }
+        else
+        {
+          ch = new Chunk(cv_output, exploits, input->files.size());
+        }
+        deleteBuffer = false;
+        report.push_back(ch);
+      }
+    }
+    else
+    {
+      Chunk* ch;
+      if (config->usingSockets() || config->usingDatagrams())
+      {
+        ch = new Chunk(NULL, exploits, -1);
+      }
+      else
+      {
+        ch = new Chunk(NULL, exploits, input->files.size());
+      }
+      deleteBuffer = false;
+      report.push_back(ch); 
     }
     time_t exploittime;
     time(&exploittime);
@@ -273,8 +221,8 @@ int ExecutionManager::checkAndScore(Input* input)
         if (!sameExploit)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << exploits << ".log";
-          cv_output.dumpFile((char*) ss.str().c_str());
+          ss << "stacktrace_" << report.size() - 1 << ".log";
+          cv_output->dumpFile((char*) ss.str().c_str());
           REPORT(logger, "Dumping stack trace to file " << ss.str());
         }
         else
@@ -296,8 +244,8 @@ int ExecutionManager::checkAndScore(Input* input)
         if (!sameExploit)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << exploits << ".log";
-          cv_output.dumpFile((char*) ss.str().c_str());
+          ss << "stacktrace_" << report.size() - 1 << ".log";
+          cv_output->dumpFile((char*) ss.str().c_str());
           REPORT(logger, "Dumping stack trace to file " << ss.str());
         }
         else
@@ -320,6 +268,10 @@ int ExecutionManager::checkAndScore(Input* input)
       }
     }
     exploits++;
+    if (deleteBuffer)
+    {
+      delete cv_output;
+    }
   }
   else if (config->usingMemcheck())
   {
@@ -756,7 +708,7 @@ void ExecutionManager::run()
             }
             if (next != NULL)
             {
-              runUninstrumented(next);
+              checkAndScore(next);
               delete next;
             }
           }
