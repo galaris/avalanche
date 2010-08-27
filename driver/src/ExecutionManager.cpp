@@ -93,7 +93,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     divergences = 0;
 }
 
-int ExecutionManager::checkAndScore(Input* input)
+int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
 {
 
   if (config->usingSockets() || config->usingDatagrams())
@@ -140,8 +140,12 @@ int ExecutionManager::checkAndScore(Input* input)
   }
 
   plugin_opts.push_back("--log-file=execution.log");
+  if (addNoCoverage)
+  {
+    plugin_opts.push_back("--no-coverage=yes");
+  }
 
-  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
+  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, addNoCoverage ? COVGRIND : kind);
   curSockets = 0;
   cv_start = time(NULL);
   incv = true;
@@ -273,7 +277,7 @@ int ExecutionManager::checkAndScore(Input* input)
       delete cv_output;
     }
   }
-  else if (config->usingMemcheck())
+  else if (config->usingMemcheck() && !addNoCoverage)
   {
     FileBuffer* mc_output = plugin_exe.getOutput();
     char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
@@ -325,23 +329,30 @@ int ExecutionManager::checkAndScore(Input* input)
       memchecks++;  
     }
   }
-  int res = 0;
-  int fd = open("basic_blocks.log", O_RDWR);
-  struct stat fileInfo;
-  fstat(fd, &fileInfo);
-  int size = fileInfo.st_size / sizeof(int);
-  unsigned int* basicBlockAddrs = new unsigned int[size];
-  read(fd, basicBlockAddrs, fileInfo.st_size);
-  for (int i = 0; i < size; i++)
+  if (!addNoCoverage)
   {
-    if (basicBlocksCovered.insert(basicBlockAddrs[i]).second)
+    int res = 0;
+    int fd = open("basic_blocks.log", O_RDWR);
+    struct stat fileInfo;
+    fstat(fd, &fileInfo);
+    int size = fileInfo.st_size / sizeof(int);
+    unsigned int* basicBlockAddrs = new unsigned int[size];
+    read(fd, basicBlockAddrs, fileInfo.st_size);
+    for (int i = 0; i < size; i++)
     {
-      res++;
+      if (basicBlocksCovered.insert(basicBlockAddrs[i]).second)
+      {
+        res++;
+      }
     }
+    delete[] basicBlockAddrs;
+    close(fd);
+    return res;
   }
-  delete[] basicBlockAddrs;
-  close(fd);
-  return res;
+  else
+  {
+    return 0;
+  }
 }
 
 class Key
@@ -448,7 +459,7 @@ void ExecutionManager::run()
     }
     initial->startdepth = 1;
     int score;
-    score = checkAndScore(initial);
+    score = checkAndScore(initial, false);
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
 
@@ -708,7 +719,7 @@ void ExecutionManager::run()
             }
             if (next != NULL)
             {
-              checkAndScore(next);
+              checkAndScore(next, true);
               delete next;
             }
           }
@@ -807,7 +818,7 @@ void ExecutionManager::run()
             next->predictionSize = fi->startdepth - 1 + depth;
             next->parent = fi;
             int score;
-            score = checkAndScore(next);
+            score = checkAndScore(next, false);
             LOG(logger, "score=" << score << "\n");
             inputs.insert(make_pair(Key(score, dpth + depth), next));
           }

@@ -56,7 +56,7 @@ public:
    
     void cleanfifo();
 
-    int checkAndScore(Input* input);
+    int checkAndScore(Input* input, bool addNoCoverage);
 
     void updateInput(Input* input);
   
