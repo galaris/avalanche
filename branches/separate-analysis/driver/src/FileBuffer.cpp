@@ -139,9 +139,14 @@ bool FileBuffer::filterCovgrindOutput()
     checkPId ++;
   }
   int skipLength = checkPId - buf + 2;
-  char* bug_start = strstr(buf, "at 0x");
+  char* bug_start = strstr(buf, "Process terminating");
+  if (bug_start == NULL) return false;
+  bug_start = strstr(bug_start, "at 0x");
   if (bug_start == NULL) return false;
   char* last_bug_line = bug_start;
+  char* lst = strstr(bug_start, "If you believe");
+  if (lst == NULL) return false;
+  *lst = '\0';
   char* tmp;
   while ((tmp = strstr(last_bug_line, "by 0x")) != NULL)
   {

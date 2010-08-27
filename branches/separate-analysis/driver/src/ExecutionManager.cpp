@@ -279,7 +279,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
   }
   else if (config->usingMemcheck() && !addNoCoverage)
   {
-    FileBuffer* mc_output = plugin_exe.getOutput();
+    //FileBuffer* mc_output = plugin_exe.getOutput();
+    FileBuffer* mc_output = new FileBuffer("execution.log");
     char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
     long errors = -1;
     long definitely_lost = -1;
@@ -328,6 +329,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
       }
       memchecks++;  
     }
+    delete mc_output;
   }
   if (!addNoCoverage)
   {
@@ -634,7 +636,11 @@ void ExecutionManager::run()
           divergences++;
           DBG(logger, "with startdepth=" << fi->parent->startdepth << " and invertdepth=" << config->getDepth() << "\n");
           close(divfd);
-          if (scr == 0) continue;
+          if (scr == 0) 
+          {
+            runs++;
+            continue;
+          }
         }
         else
         {
