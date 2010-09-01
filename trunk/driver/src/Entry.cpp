@@ -39,6 +39,7 @@
 #include "OptionConfig.h"
 #include "OptionParser.h"
 #include "Input.h"
+#include "Chunk.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -75,6 +76,7 @@ extern bool instp;
 extern bool inpure;
 extern pid_t tg_pid, cv_pid, stp_pid, pure_pid;
 extern Input* initial;
+extern vector<Chunk*> report;
 
 static void printHelpBanner()
 {
@@ -82,22 +84,31 @@ static void printHelpBanner()
         "usage: avalanche [options] prog-and-args\n\n"
         "  user options defined in [ ]:\n"
         "    --help                       print help and exit\n"
-        "    --use-memcheck               indicate that memcheck should be used instead of covgrind\n"
-        "    --leaks                      indicate that inputs resulting in memory leaks should be saved\n"
+        "    --use-memcheck               indicates that memcheck should be used instead of covgrind\n"
+        "    --leaks                      indicates that inputs resulting in memory leaks should be saved\n"
         "                                 (ignored if '--use-memcheck' isn't specified)\n"
         "    --verbose                    much more detailed avalanche output\n" 
         "    --debug                      save some debugging information - divergent inputs, etc.\n" 
-        "    --depth=<number>             the number of conditions inverted during one run of"
+        "    --depth=<number>             the number of conditions inverted during one run of\n"
         "                                 tracegrind (default is 100)\n"
         "    --alarm=<number>             timer value in seconds (for infinite loop recognition) (default is 300)\n"
         "    --filename=<input_file>      the path to the file with the input data for the application being tested\n"
+        "    --trace-children             indicates that valgrind plugins should be started\n"
+        "                                 with '--trace-children=yes' option\n"
+        "    --check-danger               enable emition of special checking constraints\n"
+	"                                 for memory access operations and divisions (slows down the analysis)\n"
+	"    --dump-calls                 enables dumping list of called functions to calldump.log\n"
+	"    --func-name=<name>           the name of function that should be used for function separate analysis\n"
+	"    --func-filter-file=<name>    the path to the file with the list of functions that\n"
+	"                                 should be used for function separate analysis\n"
+	"    --mask=<mask file>           specifies the file with markup of tainted data location\n"
         "\n"
         "  special options for sockets:\n"
         "    --sockets                    mark data read from TCP sockets as tainted\n"
         "    --host=<IPv4 address>        IP address of the network connection (for TCP sockets only)\n"
         "    --port=<number>              port number of the network connection (for TCP sockets only)\n"
         "    --datagrams                  mark data read from UDP sockets as tainted\n"
-        "    --alarm=<number>             timer for breaking infinite waitings in covgrind"
+        "    --alarm=<number>             timer for breaking infinite waitings in covgrind\n"
         "                                 or memcheck (not set by default)\n" 
         "    --tracegrind-alarm=<number>  timer for breaking infinite waitings in tracegrind (not set by default)\n"; 
 
@@ -138,6 +149,12 @@ void sig_hndlr(int signo)
   sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
   LOG(logger, s);
   initial->dumpFiles();
+  REPORT(logger, "\nExploits report:");
+  for (int i = 0; i < report.size(); i++)
+  {
+    report.at(i)->print(i);
+  }
+  REPORT(logger, "");
   exit(0);
 }
 
@@ -156,7 +173,13 @@ int main(int argc, char *argv[])
 
     if (opt_config->getVerbose()) logger->enableVerbose();
     
+    time_t starttime;
+    time(&starttime);
+
     LOG(logger, "Avalanche, a dynamic analysis tool.");
+  
+    string t = string(ctime(&starttime));
+    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));  
 
     ExecutionManager manager(opt_config);
     em = &manager;
@@ -170,6 +193,12 @@ int main(int argc, char *argv[])
     sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
     LOG(logger, s);
     initial->dumpFiles();
+    REPORT(logger, "\nExploits report:");
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(i);
+    }
+    REPORT(logger, "");
     return EXIT_SUCCESS;
 }
 

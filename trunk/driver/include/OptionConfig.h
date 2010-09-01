@@ -36,11 +36,16 @@ class OptionConfig
 {
 public:
     OptionConfig(): debug(false),
+		    checkDanger(false),
                     verbose(false),
 		    sockets(false),
+		    traceChildren(false),
                     datagrams(false),
                     useMemcheck(false),
+                    suppressSubcalls(false),
+                    dumpCalls(false),
                     leaks(false),
+                    funcFilterFile(std::string("")),
                     depth(100),
                     alarm(300),
                     tracegrindAlarm(0),
@@ -50,7 +55,9 @@ public:
 
     OptionConfig(const OptionConfig *opt_config)
     {
+        traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
+        checkDanger     = opt_config->checkDanger;
         verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
         datagrams       = opt_config->datagrams;
@@ -64,6 +71,11 @@ public:
         port	        = opt_config->port;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
+        funcFilterFile  = opt_config->funcFilterFile;
+        funcFilterUnits = opt_config->funcFilterUnits;
+        suppressSubcalls= opt_config->suppressSubcalls;
+        dumpCalls       = opt_config->dumpCalls;
+        inputFilterFile = opt_config->inputFilterFile;
     }
 
     bool empty() const
@@ -75,17 +87,53 @@ public:
     const std::string &getValgrind() const
     { return valgrind; }
 
+    void setFuncFilterFile(const std::string &fileName)
+    { funcFilterFile = fileName; }
+    
+    const std::string getFuncFilterFile() const
+    { return funcFilterFile; }
+
+    void setInputFilterFile(const std::string &fileName)
+    { inputFilterFile = fileName; }
+    
+    const std::string getInputFilterFile() const
+    { return inputFilterFile; }
+
     void setDebug()
     { debug = true; }
     
     bool getDebug() const
     { return debug; }
 
+    void setTraceChildren()
+    { traceChildren = true; }
+    
+    bool getTraceChildren() const
+    { return traceChildren; }
+
+    void setDumpCalls()
+    { dumpCalls = true; }
+
+    bool getDumpCalls() const
+    { return dumpCalls; }
+
+    bool getSuppressSubcalls() const
+    { return suppressSubcalls; }
+
+    void setSuppressSubcalls()
+    { suppressSubcalls = true; }
+     
     void setVerbose()
     { verbose = true; }
     
     bool getVerbose() const
     { return verbose; }
+
+    void setCheckDanger()
+    { checkDanger = true; }
+    
+    bool getCheckDanger() const
+    { return checkDanger; }
 
     void setUsingSockets()
     { sockets = true; }
@@ -122,6 +170,18 @@ public:
 
     unsigned int getAlarm() const
     { return alarm; }
+
+    void addFuncFilterUnit(const std::string &fn)
+    { funcFilterUnits.push_back(fn); }
+
+    const std::vector<std::string> getfuncFilterUnits() const
+    { return funcFilterUnits; }
+  
+    std::string getFuncFilterUnit(int i)
+    { return funcFilterUnits.at(i); }
+
+    int getFuncFilterUnitsNum()
+    { return funcFilterUnits.size(); }
 
     void setTracegrindAlarm(unsigned int alarm)
     { this->tracegrindAlarm = alarm; }
@@ -162,7 +222,12 @@ private:
     bool		     sockets;
     bool                     datagrams;
     bool                     useMemcheck;
+    bool                     checkDanger;
     bool                     leaks;
+    bool                     suppressSubcalls;
+    bool                     dumpCalls;
+    bool 		     traceChildren;
+    std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
     std::vector<std::string> prog_and_arg;
@@ -171,6 +236,8 @@ private:
     unsigned int             tracegrindAlarm;
     std::string		     host;
     unsigned int	     port;
+    std::vector<std::string> funcFilterUnits;
+    std::string              inputFilterFile;
 };
 
 

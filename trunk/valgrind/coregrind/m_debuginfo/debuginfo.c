@@ -1607,7 +1607,7 @@ Char* VG_(describe_IP)(Addr eip, Char* buf, Int n_buf)
       /* Print for humans to read */
       VG_(sprintf)(ibuf,"0x%llX: ", (ULong)eip);
       APPEND(ibuf);
-      if (know_fnname) { 
+      if (know_fnname) {
          APPEND(buf_fn);
          if (!know_srcloc && know_objname) {
             APPEND(" (in ");
@@ -2098,7 +2098,8 @@ static void format_message ( /*OUT*/Char* dname1,
       VG_(snprintf)(
          dname1, n_dname,
          "Location 0x%lx is %lu byte%s inside local var \"%s\"",
-         data_addr, var_offset, vo_plural, var->name );
+         data_addr, var_offset, vo_plural, var->name);
+      ML_(pp_GX) (var->gexpr);
       VG_(snprintf)(
          dname2, n_dname,
          "declared at %s:%d, in frame #%d of thread %d",

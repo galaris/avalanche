@@ -45,14 +45,20 @@
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_machine.h"
+#include "pub_tool_threadstate.h"
+#include "pub_tool_debuginfo.h"
+#include "pub_tool_stacktrace.h"
 #include "libvex_ir.h"
 
 #include <avalanche.h>
 
 #include "buffer.h"
 #include "copy.h"
+#include "parser.h"
 
 //#define TAINTED_TRACE_PRINTOUT
+//#define TAINTED_BLOCKS_PRINTOUT
+//#define CALL_STACK_PRINTOUT
 
 enum {
     X86CondO      = 0,  /* overflow           */
@@ -82,34 +88,51 @@ enum {
     X86CondAlways = 16  /* HACK */
 };
 
-struct _taintedNode 
+struct _taintedNode
 {
   struct _taintedNode* next;
   HWord key;
   HChar* filename;
-  ULong offset;  
+  ULong offset;
 };
 
 typedef struct _taintedNode taintedNode;
 
-struct _size2Node 
-{ 
+struct _size2Node
+{
   UShort size;
   //Bool declared;
 };
 
-typedef struct _size2Node size2Node; 
+typedef struct _size2Node size2Node;
 
-struct _sizeNode 
+struct _sizeNode
 {
   struct _sizeNode* next;
-  Addr64 key;  
+  Addr64 key;
   size2Node* temps;
   Int tempsnum;
   UInt visited;
 };
 
 typedef struct _sizeNode sizeNode;
+
+Addr curIAddr;
+Bool enableFiltering = False;
+
+Bool suppressSubcalls = False;
+
+VgHashTable funcNames;
+
+Char* diFunctionName;
+Char* diVarName;
+
+Bool newSB;
+IRSB* printSB;
+
+Int fdfuncFilter = -1;
+
+Bool inputFilterEnabled;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -120,6 +143,7 @@ VgHashTable startAddr;
 extern VgHashTable fds;
 extern HChar* curfile;
 extern Int cursocket;
+extern Int curfilenum;
 extern ULong curoffs;
 extern ULong cursize;
 
@@ -167,6 +191,102 @@ Int memory = 0;
 Int registers = 0;
 UInt curvisited;
 
+Bool checkDanger = False;
+
+static
+Bool getFunctionName(Addr addr, Bool onlyEntry, Bool showOffset)
+{
+  Bool continueFlag = False;
+  if (onlyEntry)
+  {
+    continueFlag = VG_(get_fnname_if_entry) (addr, diFunctionName, 1024);
+  }
+  else if (showOffset)
+  {
+    continueFlag = VG_(get_fnname_w_offset) (addr, diFunctionName, 1024);
+  }
+  else
+  {
+    continueFlag = VG_(get_fnname) (addr, diFunctionName, 1024);
+  }
+  if (continueFlag)
+  {
+    return True;
+  }
+  return False;
+}
+
+static
+Bool useFiltering()
+{
+  if (suppressSubcalls)
+  {
+    VG_(memset) (diFunctionName, 0, VG_(strlen) (diFunctionName));
+    if (getFunctionName(curIAddr, False, False))
+    {
+      return (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName));
+    }
+    return False;
+  }
+#define STACK_LOOKUP_DEPTH 30
+  Addr ips[STACK_LOOKUP_DEPTH];
+  Addr sps[STACK_LOOKUP_DEPTH];
+  Addr fps[STACK_LOOKUP_DEPTH];
+  Int found = VG_(get_StackTrace) (VG_(get_running_tid) (), ips, STACK_LOOKUP_DEPTH, sps, fps, 0);
+#undef STACK_LOOKUP_DEPTH
+  Int i;
+  for (i = 0; i < found; i ++)
+  {
+    memset(diFunctionName, 0, VG_(strlen) (diFunctionName));
+    if (getFunctionName(ips[i], False, False))
+    {
+      if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
+      {
+        return True;
+      }
+    }
+  }
+  return False;
+}
+
+static
+Bool dumpCall()
+{
+  if (getFunctionName(curIAddr, False, False))
+  {
+    if (cutAffixes(diFunctionName))
+    {
+      Char tmp[1024];
+      VG_(strcpy) (tmp, diFunctionName);
+      cutTemplates(tmp);
+      if (VG_(HT_lookup) (funcNames, hashCode(tmp)) == NULL)
+      {
+        Char b[1024];
+        Char obj[1024];
+        Bool isStandard = False;
+        if (VG_(get_objname) ((Addr)(curIAddr), obj, 1024))
+        {
+          isStandard = isStandardFunction(obj);
+        }
+        if (!isStandard)
+        {
+          Int l;
+          l = VG_(sprintf) (b, "%s\n", diFunctionName, obj);
+          my_write(fdfuncFilter, b, l);
+          fnNode* node;
+          node = VG_(malloc)("fnNode", sizeof(fnNode));
+          node->key = hashCode(tmp);
+          node->data = NULL;
+          VG_(HT_add_node) (funcNames, node);
+        }
+      }
+    }
+    return True;
+  }
+  return False;
+}
+
+static
 ULong getDecimalValue(IRExpr* e, IRExpr* value)
 {
   if (e->tag == Iex_Const)
@@ -188,6 +308,7 @@ ULong getDecimalValue(IRExpr* e, IRExpr* value)
   }
 }
 
+static
 Addr64 getLongDecimalValue(IRExpr* e, Addr64 value)
 {
   if (e->tag == Iex_Const)
@@ -209,6 +330,7 @@ Addr64 getLongDecimalValue(IRExpr* e, Addr64 value)
   }
 }
 
+static
 void translateLongToPowerOfTwo(IRExpr* e, Addr64 value)
 {
   Addr64 a = 0x1;
@@ -223,6 +345,7 @@ void translateLongToPowerOfTwo(IRExpr* e, Addr64 value)
   my_write(fddanger, s, l);
 }
 
+static
 void translateToPowerOfTwo(IRExpr* e, IRExpr* value, UShort size)
 {
   Addr64 a = 0x1;
@@ -293,6 +416,7 @@ void translateToPowerOfTwo(IRExpr* e, IRExpr* value, UShort size)
   my_write(fddanger, s, l);
 }
 
+static
 void translateLongValue(IRExpr* e, Addr64 value)
 {
   Char s[256];
@@ -301,6 +425,7 @@ void translateLongValue(IRExpr* e, Addr64 value)
   my_write(fddanger, s, l);
 }
 
+static
 void translateValue(IRExpr* e, IRExpr* value)
 {
   Char s[256];
@@ -346,6 +471,7 @@ void translateValue(IRExpr* e, IRExpr* value)
   my_write(fddanger, s, l);
 }
 
+static
 void translateIRTmp(IRExpr* e)
 {
   Char s[256];
@@ -354,6 +480,7 @@ void translateIRTmp(IRExpr* e)
   my_write(fddanger, s, l);
 }
 
+static
 Int stranslateValue(Char* s, IRExpr* e, IRExpr* value)
 {
   if (e->tag == Iex_Const)
@@ -370,7 +497,7 @@ Int stranslateValue(Char* s, IRExpr* e, IRExpr* value)
     }
   }
   else
-  {  
+  {
     switch (curNode->temps[e->Iex.RdTmp.tmp].size)
     {
       case 1:	return VG_(sprintf)(s, "0bin%lx", value);
@@ -383,27 +510,37 @@ Int stranslateValue(Char* s, IRExpr* e, IRExpr* value)
     }
   }
 }
-
+static
 Int stranslateIRTmp(Char* s, IRExpr* e)
 {
   return VG_(sprintf)(s, "t_%llx_%u_%u", curblock, e->Iex.RdTmp.tmp, curvisited);
 }
 
+static
 void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt basicBlockLowerBytes, UInt basicBlockUpperBytes, Int types_used)
 {
   Addr64 addr = (((Addr64) iaddrUpperBytes) << 32) ^ iaddrLowerBytes;
   Addr64 bbaddr = (((Addr64) basicBlockUpperBytes) << 32) ^ basicBlockLowerBytes;
+  curIAddr = addr;
+#ifdef CALL_STACK_PRINTOUT
+  printName = getFunctionName(addr, True, False);
+  if (printName)
+  {
+    VG_(printf) ("%s\n", diFunctionName);
+  }
+#endif
 #ifdef TAINTED_TRACE_PRINTOUT
   VG_(printf)("------ IMark(0x%llx) ------\n", addr);
 #endif
 }
 
+static
 void taintMemoryFromFile(HWord key, ULong offset)
 {
   SizeT s = sizeof(taintedNode);
   taintedNode* node;
-  node = VG_(malloc)("taintMemoryNode", s); 
-  node->key = key; 
+  node = VG_(malloc)("taintMemoryNode", s);
+  node->key = key;
   //do we really need node->filename field???
   node->filename = curfile;
   node->offset = offset;
@@ -411,43 +548,42 @@ void taintMemoryFromFile(HWord key, ULong offset)
   Char ss[256];
   Char format[256];
 #if defined(VGA_x86)
-  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_%s[0hex%%08x];\n", memory + 1, memory, curfile); 
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_%s[0hex%%08x];\n", memory + 1, memory, curfile);
 #elif defined(VGA_amd64)
-  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_%s[0hex%%08x];\n", memory + 1, memory, curfile); 
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_%s[0hex%%08x];\n", memory + 1, memory, curfile);
 #else
 #  error Unknown arch
 #endif
   memory++;
-  Int l = VG_(sprintf)(ss, format, key, offset); 
+  Int l = VG_(sprintf)(ss, format, key, offset);
   my_write(fdtrace, ss, l);
   my_write(fddanger, ss, l);
 }
 
+static
 void taintMemoryFromSocket(HWord key, ULong offset)
 {
-  //VG_(printf)("tainting key=%lx\n", key);
   SizeT s = sizeof(taintedNode);
   taintedNode* node;
-  node = VG_(malloc)("taintMemoryNode", s); 
-  node->key = key; 
+  node = VG_(malloc)("taintMemoryNode", s);
+  node->key = key;
   node->filename = NULL;
   node->offset = offset;
   VG_(HT_add_node)(taintedMemory, node);
-  //taintedNode* tn = VG_(HT_lookup)(taintedMemory, key);
-  //VG_(printf)("tn=%p\n", tn);
   Char ss[256];
   Char format[256];
 #if defined(VGA_x86)
-  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08lx] := socket_%d[0hex%%08x];\n", memory + 1, memory, cursocket); 
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08lx] := socket_%d[0hex%%08x];\n", memory + 1, memory, cursocket);
 #elif defined(VGA_amd64)
-  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := socket_%d[0hex%%08x];\n", memory + 1, memory, cursocket); 
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := socket_%d[0hex%%08x];\n", memory + 1, memory, cursocket);
 #endif
   memory++;
-  Int l = VG_(sprintf)(ss, format, key, offset); 
+  Int l = VG_(sprintf)(ss, format, key, offset);
   my_write(fdtrace, ss, l);
   my_write(fddanger, ss, l);
 }
 
+static
 void taintMemory(HWord key, UShort size)
 {
   taintedNode* node;
@@ -455,119 +591,120 @@ void taintMemory(HWord key, UShort size)
   {
     case 8:	if (VG_(HT_lookup)(taintedMemory, key) == NULL)
                 {
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
                 }
 		return;
     case 16:	if (VG_(HT_lookup)(taintedMemory, key) == NULL)
                 {
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
                 }
 		if (VG_(HT_lookup)(taintedMemory, key + 1) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 1; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 1;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		return;
     case 32:	if (VG_(HT_lookup)(taintedMemory, key) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 1) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 1; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 1;
 		  node->filename = NULL;
 		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 2) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 2; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 2;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 3) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 3; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 3;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
                 return;
     case 64:	if (VG_(HT_lookup)(taintedMemory, key) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 1) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 1; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 1;
 		  node->filename = NULL;
 		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 2) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 2; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 2;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 3) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 3; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 3;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 4) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 4; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 4;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 5) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 5; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 5;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 6) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 6; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 6;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		if (VG_(HT_lookup)(taintedMemory, key + 7) == NULL)
 		{
-		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode)); 
-  		  node->key = key + 7; 
+		  node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
+  		  node->key = key + 7;
 		  node->filename = NULL;
-		  VG_(HT_add_node)(taintedMemory, node); 
+		  VG_(HT_add_node)(taintedMemory, node);
 		}
 		return;
   }
 }
 
+static
 void untaintMemory(HWord key, UShort size)
 {
-  taintedNode* node;  
+  taintedNode* node;
   switch (size)
   {
     case 8:	node = VG_(HT_remove)(taintedMemory, key);
@@ -652,6 +789,7 @@ void untaintMemory(HWord key, UShort size)
   }
 }
 
+static
 void taintRegister(HWord key, UShort size)
 {
   taintedNode* node;
@@ -659,104 +797,105 @@ void taintRegister(HWord key, UShort size)
   {
     case 8:	if (VG_(HT_lookup)(taintedRegisters, key) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
                 return;
     case 16:	if (VG_(HT_lookup)(taintedRegisters, key) == NULL)
 		{
-		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key; 
+		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 1) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 1; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 1;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		return;
     case 32:	if (VG_(HT_lookup)(taintedRegisters, key) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key; 
-  		  VG_(HT_add_node)(taintedRegisters, node); 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key;
+  		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 1) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 1; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 1;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 2) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 2; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 2;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 3) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 3; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 3;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		return;
     case 64:	if (VG_(HT_lookup)(taintedRegisters, key) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key; 
-  		  VG_(HT_add_node)(taintedRegisters, node); 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key;
+  		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 1) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 1; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 1;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 2) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 2; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 2;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 3) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 3; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 3;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 4) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 4; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 4;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 5) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 5; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 5;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 6) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 6; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 6;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		if (VG_(HT_lookup)(taintedRegisters, key + 7) == NULL)
 		{
-  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode)); 
-  		  node->key = key + 7; 
+  		  node = VG_(malloc)("taintRegisterNode", sizeof(taintedNode));
+  		  node->key = key + 7;
   		  VG_(HT_add_node)(taintedRegisters, node);
 		}
 		return;
   }
 }
 
+static
 void untaintRegister(HWord key, UShort size)
 {
-  taintedNode* node;  
+  taintedNode* node;
   switch (size)
   {
     case 8:	node = VG_(HT_remove)(taintedRegisters, key);
@@ -841,11 +980,11 @@ void untaintRegister(HWord key, UShort size)
   }
 }
 
+static
 void taintTemp(HWord key)
 {
-  //VG_(printf)("tainting temp %d\n", key);
-  taintedNode* node = VG_(malloc)("taintTempNode", sizeof(taintedNode)); 
-  node->key = key; 
+  taintedNode* node = VG_(malloc)("taintTempNode", sizeof(taintedNode));
+  node->key = key;
   VG_(HT_add_node)(taintedTemps, node);
   Char s[256];
   Int l = VG_(sprintf)(s, "t_%llx_%u_%u : BITVECTOR(%u);\n", curblock, key, curvisited, curNode->temps[key].size);
@@ -857,6 +996,7 @@ static void tg_post_clo_init(void)
 {
 }
 
+static
 void pre_call(ThreadId tid, UInt syscallno)
 {
   if (syscallno == __NR_read)
@@ -880,6 +1020,7 @@ void pre_call(ThreadId tid, UInt syscallno)
 #endif
 }
 
+static
 void post_call(ThreadId tid, UInt syscallno, SysRes res)
 {
   if (syscallno == __NR_read)
@@ -888,7 +1029,7 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
   }
   else if ((syscallno == __NR_clone) && !res.isError && (res.res == 0))
   {
-    //VG_(printf)("__NR_clone\n");
+    VG_(printf)("__NR_clone\n");
     //VG_(exit)(0);
   }
   else if (syscallno == __NR_open)
@@ -928,14 +1069,23 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
   }
 }
 
+static
 void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
 {
-  UWord index; 
+  UWord index;
+  Char curMaskByte;
   if (isRead && (curfile != NULL))
   {
     for (index = a; (index < (a + size)) && (curoffs + (index - a) < cursize); index += 1)
     {
-      taintMemoryFromFile(index, curoffs + (index - a));
+      if (inputFilterEnabled)
+      {
+        if (checkInputOffset(curfilenum, curoffs + (index - a)))
+        {
+          taintMemoryFromFile(index, curoffs + (index - a));
+        }
+      }
+      else taintMemoryFromFile(index, curoffs + (index - a));
     }
   }
   else if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
@@ -978,32 +1128,62 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
         {
           replace_data[cursocket].data[curoffs + (index - a)] = *((UChar*) index);
         }
-        taintMemoryFromSocket(index, curoffs + (index - a));
+        if (inputFilterEnabled)
+        {
+          if (checkInputOffset(cursocket, curoffs + (index - a)))
+          {
+            taintMemoryFromSocket(index, curoffs + (index - a));
+          }
+        }
+        else
+        {
+          taintMemoryFromSocket(index, curoffs + (index - a));
+        }
       }
     }
     else
     {
       for (index = a; index < a + size; index++)
       {
-        taintMemoryFromSocket(index, curoffs + (index - a));
+        if (inputFilterEnabled)
+        {
+          if (checkInputOffset(cursocket, curoffs + (index - a)))
+          {
+            taintMemoryFromSocket(index, curoffs + (index - a));
+          }
+        }
+        else
+        {
+          taintMemoryFromSocket(index, curoffs + (index - a));
+        }
       }
     }
   }
 }
 
+static
 void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_handle)
 {
   Addr index = a;
+  Char curMaskByte;
   if (isMap && (curfile != NULL))
   {
     for (index = a; (index < (a + size)) && (index < (a + cursize)); index += 1)
     {
-      taintMemoryFromFile(index, index - a);
+      if (inputFilterEnabled)
+      {
+        if (checkInputOffset(curfilenum, index - a))
+        {
+          taintMemoryFromFile(index, index - a);
+        }
+      }
+      else taintMemoryFromFile(index, index - a);
     }
   }
 }
 
 //unlikely to be ever used
+static
 void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
 {
   UShort size;
@@ -1015,7 +1195,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
 			break;
     case Ity_I32:	size = 32;
 			break;
-    case Ity_I64:	size = 32;
+    case Ity_I64:	size = 64;
 			break;
     default:		break;
   }
@@ -1024,7 +1204,15 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
     taintRegister(offset, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1036,7 +1224,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
                 registers++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "registers_%d : ARRAY BITVECTOR(8) OF BITVECTOR(8) = registers_%d WITH [0hex%02x] := memory_%d[0hex%08x];\n", registers + 1, registers, offset, memory, addr);
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
@@ -1064,7 +1252,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
                 registers++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "registers_%d : ARRAY BITVECTOR(8) OF BITVECTOR(8) = registers_%d WITH [0hex%02x] := memory_%d[0hex%016lx];\n", registers + 1, registers, offset, memory, addr);
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
@@ -1116,7 +1304,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
 #endif
       default:	break;
     }
-  } 
+  }
   else
   {
     untaintRegister(offset, size);
@@ -1124,6 +1312,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
 }
 
 //unlikely to be ever used
+static
 void instrumentPutGet(IRStmt* clone, UInt putOffset, UInt getOffset)
 {
   UShort size;
@@ -1138,13 +1327,21 @@ void instrumentPutGet(IRStmt* clone, UInt putOffset, UInt getOffset)
     case Ity_I64:	size = 64;
 			break;
     default:		break;
-  }  
+  }
   if (VG_(HT_lookup)(taintedRegisters, getOffset) != NULL)
   {
     taintRegister(putOffset, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1154,7 +1351,7 @@ void instrumentPutGet(IRStmt* clone, UInt putOffset, UInt getOffset)
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
                 registers++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "registers_%d : ARRAY BITVECTOR(8) OF BITVECTOR(8) = registers_%d WITH [0hex%02x] := registers_%d[0hex%02x];\n", registers + 1, registers, putOffset, registers, getOffset);
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
@@ -1212,6 +1409,7 @@ void instrumentPutGet(IRStmt* clone, UInt putOffset, UInt getOffset)
   }
 }
 
+static
 void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
 {
   if (VG_(HT_lookup)(taintedTemps, tmp) != NULL)
@@ -1219,7 +1417,15 @@ void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
     taintRegister(offset, curNode->temps[tmp].size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1229,7 +1435,7 @@ void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
                 registers++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "registers_%d : ARRAY BITVECTOR(8) OF BITVECTOR(8) = registers_%d WITH [0hex%02x] := t_%llx_%u_%u[7:0];\n", registers + 1, registers, offset, curblock, tmp, curvisited);
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
@@ -1287,6 +1493,7 @@ void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
   }
 }
 
+static
 void instrumentPutConst(IRStmt* clone, UInt offset)
 {
   switch (clone->Ist.Put.data->Iex.Const.con->tag)
@@ -1305,14 +1512,23 @@ void instrumentPutConst(IRStmt* clone, UInt offset)
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
   }
 }
 
+static
 void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, UInt rtmp)
 {
-  if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL)
+  if (checkDanger && (VG_(HT_lookup)(taintedTemps, rtmp) != NULL) && (!enableFiltering || useFiltering()))
   {
     Char s[256];
     Int l = 0;
@@ -1320,13 +1536,16 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
-    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n", 
+    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
+    if (fdfuncFilter >= 0)
+    {
+      dumpCall();
+    }
     l = VG_(sprintf)(s, format, curblock, rtmp, curvisited, seg->start);
     my_write(fddanger, s, l);
 
   }
-  //VG_(printf)("checking addr loadAddr=%lx ", loadAddr);
   taintedNode* t = VG_(HT_lookup)(taintedMemory, loadAddr);
   //VG_(printf)("t=%p\n", t);
   if (t != NULL)
@@ -1336,9 +1555,18 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     taintTemp(tmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     UWord addr = (UWord) loadAddr;
+    
     switch (curNode->temps[tmp].size)
     {
 #if defined(VGA_x86)
@@ -1364,6 +1592,7 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
   }
 }
 
+static
 void instrumentWrTmpGet(IRStmt* clone, UInt tmp, UInt offset)
 {
   if (VG_(HT_lookup)(taintedRegisters, offset) != NULL)
@@ -1387,11 +1616,20 @@ void instrumentWrTmpGet(IRStmt* clone, UInt tmp, UInt offset)
     my_write(fddanger, s, l);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
   }
 }
 
+static
 void instrumentWrTmpRdTmp(IRStmt* clone, UInt ltmp, UInt rtmp)
 {
   if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL)
@@ -1400,7 +1638,15 @@ void instrumentWrTmpRdTmp(IRStmt* clone, UInt ltmp, UInt rtmp)
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Int l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
     my_write(fdtrace, s, l);
@@ -1408,6 +1654,7 @@ void instrumentWrTmpRdTmp(IRStmt* clone, UInt ltmp, UInt rtmp)
   }
 }
 
+static
 void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
 {
   if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL)
@@ -1415,7 +1662,15 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     size2Node* node;
     Char s[256];
@@ -1464,17 +1719,17 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
 
 
       case Iop_16to8:
-      case Iop_32to8:	
+      case Iop_32to8:
       case Iop_64to8:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u[7:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
 			break;
-      case Iop_32to16:	
+      case Iop_32to16:
       case Iop_64to16:
 			l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u[15:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
 			break;
       case Iop_64to32:
 			l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u[31:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
 			break;
-      case Iop_32to1:	
+      case Iop_32to1:
       case Iop_64to1:
 			l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u[0:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
 			break;
@@ -1499,6 +1754,7 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
   }
 }
 
+static
 UShort isPropagation2(IRExpr* arg1, IRExpr* arg2)
 {
   if ((arg1->tag == Iex_RdTmp) && (arg2->tag != Iex_RdTmp))
@@ -1526,16 +1782,19 @@ UShort isPropagation2(IRExpr* arg1, IRExpr* arg2)
   }
 }
 
+static
 Bool firstTainted(UShort res)
 {
   return res & 0x1;
 }
 
+static
 Bool secondTainted(UShort res)
 {
   return res & 0x2;
 }
 
+static
 void translateLong1(IRExpr* arg, Addr64 value, UShort taintedness)
 {
   if (firstTainted(taintedness))
@@ -1545,9 +1804,10 @@ void translateLong1(IRExpr* arg, Addr64 value, UShort taintedness)
   else
   {
     translateLongValue(arg, value);
-  }  
+  }
 }
 
+static
 void translateLong2(IRExpr* arg, Addr64 value, UShort taintedness)
 {
   if (secondTainted(taintedness))
@@ -1557,9 +1817,10 @@ void translateLong2(IRExpr* arg, Addr64 value, UShort taintedness)
   else
   {
     translateLongValue(arg, value);
-  }  
+  }
 }
 
+static
 void translate1(IRExpr* arg, IRExpr* value, UShort taintedness)
 {
   if (firstTainted(taintedness))
@@ -1569,9 +1830,10 @@ void translate1(IRExpr* arg, IRExpr* value, UShort taintedness)
   else
   {
     translateValue(arg, value);
-  }  
+  }
 }
 
+static
 void translate2(IRExpr* arg, IRExpr* value, UShort taintedness)
 {
   if (secondTainted(taintedness))
@@ -1581,9 +1843,10 @@ void translate2(IRExpr* arg, IRExpr* value, UShort taintedness)
   else
   {
     translateValue(arg, value);
-  }  
+  }
 }
 
+static
 void printSizedTrue(UInt ltmp, Int fd)
 {
   Char s[256];
@@ -1605,6 +1868,7 @@ void printSizedTrue(UInt ltmp, Int fd)
   my_write(fd, s, l);
 }
 
+static
 void printSizedFalse(UInt ltmp, Int fd)
 {
   Char s[256];
@@ -1623,9 +1887,10 @@ void printSizedFalse(UInt ltmp, Int fd)
 		break;
     default:	break;
   }
-  my_write(fd, s, l); 
+  my_write(fd, s, l);
 }
 
+static
 void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size, IRExpr* value1, IRExpr* value2)
 {
   UShort r = isPropagation2(arg1, arg2);
@@ -1638,8 +1903,15 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
-    //VG_(printf)("size=%d\n", size);
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
 #if defined(VGA_x86)
     size %= 3;
@@ -1652,7 +1924,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-#if defined(VGA_x86) 
+#if defined(VGA_x86)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
@@ -1668,7 +1940,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -1678,7 +1950,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86) 
+#if defined(VGA_x86)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
@@ -1694,7 +1966,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -1718,7 +1990,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-#if defined(VGA_x86) 
+#if defined(VGA_x86)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
@@ -1734,7 +2006,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -1760,7 +2032,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -1779,7 +2051,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
       			l = VG_(sprintf)(s, " ENDIF);\n");
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-                	break;	
+                	break;
       case X86CondZ:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=IF ", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
@@ -1800,7 +2072,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]=");
 			}
 			else if (size == 2)
@@ -1826,7 +2098,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0] THEN ");
 			}
 			else if (size == 2)
@@ -1845,7 +2117,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
       			l = VG_(sprintf)(s, " ENDIF);\n");
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-                	break;	
+                	break;
       case X86CondNZ:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=IF NOT(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
@@ -1866,7 +2138,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]=");
 			}
 			else if (size == 2)
@@ -1892,7 +2164,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -1911,7 +2183,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
       			l = VG_(sprintf)(s, " ENDIF);\n");
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-                	break;	
+                	break;
       case X86CondBE:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=IF BVLE(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
@@ -1932,7 +2204,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -1958,7 +2230,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -1998,7 +2270,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -2024,7 +2296,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -2064,7 +2336,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -2090,7 +2362,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -2130,7 +2402,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -2156,7 +2428,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -2196,7 +2468,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -2222,7 +2494,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -2262,7 +2534,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0],");
 			}
 			else if (size == 2)
@@ -2288,7 +2560,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			}
 #endif
 			else if (size == 1)
-			{             
+			{
 		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
 			}
 			else if (size == 2)
@@ -2318,6 +2590,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 }
 
 #if defined(VGA_x86)
+static
 void instrumentWrTmpLongBinop(IRStmt* clone, UInt oprt, UInt ltmp, IRExpr* arg1, IRExpr* arg2, UInt value1LowerBytes, UInt value1UpperBytes, UInt value2LowerBytes, UInt value2UpperBytes)
 
 {
@@ -2325,8 +2598,9 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UInt oprt, UInt ltmp, IRExpr* arg1,
   if (r)
   {
     Addr64 value1 = (((Addr64) value1UpperBytes) << 32) ^ value1LowerBytes;
-    Addr64 value2 = (((Addr64) value2UpperBytes) << 32) ^ value2LowerBytes; 
+    Addr64 value2 = (((Addr64) value2UpperBytes) << 32) ^ value2LowerBytes;
 #elif defined(VGA_amd64)
+static
 void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord value1, UWord value2)
 
 {
@@ -2341,7 +2615,15 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     switch (oprt)
     {
@@ -2570,6 +2852,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  //break;
 				}
                                 value2 = getLongDecimalValue(arg2, value2);
+				//VG_(printf)("Iop_Shl64 arg2->tag=%x value2LowerBytes=%lx value2UpperBytes=%lx value2=%llx\n", arg2->tag, value2LowerBytes, value2UpperBytes, value2);
 				if (value2 == 0)
                                 {
                                   l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, ltmp, curvisited);
@@ -2580,6 +2863,12 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
                                 }
+				else if (value2 >= 64)
+				{
+				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=0hex0000000000000000);\n", curblock, ltmp, curvisited);
+				  my_write(fdtrace, s, l);
+				  my_write(fddanger, s, l);
+				}
                                 else
                                 {
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=(", curblock, ltmp, curvisited);
@@ -2616,15 +2905,19 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
 				}
-				break;		
-      case Iop_DivU64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
+				break;
+      case Iop_DivU64:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 				  my_write(fddanger, s, l);
-				} 
+				}
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVDIV(64,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
@@ -2637,14 +2930,18 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivS64:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
+      case Iop_DivS64:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 				  my_write(fddanger, s, l);
-				} 
+				}
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=SBVDIV(64,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
@@ -2661,6 +2958,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
   }
 }
 
+static
 void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Addr64 value1, IRExpr* value2)
 {
   UShort r = isPropagation2(arg1, arg2);
@@ -2675,18 +2973,30 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     switch (oprt)
     {
-      case Iop_DivModU64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
+      case Iop_DivModU64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 				  my_write(fddanger, s, l);
-				} 
+				}
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVMOD(64,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
@@ -2707,14 +3017,18 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivModS64to32:	if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
+      case Iop_DivModS64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 				  my_write(fddanger, s, l);
-				} 
+				}
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=SBVMOD(64,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
@@ -2740,6 +3054,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
   }
 }
 
+static
 void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* value1, IRExpr* value2)
 {
   UShort r = isPropagation2(arg1, arg2);
@@ -2754,11 +3069,19 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
     taintTemp(ltmp);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     switch (oprt)
     {
-      case Iop_CmpEQ8: 	
+      case Iop_CmpEQ8:
       case Iop_CmpEQ16:
       case Iop_CmpEQ32:		l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=IF ", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
@@ -2871,7 +3194,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				my_write(fddanger, s, l);
 				break;
 
-      case Iop_CmpNE8:	
+      case Iop_CmpNE8:
       case Iop_CmpNE16:
       case Iop_CmpNE32:		l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=IF NOT(", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
@@ -2897,7 +3220,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				break;
       case Iop_Add8:
       case Iop_Add16:
-      case Iop_Add32:		if (oprt == Iop_Add8) size = 8; 
+      case Iop_Add32:		if (oprt == Iop_Add8) size = 8;
 				else if (oprt == Iop_Add16) size = 16;
 				else size = 32;
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVPLUS(%u,", curblock, ltmp, curvisited, size);
@@ -2914,7 +3237,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				break;
       case Iop_Sub8:
       case Iop_Sub16:
-      case Iop_Sub32:		if (oprt == Iop_Sub8) size = 8; 
+      case Iop_Sub32:		if (oprt == Iop_Sub8) size = 8;
 				else if (oprt == Iop_Sub16) size = 16;
 				else size = 32;
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVSUB(%u,", curblock, ltmp, curvisited, size);
@@ -2931,7 +3254,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				break;
       case Iop_Mul8:
       case Iop_Mul16:
-      case Iop_Mul32:		if (oprt == Iop_Mul8) size = 8; 
+      case Iop_Mul32:		if (oprt == Iop_Mul8) size = 8;
 				else if (oprt == Iop_Mul16) size = 16;
 				else size = 32;
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVMULT(%u,", curblock, ltmp, curvisited, size);
@@ -2990,12 +3313,12 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				break;
 
       case Iop_Sar8:
-      case Iop_Sar16:		
+      case Iop_Sar16:
       case Iop_Sar32:		if (secondTainted(r))
 				{
 				  //break;
 				}
-				if (oprt == Iop_Sar8) size = 8; 
+				if (oprt == Iop_Sar8) size = 8;
 				else if (oprt == Iop_Sar16) size = 16;
 				else if (oprt == Iop_Sar32) size = 32;
 				else size = 64;
@@ -3017,7 +3340,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				{
 				  //break;
 				}
-				if (oprt == Iop_Shl8) size = 8; 
+				if (oprt == Iop_Shl8) size = 8;
 				else if (oprt == Iop_Shl16) size = 16;
 				else size = 32;
 				sarg = getDecimalValue(arg2, value2);
@@ -3073,14 +3396,18 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				  my_write(fddanger, s, l);
 				}
 				break;
-      case Iop_DivU32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
+      case Iop_DivU32:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+                                  if (fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
 				  my_write(fddanger, s, l);
-				} 
+				}
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=BVDIV(32,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
@@ -3093,14 +3420,18 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivS32:		if ((arg2->tag == Iex_RdTmp) && secondTainted(r))
+      case Iop_DivS32:		if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
 				  printSizedFalse(arg2->Iex.RdTmp.tmp, fddanger);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-				  my_write(fddanger, s, l);
-				} 
+                                  if (fdfuncFilter >= 0)
+                                  {
+                                    dumpCall();
+                                  }
+      				  my_write(fddanger, s, l);
+				}
 				l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=SBVDIV(32,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
@@ -3155,6 +3486,7 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 }
 
 //unlikely to be ever used
+static
 void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
 {
   UShort size;
@@ -3175,7 +3507,15 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
     taintMemory(addr, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -3186,7 +3526,7 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
                 memory++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := registers_%d[0hex%02x];\n", memory + 1, memory, addr, registers, offset);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3214,7 +3554,7 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
                 memory++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%016lx] := registers_%d[0hex%02x];\n", memory + 1, memory, addr, registers, offset);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3266,18 +3606,19 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
 #endif
       default:	break;
     }
-  } 
+  }
   else
   {
     untaintMemory(addr, size);
   }
 }
 
+static
 void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 {
   UShort size = curNode->temps[tmp].size;
   UWord addr = (UWord) storeAddr;
-  if (VG_(HT_lookup)(taintedTemps, ltmp) != NULL)
+  if (checkDanger && (VG_(HT_lookup)(taintedTemps, ltmp) != NULL) && (!enableFiltering || useFiltering()))
   {
     Char s[256];
     Int l = 0;
@@ -3285,18 +3626,29 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
-    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n", 
+    VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
                  curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
+    if (fdfuncFilter >= 0)
+    {
+      dumpCall();
+    }
     l = VG_(sprintf)(s, format, curblock, ltmp, curvisited, seg->start);
     my_write(fddanger, s, l);
-
   }
   if (VG_(HT_lookup)(taintedTemps, tmp) != NULL)
   {
     taintMemory(addr, size);
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -3307,7 +3659,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
                 memory++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%llx_%u_%u[7:0];\n", memory + 1, memory, addr, curblock, tmp, curvisited);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3335,7 +3687,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
                 memory++;
-                break; 
+                break;
       case 16:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%016lx] := t_%llx_%u_%u[7:0];\n", memory + 1, memory, addr, curblock, tmp, curvisited);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3394,6 +3746,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
   }
 }
 
+static
 void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
 {
   UShort size;
@@ -3407,24 +3760,41 @@ void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
 			break;
     case Ico_U64:	size = 64;
 			break;
-  }  
+  }
   untaintMemory((UWord) addr, size);
   if (VG_(HT_lookup)(taintedMemory, (UWord) addr) != NULL)
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
   }
 }
 
+static
 void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
 {
-  if (VG_(HT_lookup)(taintedTemps, tmp) != NULL)
+  if ((VG_(HT_lookup)(taintedTemps, tmp) != NULL) && (!enableFiltering || useFiltering()))
   {
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
-    VG_(printf)("\n");
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
 #endif
     Char s[256];
     Int l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, tmp, curvisited);
@@ -3440,7 +3810,7 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
       printSizedTrue(tmp, fddanger);
     }
     else
-    {     
+    {
       printSizedFalse(tmp, fdtrace);
       printSizedFalse(tmp, fddanger);
     }
@@ -3465,10 +3835,14 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     if (curdepth >= depth)
     {
       l = VG_(sprintf)(s, "QUERY(FALSE);\n");
+      if (fdfuncFilter >= 0)
+      {
+        dumpCall();
+      }
       my_write(fdtrace, s, l);
     }
     curdepth++;
-    if (curdepth > depth + invertdepth)
+    if ((curdepth > depth + invertdepth) && (fdfuncFilter == -1))
     {
       dump(fdtrace);
       dump(fddanger);
@@ -3495,6 +3869,7 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
   }
 }
 
+static
 void instrumentPut(IRStmt* clone, IRSB* sbOut)
 {
   IRDirty* di;
@@ -3519,6 +3894,7 @@ void instrumentPut(IRStmt* clone, IRSB* sbOut)
 }
 
 #if defined(VGA_x86)
+static
 IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 {
   IRTemp tmp;
@@ -3528,15 +3904,15 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
   {
     case Ity_I1:	tmp = newIRTemp(tyenv, Ity_I32);
 			e = IRExpr_Unop(Iop_1Uto32, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I8:	tmp = newIRTemp(tyenv, Ity_I32);
 			e = IRExpr_Unop(Iop_8Uto32, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I16:	tmp = newIRTemp(tyenv, Ity_I32);
 			e = IRExpr_Unop(Iop_16Uto32, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I32:	return arg;
     case Ity_I64:	if (arg->tag == Iex_Const)
@@ -3554,6 +3930,7 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
   }
 }
 #elif defined(VGA_amd64)
+static
 IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 {
   IRTemp tmp;
@@ -3563,19 +3940,19 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
   {
     case Ity_I1:	tmp = newIRTemp(tyenv, Ity_I64);
 			e = IRExpr_Unop(Iop_1Uto64, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I8:	tmp = newIRTemp(tyenv, Ity_I64);
 			e = IRExpr_Unop(Iop_8Uto64, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I16:	tmp = newIRTemp(tyenv, Ity_I64);
 			e = IRExpr_Unop(Iop_16Uto64, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I32:	tmp = newIRTemp(tyenv, Ity_I64);
 			e = IRExpr_Unop(Iop_32Uto64, arg);
-			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e)); 
+			addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
 			return IRExpr_RdTmp(tmp);
     case Ity_I64:	if (arg->tag == Iex_Const)
 			{
@@ -3598,19 +3975,19 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 			else
 			{
 			  return arg;
-			}    
+			}
     default:		break;
   }
 }
 #endif
 
+static
 void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 {
   IRDirty* di;
   IRExpr* arg1,* arg2,* arg3,* arg4;
   UInt tmp = clone->Ist.WrTmp.tmp;
   IRExpr* data = clone->Ist.WrTmp.data;
-  
   IRExpr* value1,* value2;
   switch (data->tag)
   {
@@ -3638,27 +4015,27 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
                         value2 = adjustSize(sbOut, tyenv, arg2);
                         if ((data->Iex.Binop.op == Iop_CmpEQ64) ||
       			    (data->Iex.Binop.op == Iop_CmpLT64S) ||
-      			    (data->Iex.Binop.op == Iop_CmpLT64U) ||	
-      			    (data->Iex.Binop.op == Iop_CmpLE64S) ||	
+      			    (data->Iex.Binop.op == Iop_CmpLT64U) ||
+      			    (data->Iex.Binop.op == Iop_CmpLE64S) ||
       			    (data->Iex.Binop.op == Iop_CmpLE64U) ||
       			    (data->Iex.Binop.op == Iop_CmpNE64) ||
-      			    (data->Iex.Binop.op == Iop_Add64) ||	
-      			    (data->Iex.Binop.op == Iop_Sub64) || 		
+      			    (data->Iex.Binop.op == Iop_Add64) ||
+      			    (data->Iex.Binop.op == Iop_Sub64) ||
       			    (data->Iex.Binop.op == Iop_Mul64) ||
-      			    (data->Iex.Binop.op == Iop_Or64) ||		
-      			    (data->Iex.Binop.op == Iop_And64) || 		
-      			    (data->Iex.Binop.op == Iop_Xor64) ||	
-      			    (data->Iex.Binop.op == Iop_Sar64) ||		
-      			    (data->Iex.Binop.op == Iop_Shl64) || 		
-      			    (data->Iex.Binop.op == Iop_Shr64) || 			
-      			    (data->Iex.Binop.op == Iop_DivU64) ||		
+      			    (data->Iex.Binop.op == Iop_Or64) ||
+      			    (data->Iex.Binop.op == Iop_And64) ||
+      			    (data->Iex.Binop.op == Iop_Xor64) ||
+      			    (data->Iex.Binop.op == Iop_Sar64) ||
+      			    (data->Iex.Binop.op == Iop_Shl64) ||
+      			    (data->Iex.Binop.op == Iop_Shr64) ||
+      			    (data->Iex.Binop.op == Iop_DivU64) ||
       			    (data->Iex.Binop.op == Iop_DivS64))
 			{
 #if defined(VGA_x86)
                           ULong value1UpperBytes = (((Addr64) arg1) & ((Addr64) 0xffffffff00000000)) >> 32;
                           ULong value1LowerBytes = ((Addr64) arg1) & ((Addr64) 0x00000000ffffffff);
                           ULong value2UpperBytes = (((Addr64) arg2) & ((Addr64) 0xffffffff00000000)) >> 32;
-                          ULong value2LowerBytes = ((Addr64) arg2) & ((Addr64) 0x00000000ffffffff);			  
+                          ULong value2LowerBytes = ((Addr64) arg2) & ((Addr64) 0x00000000ffffffff);
                           di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_9(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(data->Iex.Binop.op), mkIRExpr_HWord(tmp), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1LowerBytes, value1UpperBytes, value2LowerBytes, value2UpperBytes));
                    	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 #elif defined(VGA_amd64)
@@ -3679,7 +4056,7 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 			{
                           di = unsafeIRDirty_0_N(0, "instrumentWrTmpBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpBinop), mkIRExprVec_5(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1, value2));
                    	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-			}	
+			}
 			break;
     case Iex_Const:	break;
     case Iex_CCall:	if (!VG_(strcmp)(data->Iex.CCall.cee->name, "x86g_calculate_condition") ||
@@ -3691,17 +4068,18 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 			  IRExpr* arg3 = data->Iex.CCall.args[3];
 			  IRExpr* arg4 = data->Iex.CCall.args[4];
 			  {
-                            IRExpr* value2 = adjustSize(sbOut, tyenv, arg2); 
+                            IRExpr* value2 = adjustSize(sbOut, tyenv, arg2);
                             IRExpr* value3 = adjustSize(sbOut, tyenv, arg3);
 			    IRExpr* value1 = adjustSize(sbOut, tyenv, arg1);
 			    di = unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", VG_(fnptr_to_fnentry)(&instrumentWrTmpCCall), mkIRExprVec_6(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg2), mkIRExpr_HWord((HWord) arg3), value1, value2, value3));
-                   	    addStmtToIRSB(sbOut, IRStmt_Dirty(di));			 
+                   	    addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 			  }
 			}
 			break;
   }
 }
 
+static
 void instrumentStore(IRStmt* clone, IRSB* sbOut)
 {
   IRDirty* di;
@@ -3725,6 +4103,7 @@ void instrumentStore(IRStmt* clone, IRSB* sbOut)
   }
 }
 
+static
 void instrumentExit(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 {
   IRDirty* di;
@@ -3734,13 +4113,14 @@ void instrumentExit(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
   switch (guard->tag)
   {
     case Iex_RdTmp:	etemp = adjustSize(sbOut, tyenv, guard);
-			di = unsafeIRDirty_0_N(0, "instrumentExitRdTmp", VG_(fnptr_to_fnentry)(&instrumentExitRdTmp), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), etemp, mkIRExpr_HWord(guard->Iex.RdTmp.tmp), mkIRExpr_HWord(dst)));
+                	di = unsafeIRDirty_0_N(0, "instrumentExitRdTmp", VG_(fnptr_to_fnentry)(&instrumentExitRdTmp), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), etemp, mkIRExpr_HWord(guard->Iex.RdTmp.tmp), mkIRExpr_HWord(dst)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
     default:		break;
   }
 }
 
+static
 void createTaintedTemp(UInt basicBlockLowerBytes, UInt basicBlockUpperBytes)
 {
   Addr64 bbaddr = (((Addr64) basicBlockUpperBytes) << 32) ^ basicBlockLowerBytes;
@@ -3758,10 +4138,10 @@ void createTaintedTemp(UInt basicBlockLowerBytes, UInt basicBlockUpperBytes)
 static
 IRSB* tg_instrument ( VgCallbackClosure* closure,
                       IRSB* sbIn,
-                      VexGuestLayout* layout, 
+                      VexGuestLayout* layout,
                       VexGuestExtents* vge,
                       IRType gWordTy, IRType hWordTy )
-{      
+{
    IRTypeEnv* tyenv = sbIn->tyenv;
    IRType* types = tyenv->types;
    UInt used = tyenv->types_used;
@@ -3779,42 +4159,47 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
       VG_(tool_panic)("host/guest word size mismatch");
    }
 
+#ifdef TAINTED_BLOCKS_PRINTOUT   
+   newSB = True;
+   printSB = sbIn;
+#endif
+
    /* Set up SB */
    sbOut = deepCopyIRSBExceptStmts(sbIn);
 
    curblock = vge->base[0];
 
-    curNode = VG_(malloc)("taintMemoryNode", sizeof(sizeNode)); 
-    curNode->key = curblock; 
+    curNode = VG_(malloc)("taintMemoryNode", sizeof(sizeNode));
+    curNode->key = curblock;
     curNode->temps = VG_(malloc)("temps", tyenv->types_used * sizeof(size2Node));
     for (i = 0; i < tyenv->types_used; i++)
     {
       switch (tyenv->types[i])
       {
         case Ity_I1:	curNode->temps[i].size = 1;
-			break; 
+			break;
         case Ity_I8:	curNode->temps[i].size = 8;
-			break;  
+			break;
         case Ity_I16:	curNode->temps[i].size = 16;
-			break;  
+			break;
         case Ity_I32:	curNode->temps[i].size = 32;
-			break;  
+			break;
         case Ity_I64:	curNode->temps[i].size = 64;
-			break; 
+			break;
         case Ity_I128:	curNode->temps[i].size = 128;
-			break;  
+			break;
         case Ity_F32:	curNode->temps[i].size = 32;
-			break;   
+			break;
         case Ity_F64:	curNode->temps[i].size = 64;
-			break;    
+			break;
         case Ity_V128:	curNode->temps[i].size = 128;
-			break; 
+			break;
       }
-    }  
+    }
     curNode->visited = 0;
-    VG_(HT_add_node)(tempSizeTable, curNode); 
+    VG_(HT_add_node)(tempSizeTable, curNode);
 
-  curvisited = 0;
+   curvisited = 0;
    UInt iaddrUpperBytes, iaddrLowerBytes, basicBlockUpperBytes, basicBlockLowerBytes;
    basicBlockUpperBytes = (vge->base[0] & ((long long int) 0xffffffff00000000)) >> 32;
    basicBlockLowerBytes = vge->base[0] & ((long long int) 0x00000000ffffffff);
@@ -3823,9 +4208,9 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
    di = unsafeIRDirty_0_N(0, "createTaintedTemp", VG_(fnptr_to_fnentry)(&createTaintedTemp), mkIRExprVec_2(mkIRExpr_HWord(basicBlockLowerBytes), mkIRExpr_HWord(basicBlockUpperBytes)));
    addStmtToIRSB(sbOut, IRStmt_Dirty(di));
    for (;i < sbIn->stmts_used; i++)
-   {           
+   {
      IRStmt* clone = deepMallocIRStmt((IRStmt*) sbIn->stmts[i]);
-     switch (sbIn->stmts[i]->tag) 
+     switch (sbIn->stmts[i]->tag)
      {
        case Ist_NoOp:
          break;
@@ -3855,14 +4240,11 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
        case Ist_MBE:
          break;
        case Ist_Exit:
-	 instrumentExit(clone, sbOut, sbOut->tyenv);
+         instrumentExit(clone, sbOut, sbOut->tyenv);
          break;
      }
-     //ppIRStmt(sbIn->stmts[i]);
-     //VG_(printf)("\n");
      addStmtToIRSB(sbOut, sbIn->stmts[i]);
    }
-
    return sbOut;
 }
 
@@ -3870,6 +4252,10 @@ static void tg_fini(Int exitcode)
 {
   dump(fdtrace);
   dump(fddanger);
+  if (fdfuncFilter >= 0)
+  {
+    dump(fdfuncFilter);
+  }
   if (dumpPrediction)
   {
     SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
@@ -3895,14 +4281,27 @@ static void tg_fini(Int exitcode)
     }
     VG_(close)(fd);
   }
+  if (fdfuncFilter >= 0) 
+  {
+    VG_(close)(fdfuncFilter);
+  }
+//  if (inputFilterEnabled) 
+//  {
+//    VG_(deleteXA)(inputFilter);
+//  }
 }
 
-static Bool tg_process_cmd_line_option(Char* arg) 
-{ 
+static Bool tg_process_cmd_line_option(Char* arg)
+{
   Char* inputfile;
   Char* addr;
+  Char* filtertype;
+  Char* funcname;
+  Char* funcfilterfile;
+  Char* inputfilterfile;
+  Char* dumpfile;
   if (VG_INT_CLO(arg, "--startdepth", depth))
-  { 
+  {
     depth -= 1;
     return True;
   }
@@ -3913,6 +4312,32 @@ static Bool tg_process_cmd_line_option(Char* arg)
   else if (VG_STR_CLO(arg, "--port", addr))
   {
     port = (UShort) VG_(strtoll10)(addr, NULL);
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--func-name", funcname))
+  {
+    parseFnName(funcname);
+    enableFiltering = True;
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--func-filter-file", funcfilterfile))
+  {
+    Int fd = VG_(open)(funcfilterfile, VKI_O_RDWR, 0).res;
+    parseFuncFilterFile(fd);
+    enableFiltering = True;
+    VG_(close)(fd);
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--mask", inputfilterfile))
+  {
+    if (!parseMask(inputfilterfile))
+    {
+      VG_(printf)("couldn't parse mask file\n");
+      VG_(exit)(1);
+    }
+    //VG_(printf)("printInputOffsets\n");
+    //printInputOffsets();
+    inputFilterEnabled = True;
     return True;
   }
   else if (VG_STR_CLO(arg, "--host", addr))
@@ -3939,23 +4364,37 @@ static Bool tg_process_cmd_line_option(Char* arg)
       inputfiles = VG_(HT_construct)("inputfiles");
     }
     stringNode* node;
-    node = VG_(malloc)("stringNode", sizeof(stringNode)); 
-    node->key = hashCode(inputfile); 
+    node = VG_(malloc)("stringNode", sizeof(stringNode));
+    node->key = hashCode(inputfile);
     node->filename = inputfile;
     node->declared = False;
-    VG_(HT_add_node)(inputfiles, node);    
+    VG_(HT_add_node)(inputfiles, node);
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))
+  {
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--dump-file", dumpfile))
+  {
+    fdfuncFilter = VG_(open) (dumpfile, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
+                              VKI_S_IRUSR | VKI_S_IWUSR | VKI_S_IRGRP | VKI_S_IWGRP | VKI_S_IROTH | VKI_S_IWOTH).res;
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
+  {
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--sockets",  sockets))
-  { 
-    return True; 
+  {
+    return True;
   }
   else if (VG_BOOL_CLO(arg, "--datagrams",  datagrams))
-  { 
-    return True; 
+  {
+    return True;
   }
   else if (VG_BOOL_CLO(arg, "--replace",  replace))
-  { 
+  {
     Int fd = VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
     VG_(read)(fd, &socketsNum, 4);
     socketsBoundary = socketsNum;
@@ -3975,10 +4414,10 @@ static Bool tg_process_cmd_line_option(Char* arg)
       replace_data = NULL;
     }
     VG_(close)(fd);
-    return True; 
+    return True;
   }
-  else if VG_BOOL_CLO(arg, "--check-prediction",  checkPrediction)  
-  { 
+  else if VG_BOOL_CLO(arg, "--check-prediction",  checkPrediction)
+  {
     if (depth > 0)
     {
       checkPrediction = True;
@@ -3991,27 +4430,29 @@ static Bool tg_process_cmd_line_option(Char* arg)
     {
       checkPrediction = False;
     }
-    return True; 
+    return True;
   }
-  else if VG_BOOL_CLO(arg, "--dump-prediction",  dumpPrediction)  
-  { 
-    dumpPrediction = True;
-    actual = VG_(malloc)("prediction", (depth + invertdepth) * sizeof(Bool));
-    return True; 
+  else if VG_BOOL_CLO(arg, "--dump-prediction",  dumpPrediction)
+  {
+    if (dumpPrediction)
+    {
+      actual = VG_(malloc)("prediction", (depth + invertdepth) * sizeof(Bool));
+    }
+    return True;
   }
   else
   {
     return False;
   }
-} 
-	 	 
-static void tg_print_usage() 
-{   
-  VG_(printf)( 
+}
+
+static void tg_print_usage()
+{
+  VG_(printf)(
 	"    --startdepth=<number>		the number of conditional jumps after\n"
 	"					which the queries for the invertation of\n"
 	"					consequent conditional jumps are emitted\n"
-	"    --invertdepth=<number>		number of queries to be emitted\n" 
+	"    --invertdepth=<number>		number of queries to be emitted\n"
 	"    --filename=<name>			the name of the file with the input data\n"
 	"    --dump-prediction=<yes, no>	indicates whether the file with conditional\n"
 	"		 			jumps outcome prediction should be dumped\n"
@@ -4025,13 +4466,13 @@ static void tg_print_usage()
         "    --host=<IPv4 address>              IP address of the network connection (for TCP sockets only)\n"
         "    --port=<number>                    port number of the network connection (for TCP sockets only)\n"
         "    --replace=<name>                   name of the file with data for replacement\n"
-  ); 
-} 
-	 	 
-static void tg_print_debug_usage() 
-{   
-  VG_(printf)(""); 
-} 
+  );
+}
+
+static void tg_print_debug_usage()
+{
+  VG_(printf)("");
+}
 
 static void tg_pre_clo_init(void)
 {
@@ -4046,17 +4487,24 @@ static void tg_pre_clo_init(void)
   VG_(needs_syscall_wrapper)(pre_call,
 			      post_call);
   VG_(track_post_mem_write)(tg_track_post_mem_write);
-  VG_(track_new_mem_mmap)(tg_track_mem_mmap); 
+  VG_(track_new_mem_mmap)(tg_track_mem_mmap);
+
+  VG_(needs_core_errors) ();
+  VG_(needs_var_info) ();
 
   VG_(needs_command_line_options)(tg_process_cmd_line_option,
                                   tg_print_usage,
                                   tg_print_debug_usage);
 
   taintedMemory = VG_(HT_construct)("taintedMemory");
-  taintedRegisters = VG_(HT_construct)("taintedRegisters"); 
+  taintedRegisters = VG_(HT_construct)("taintedRegisters");
 
   tempSizeTable = VG_(HT_construct)("tempSizeTable");
-
+ 
+  funcNames = VG_(HT_construct)("funcNames");
+  
+  diFunctionName = VG_(malloc) ("diFunctionName", 1024 * sizeof(Char));
+      
   fdtrace = VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
   fddanger = VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
 #if defined(VGA_x86)
