@@ -5,6 +5,7 @@ INCLUDES = -I../include
 avalanche_CFLAGS = -Wno-deprecated
 
 avalanche_SOURCES = \
+       Chunk.cpp \
        Entry.cpp \
        Executor.cpp \
        ExecutionManager.cpp \

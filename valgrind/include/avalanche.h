@@ -10,6 +10,7 @@ struct _fdsNode
   HChar* name;
   ULong offs;
   ULong size;
+  Int seqnum;
 };
 
 typedef struct _fdsNode fdsNode; 

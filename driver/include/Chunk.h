@@ -1,11 +1,12 @@
+
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*----------------------------------- FileBuffer.h ---------------------------------------*/
+/*-------------------------------------- Chunk.h -----------------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Ildar Isaev
+   Copyright (C) 2010 Ildar Isaev
       iisaev@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,45 +22,27 @@
    limitations under the License.
 */
 
-#ifndef __FILE_BUFFER__H__
-#define __FILE_BUFFER__H__
+#ifndef __CHUNK__H__
+#define __CHUNK__H__
 
-#include <stddef.h>
+#include <vector>
 
-class FileBuffer
+class FileBuffer;
+
+class Chunk
 {
+private:
+  FileBuffer* trace;
+  std::vector<std::pair<int, int> > exploitGroups;
 public:
+  Chunk(FileBuffer* trace, int exploitNum, int inputNum);
 
-  char* buf;
-  int size;
-  char* name;
-  int sd;
-  //unsigned int startdepth;
-  //bool* prediction;
-  //int predictionSize;
-  //FileBuffer* parent;
-
-  friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
-
-  FileBuffer(char* name);
-
-  FileBuffer(const FileBuffer& other);
-
-  virtual FileBuffer* forkInput(char* stpOutputFile);
-
-  virtual void dumpFile(char* name = NULL);
-
-  virtual void applySTPSolution(char* buf);
+  void addGroup(int exploitNum, int inputNum);
   
-  bool filterCovgrindOutput();
+  FileBuffer* getTrace();
 
-  ~FileBuffer();
-
-protected:
-
-  FileBuffer()
-  { }
-
+  void print(int chunkNum);
 };
 
 #endif
+

@@ -54,7 +54,11 @@ int Executor::exec(bool setlimit)
     child_pid = fork();
 
     if (child_pid == (pid_t)(-1)) return -1; // Error occures
-    if (child_pid != (pid_t)(0))  return  0; // Parent process
+    if (child_pid != (pid_t)(0))  
+    {
+      //LOG(logger, "child_pid=" << child_pid);
+      return  0; // Parent process
+    }
 
     string args_log;
     for (int i = 0; args[i]; i++) {
@@ -79,7 +83,9 @@ int Executor::exec(bool setlimit)
 int Executor::wait()
 {
     int   status;
-    pid_t ret_proc = ::wait(&status);
+    //LOG(logger, "Waiting for child_pid=" << child_pid);
+    pid_t ret_proc = ::waitpid(child_pid, &status, 0);
+    //LOG(logger, "Process is over ret_proc=" << ret_proc);
 
     if (ret_proc == (pid_t)(-1)) return -1;
 

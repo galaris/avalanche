@@ -26,6 +26,7 @@
 
 #include "ExecutionManager.h"
 #include "Logger.h"
+#include "Chunk.h"
 #include "OptionConfig.h"
 #include "PluginExecutor.h"
 #include "ProgExecutor.h"
@@ -71,7 +72,7 @@ extern pid_t child_pid;
 bool killed = false;
 bool nokill = false;
 
-static Logger *logger = Logger::getLogger();
+Logger *logger = Logger::getLogger();
 Input* initial;
 int allSockets = 0;
 int curSockets;
@@ -79,6 +80,8 @@ int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
+  
+vector<Chunk*> report;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -90,96 +93,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     divergences = 0;
 }
 
-void ExecutionManager::runUninstrumented(Input* input)
-{
-  if (config->usingSockets() || config->usingDatagrams())
-  {
-    input->dumpExploit("replace_data", false);
-
-    vector<string> plugin_opts;
-    if (config->usingSockets())
-    {
-      ostringstream cv_host;
-      cv_host << "--host=" << config->getHost();
-      plugin_opts.push_back(cv_host.str());
-
-      ostringstream cv_port;
-      cv_port << "--port=" << config->getPort();
-      plugin_opts.push_back(cv_port.str());
-  
-      plugin_opts.push_back("--sockets=yes");
-    }
-    else
-    {
-      plugin_opts.push_back("--datagrams=yes");
-    }
-    
-    plugin_opts.push_back("--replace=replace_data");
-    plugin_opts.push_back("--no-coverage=yes");
-
-    alarm(config->getAlarm());
-    killed = false;
-
-    PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
-    curSockets = 0;
-    cv_start = time(NULL);
-    incv = true;
-    int exitCode = plugin_exe.run();
-    incv = false;  
-    cv_end = time(NULL);
-    cv_time += cv_end - cv_start;
-    if ((exitCode == -1) && !killed)
-    {
-      time_t exploittime;
-      time(&exploittime);
-      string t = string(ctime(&exploittime));
-      LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << "exploit_" << exploits;
-      REPORT(logger, "Crash detected. Dumping exploit input to file " << ss.str());
-      input->dumpExploit((char*) ss.str().c_str(), false);
-      exploits++;
-    }
-    else
-    {
-      DBG(logger, "no failure after successful invertation of danger condition");
-    }
-  }
-  else
-  {
-    input->dumpFiles();
-    vector<string> plugin_opts;
-    ProgExecutor prog_exe(config->getProgAndArg());
-    pure_start = time(NULL);
-    inpure = true;
-    int exitCode = prog_exe.run();
-    inpure = false;
-    pure_end = time(NULL);
-    pure_time += pure_end - pure_start;
-    if (exitCode == -1)
-    {
-      time_t exploittime;
-      time(&exploittime);
-      string t = string(ctime(&exploittime));
-      REPORT(logger, "Crash detected."); 
-      LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));
-      for (int i = 0; i < input->files.size(); i++)
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits << "_" << i;
-        REPORT(logger, "Dumping exploit input to file " << ss.str());
-        input->files.at(i)->dumpFile((char*) ss.str().c_str());
-      }
-      exploits++;
-    }
-    else
-    {
-      DBG(logger, "no failure after successful invertation of danger condition");
-    }
-  }
-}
-
-int ExecutionManager::checkAndScore(Input* input)
+int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
 {
 
   if (config->usingSockets() || config->usingDatagrams())
@@ -225,7 +139,13 @@ int ExecutionManager::checkAndScore(Input* input)
     plugin_opts.push_back(cv_alarm.str());
   }
 
-  PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, kind);
+  plugin_opts.push_back("--log-file=execution.log");
+  if (addNoCoverage)
+  {
+    plugin_opts.push_back("--no-coverage=yes");
+  }
+
+  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, addNoCoverage ? COVGRIND : kind);
   curSockets = 0;
   cv_start = time(NULL);
   incv = true;
@@ -234,8 +154,61 @@ int ExecutionManager::checkAndScore(Input* input)
   cv_end = time(NULL);
   cv_time += cv_end - cv_start;
   FileBuffer* mc_output;
+  bool infoAvailable = false;
+  bool sameExploit = false;
+  int exploitGroup = 0;
   if ((exitCode == -1) && !killed)
   {
+    FileBuffer* cv_output = new FileBuffer("execution.log");
+    bool deleteBuffer = true;
+    infoAvailable = cv_output->filterCovgrindOutput();
+    if (infoAvailable)
+    {
+      for (vector<Chunk*>::iterator it = report.begin(); it != report.end(); it++, exploitGroup++)
+      {
+        if (((*it)->getTrace() != NULL) && (*(*it)->getTrace() == *cv_output))
+        {
+          sameExploit = true;
+          if (config->usingSockets() || config->usingDatagrams())
+          {
+            (*it)->addGroup(exploits, -1);
+          }
+          else
+          {
+            (*it)->addGroup(exploits, input->files.size());
+          }
+          break;
+        }
+      }
+      if (!sameExploit) 
+      {
+        Chunk* ch;
+        if (config->usingSockets() || config->usingDatagrams())
+        {
+          ch = new Chunk(cv_output, exploits, -1);
+        }
+        else
+        {
+          ch = new Chunk(cv_output, exploits, input->files.size());
+        }
+        deleteBuffer = false;
+        report.push_back(ch);
+      }
+    }
+    else
+    {
+      Chunk* ch;
+      if (config->usingSockets() || config->usingDatagrams())
+      {
+        ch = new Chunk(NULL, exploits, -1);
+      }
+      else
+      {
+        ch = new Chunk(NULL, exploits, input->files.size());
+      }
+      deleteBuffer = false;
+      report.push_back(ch); 
+    }
     time_t exploittime;
     time(&exploittime);
     string t = string(ctime(&exploittime));
@@ -247,22 +220,67 @@ int ExecutionManager::checkAndScore(Input* input)
       ss << "exploit_" << exploits;
       REPORT(logger, "Dumping an exploit to file " << ss.str());
       input->dumpExploit((char*) ss.str().c_str(), false);
+      if (infoAvailable)
+      {
+        if (!sameExploit)
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "stacktrace_" << report.size() - 1 << ".log";
+          cv_output->dumpFile((char*) ss.str().c_str());
+          REPORT(logger, "Dumping stack trace to file " << ss.str());
+        }
+        else
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "stacktrace_" << exploitGroup << ".log";
+          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
+        }
+      }
+      else
+      {
+        REPORT(logger, "No stack trace is available.");
+      }
     }
     else
     {
+      if (infoAvailable)
+      {
+        if (!sameExploit)
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "stacktrace_" << report.size() - 1 << ".log";
+          cv_output->dumpFile((char*) ss.str().c_str());
+          REPORT(logger, "Dumping stack trace to file " << ss.str());
+        }
+        else
+        {
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << "stacktrace_" << exploitGroup << ".log";
+          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
+        }
+      }
+      else
+      {
+        REPORT(logger, "No stack trace is available.");
+      }
       for (int i = 0; i < input->files.size(); i++)
       {
         stringstream ss(stringstream::in | stringstream::out);
         ss << "exploit_" << exploits << "_" << i;
-        REPORT(logger, "dumping an exploit to file " << ss.str());
+        REPORT(logger, "Dumping an exploit to file " << ss.str());
         input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
       }
     }
     exploits++;
+    if (deleteBuffer)
+    {
+      delete cv_output;
+    }
   }
-  else if (config->usingMemcheck())
+  else if (config->usingMemcheck() && !addNoCoverage)
   {
-    FileBuffer* mc_output = plugin_exe.getOutput();
+    //FileBuffer* mc_output = plugin_exe.getOutput();
+    FileBuffer* mc_output = new FileBuffer("execution.log");
     char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
     long errors = -1;
     long definitely_lost = -1;
@@ -311,24 +329,32 @@ int ExecutionManager::checkAndScore(Input* input)
       }
       memchecks++;  
     }
+    delete mc_output;
   }
-  int res = 0;
-  int fd = open("basic_blocks.log", O_RDWR);
-  struct stat fileInfo;
-  fstat(fd, &fileInfo);
-  int size = fileInfo.st_size / sizeof(int);
-  unsigned int* basicBlockAddrs = new unsigned int[size];
-  read(fd, basicBlockAddrs, fileInfo.st_size);
-  for (int i = 0; i < size; i++)
+  if (!addNoCoverage)
   {
-    if (basicBlocksCovered.insert(basicBlockAddrs[i]).second)
+    int res = 0;
+    int fd = open("basic_blocks.log", O_RDWR);
+    struct stat fileInfo;
+    fstat(fd, &fileInfo);
+    int size = fileInfo.st_size / sizeof(int);
+    unsigned int* basicBlockAddrs = new unsigned int[size];
+    read(fd, basicBlockAddrs, fileInfo.st_size);
+    for (int i = 0; i < size; i++)
     {
-      res++;
+      if (basicBlocksCovered.insert(basicBlockAddrs[i]).second)
+      {
+        res++;
+      }
     }
+    delete[] basicBlockAddrs;
+    close(fd);
+    return res;
   }
-  delete[] basicBlockAddrs;
-  close(fd);
-  return res;
+  else
+  {
+    return 0;
+  }
 }
 
 class Key
@@ -435,7 +461,7 @@ void ExecutionManager::run()
     }
     initial->startdepth = 1;
     int score;
-    score = checkAndScore(initial);
+    score = checkAndScore(initial, false);
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
 
@@ -462,11 +488,54 @@ void ExecutionManager::run()
       tg_depth << "--startdepth=" << fi->startdepth;
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
-        
+   
       vector<string> plugin_opts;
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
-      plugin_opts.push_back("--dump-prediction=yes");
+
+      if (config->getDumpCalls())
+      {
+        plugin_opts.push_back("--dump-file=calldump.log");
+      }
+      else
+      {
+        plugin_opts.push_back("--dump-prediction=yes");
+      }
+
+      ostringstream tg_check_danger;
+      if (config->getCheckDanger())
+      {
+        tg_check_danger << "--check-danger=yes";
+      }
+      else
+      {
+        tg_check_danger << "--check-danger=no";
+      }
+      plugin_opts.push_back(tg_check_danger.str());
+      for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
+      {
+        ostringstream tg_fname;
+        tg_fname << "--func-name=" << config->getFuncFilterUnit(i);
+        plugin_opts.push_back(tg_fname.str()); 
+      }
+      if (config->getFuncFilterFile() != "")
+      {
+        ostringstream tg_func_filter_filename;
+        tg_func_filter_filename << "--func-filter-file=" << config->getFuncFilterFile();
+        plugin_opts.push_back(tg_func_filter_filename.str());
+      }
+ 
+      if (config->getInputFilterFile() != "")
+      {
+        ostringstream tg_input_filter_filename;
+        tg_input_filter_filename << "--mask=" << config->getInputFilterFile();
+        plugin_opts.push_back(tg_input_filter_filename.str());
+      }
+
+      if (config->getSuppressSubcalls())
+      {
+        plugin_opts.push_back("--suppress-subcalls=yes");
+      }
 
       if (config->usingSockets())
       {
@@ -510,7 +579,8 @@ void ExecutionManager::run()
       {
         plugin_opts.push_back("--check-prediction=yes");
       }
-      PluginExecutor plugin_exe(config->getDebug(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
+      
+      PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
       tg_start = time(NULL);
       intg = true;
       if (config->getTracegrindAlarm() == 0)
@@ -566,12 +636,21 @@ void ExecutionManager::run()
           divergences++;
           DBG(logger, "with startdepth=" << fi->parent->startdepth << " and invertdepth=" << config->getDepth() << "\n");
           close(divfd);
-          if (scr == 0) continue;
+          if (scr == 0) 
+          {
+            runs++;
+            continue;
+          }
         }
         else
         {
           close(divfd);
         }
+      }
+ 
+      if (config->getDumpCalls())
+      {
+        break;
       }
 
       int actualfd = open("actual.log", O_RDWR);
@@ -579,76 +658,79 @@ void ExecutionManager::run()
       read(actualfd, actual, (fi->startdepth - 1 + config->getDepth()) * sizeof(bool));
       close(actualfd);
 
-      FileBuffer dtrace("dangertrace.log");
-      char* dquery;
-      while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
+      if (config->getCheckDanger())
       {
-        //dump to the separate file
-        unsigned int oldsize = dtrace.size;
-        dtrace.size = (dquery - dtrace.buf) + 13;
-        //dtrace.dumpFile(".avalanche/curdtrace.log");
-        dtrace.dumpFile("curdtrace.log");
-        //replace QUERY(FALSE); with newlines
-        int k = 0;
-        for (; k < 13; k++)
+        FileBuffer dtrace("dangertrace.log");
+        char* dquery;
+        while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
         {
-          dquery[k] = '\n';
-        }
-        k = -1;
-        while (dquery[k] != '\n')
-        {
-          dquery[k] = '\n';
-          k--;
-        }
-        //restore the FileBuffer size
-        dtrace.size = oldsize;
-        //set up the STP_Input to the newly dumped trace
-        STP_Input si;
-        //si.setFile(".avalanche/curdtrace.log");
-        si.setFile("curdtrace.log");
-        //the rest stuff
-        STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-        stp_start = time(NULL);
-        instp = true;
-        nokill = true;
-        STP_Output *stp_output = stp_exe.run(&si);
-        nokill = false;
-        instp = false;
-        stp_end = time(NULL);
-        stp_time += stp_end - stp_start;
-        if (stp_output == NULL)
-        {
-          ERR(logger, "STP has encountered an error");
-          FileBuffer f("curdtrace.log");
-          ERR(logger, "curdtrace.log:\n" << string(f.buf));
-          continue;
-        }
-        if (stp_output->getFile() != NULL)
-        {
-          FileBuffer f(stp_output->getFile());
-          DBG(logger, "stp output:\n" << string(f.buf));
-          Input* next = new Input();
-          for (int i = 0; i < fi->files.size(); i++)
-          { 
-            FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
-            if (fb == NULL)
-            {
-              delete next;
-              next = NULL;
-              break;
-            }
-            else
-            {
-              next->files.push_back(fb);
-            }
-          }
-          if (next != NULL)
+          //dump to the separate file
+          unsigned int oldsize = dtrace.size;
+          dtrace.size = (dquery - dtrace.buf) + 13;
+          //dtrace.dumpFile(".avalanche/curdtrace.log");
+          dtrace.dumpFile("curdtrace.log");
+          //replace QUERY(FALSE); with newlines
+          int k = 0;
+          for (; k < 13; k++)
           {
-            runUninstrumented(next);
-            delete next;
+            dquery[k] = '\n';
           }
+          k = -1;
+          while (dquery[k] != '\n')
+          {
+            dquery[k] = '\n';
+            k--;
+          }
+          //restore the FileBuffer size
+          dtrace.size = oldsize;
+          //set up the STP_Input to the newly dumped trace
+          STP_Input si;
+          //si.setFile(".avalanche/curdtrace.log");
+          si.setFile("curdtrace.log");
+          //the rest stuff
+          STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
+          stp_start = time(NULL);
+          instp = true;
+          nokill = true;
+          STP_Output *stp_output = stp_exe.run(&si);
+          nokill = false;
+          instp = false;
+          stp_end = time(NULL);
+          stp_time += stp_end - stp_start;
+          if (stp_output == NULL)
+          {
+            ERR(logger, "STP has encountered an error");
+            FileBuffer f("curdtrace.log");
+            ERR(logger, "curdtrace.log:\n" << string(f.buf));
+            continue;
+          }
+          if (stp_output->getFile() != NULL)
+          {
+            FileBuffer f(stp_output->getFile());
+            DBG(logger, "stp output:\n" << string(f.buf));
+            Input* next = new Input();
+            for (int i = 0; i < fi->files.size(); i++)
+            { 
+              FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
+              if (fb == NULL)
+              {
+                delete next;
+                next = NULL;
+                break;
+              }
+              else
+              {
+                next->files.push_back(fb);
+              }
+            }
+            if (next != NULL)
+            {
+              checkAndScore(next, true);
+              delete next;
+            }
+          }
+          delete stp_output;
         }
-        delete stp_output;
       }
 
       FileBuffer trace("trace.log");
@@ -742,7 +824,7 @@ void ExecutionManager::run()
             next->predictionSize = fi->startdepth - 1 + depth;
             next->parent = fi;
             int score;
-            score = checkAndScore(next);
+            score = checkAndScore(next, false);
             LOG(logger, "score=" << score << "\n");
             inputs.insert(make_pair(Key(score, dpth + depth), next));
           }
