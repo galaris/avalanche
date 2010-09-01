@@ -144,20 +144,19 @@ bool FileBuffer::filterCovgrindOutput()
   bug_start = strstr(bug_start, "at 0x");
   if (bug_start == NULL) return false;
   char* last_bug_line = bug_start;
-  char* lst = strstr(bug_start, "If you believe");
-  if (lst == NULL) return false;
-  *lst = '\0';
-  char* tmp;
-  while ((tmp = strstr(last_bug_line, "by 0x")) != NULL)
-  {
-    last_bug_line = tmp + 1;
-  }
-  if (last_bug_line == NULL || last_bug_line == bug_start)
-  {
-    last_bug_line = strstr(buf, "at 0x");
-    if (last_bug_line == NULL) return false;
-  }
   char* last_bug_sym = strchr(last_bug_line, '\n');
+  if (last_bug_sym == NULL)
+  {
+    return false;
+  }
+  last_bug_line = last_bug_sym + 1;
+  char* tmp,* prev_new_line = NULL;
+  while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && (tmp < last_bug_sym))
+  {
+    prev_new_line = last_bug_sym;
+    last_bug_line = last_bug_sym + 1;
+  }
+  last_bug_sym = prev_new_line;
   if (last_bug_sym == NULL) return false;
   if (last_bug_sym <= bug_start + 1) return false;
   char* new_buf = (char*) malloc (last_bug_sym - bug_start);
