@@ -12,6 +12,8 @@ The mask may be specified with '--mask=mask_file' option.
 
 Our measurements show that using mask is a very effective. It allows Avalanche to discover many new defects that had been impossible to detect before this feature was introduced.
 
+[Mask_syntax]
+
 A small sample for using masks: [http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c]
 
 Let mask contain the only position:
