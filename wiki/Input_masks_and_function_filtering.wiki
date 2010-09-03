@@ -12,8 +12,6 @@ The mask may be specified with '--mask=mask_file' option.
 
 Our measurements show that using mask is a very effective. It allows Avalanche to discover many new defects that had been impossible to detect before this feature was introduced.
 
-[Mask_syntax]
-
 A small sample for using masks: [http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c]
 
 Let mask contain the only position:
@@ -47,6 +45,8 @@ Program received signal SIGSEGV, Segmentation fault.
     at separate_analysis_sample.c:56
 56	  *d = 1;
 }}}
+
+The syntax and samples of masks definition is described in [Mask_syntax]
 
 Another way is separate function analysis. Avalanche may analyze only specific functions instead of analyzing complete application at once.
 
