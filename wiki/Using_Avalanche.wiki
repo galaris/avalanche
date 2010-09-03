@@ -27,7 +27,7 @@ This command will iteratively run the _program_ with specified command line _pro
 || --port=number ||not set||Port number of the network connection (for TCP sockets only)||
 || --alarm=number ||not set||Timer for breaking infinite waitings in covgrind or memcheck. It designates the maximum time for each run of covgrind or memcheck. If the timer expires, the plugin is killed. Set this option if the analysed program "hangs" on some iteration.||
 || --tracegrind-alarm=number ||not set||Timer for breaking infinite waitings in tracegrind. It designates the maximum time for each run of tracegrind. If the timer expires, the plugin is killed. Set this option if the analysed program "hangs" on some iteration. In general, this value should be greater than the timer for covgrind or memcheck specified by '--alarm' option.||
-|| [http://code.google.com/p/avalanche/wiki/Input_masks_and_function_filtering *masks and separate function analysis*] || || ||
+|| *[http://code.google.com/p/avalanche/wiki/Input_masks_and_function_filtering masks and separate function analysis]* || || ||
 || --mask=mask_file || ||The path to the mask file||
 || --dump-calls || ||Dump the list of functions manipulating with tainted data to calldump.log||
 || --func-name=name || ||The name of function that should be used for separate function analysis (may be used multiple times)||
