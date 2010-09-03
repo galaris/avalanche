@@ -67,7 +67,7 @@ f3
 f4
 }}}
 
-To specify specific function(s) for the analysis one may use either the '--func-name=name' option (it may be used multiple times) or '--func-filter-file=file' option to read a list of function names from the corresponding file.
+To specify specific function(s) for the analysis one may use either the '--func-name=name' option (it may be used multiple times) or '--func-file=file' option to read a list of function names from the corresponding file.
 
 For example:
 
@@ -77,6 +77,6 @@ user@machine:$ ./inst/bin/avalanche --func-name=f4 --filename=samples/simple/see
 
 This will result in generation of exploit_0_0 file. Obviously, if any other function name is specified (f1, f2 or f3), no exploits are found, because the condition that should be alternated by Avalanche to detect a bug is located in f4 function.
 
-There is also '--suppress-subcalls' option, which may be used together with '--func-name' and '--func-filter-file' options. If it is not specified, then Avalanche tries to alternate all the conditions between entry and exit points of the specified function(s). Obviously, some of these conditions may be located inside a nested function calls. To exclude these conditions from the analysis, specify the '--suppress-subcalls' option.
+There is also '--suppress-subcalls' option, which may be used together with '--func-name' and '--func-file' options. If it is not specified, then Avalanche tries to alternate all the conditions between entry and exit points of the specified function(s). Obviously, some of these conditions may be located inside a nested function calls. To exclude these conditions from the analysis, specify the '--suppress-subcalls' option.
 
 Separate function analysis tends to be less effective than using masks because the traces and corresponding STP queries may be very long in the case of separate analysis, and checking the satisfiability of these queries may take a considerable amount of time.
