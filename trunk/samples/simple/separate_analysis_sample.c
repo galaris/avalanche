@@ -5,14 +5,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int i, exploit_i;
+int i = 0;
+int exploit_i = 0;
 int* d;
 
 void f1(char value)
 {
   if (value < 1)
   {
-    i ++;
+    i++;
   }
 }
 
@@ -20,7 +21,7 @@ void f2(char value)
 {
   if (value < 2)
   {
-    i ++;
+    i++;
   }
 }
 
@@ -28,7 +29,7 @@ void f3(char value)
 {
   if (value < 5)
   {
-    i ++;
+    i++;
   }
 }
 
@@ -36,14 +37,14 @@ void f4(char value)
 {
   if (value < 13)
   {
-    exploit_i ++;
+    exploit_i++;
   }
 }
 
 int main(int argc, char** argv)
 {
   int j, fd1 = open(argv[1], O_RDONLY | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-  char input[5];
+  char input[4];
   read(fd1, input, 4);
   f1(input[0]);
   f2(input[1]);
