@@ -12,7 +12,7 @@ The mask may be specified with '--mask=mask_file' option.
 
 Our measurements show that using mask is a very effective. It allows Avalanche to discover many new defects that had been impossible to detect before this feature was introduced.
 
-A small sample for using masks: [http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c]
+A small sample for using masks: [http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/separate_analysis_sample.c separate_analysis_sample.c]
 
 Let mask contain the only position:
 
@@ -52,7 +52,7 @@ Another way is separate function analysis. Avalanche may analyze only specific f
 
 First, run Avalanche with '--dump-calls' option. If this option is specified Avalanche runs a single iteration and dumps the file calldump.log which contains a list of all functions of the application that manipulated tainted data during that run.
 
-Running Avalanche with that option on the above sample ([http://code.google.com/p/avalanche/source/browse/branches/separate-analysis/samples/simple/separate_analysis_sample.c separate_analysis_sample.c])
+Running Avalanche with that option on the above sample ([http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/separate_analysis_sample.c separate_analysis_sample.c])
 
 {{{
 user@machine:$ ./inst/bin/avalanche --dump-calls --filename=samples/simple/seed  samples/simple/separate_analysis_sample samples/simple/seed
