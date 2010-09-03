@@ -75,8 +75,8 @@ OptionConfig *OptionParser::run() const
             string name = arg_vec[i].substr(strlen("--func-addr="));
             config->addFuncFilterUnit(name);
         }
-        else if (arg_vec[i].find("--func-filter-file=") != string::npos) {
-            string fname = arg_vec[i].substr(strlen("--func-filter-file="));
+        else if (arg_vec[i].find("--func-file=") != string::npos) {
+            string fname = arg_vec[i].substr(strlen("--func-file="));
             config->setFuncFilterFile(fname);
         }
         else if (arg_vec[i].find("--mask=") != string::npos) {
