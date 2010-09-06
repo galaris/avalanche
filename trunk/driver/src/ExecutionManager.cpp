@@ -29,7 +29,6 @@
 #include "Chunk.h"
 #include "OptionConfig.h"
 #include "PluginExecutor.h"
-#include "ProgExecutor.h"
 #include "STP_Executor.h"
 #include "STP_Input.h"
 #include "STP_Output.h"

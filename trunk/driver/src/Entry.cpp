@@ -74,7 +74,7 @@ extern bool intg;
 extern bool incv;
 extern bool instp;
 extern bool inpure;
-extern pid_t tg_pid, cv_pid, stp_pid, pure_pid;
+extern pid_t tg_pid, cv_pid, stp_pid;
 extern Input* initial;
 extern vector<Chunk*> report;
 
@@ -84,8 +84,8 @@ static void printHelpBanner()
         "usage: avalanche [options] prog-and-args\n\n"
         "  user options defined in [ ]:\n"
         "    --help                       print help and exit\n"
-        "    --use-memcheck               indicates that memcheck should be used instead of covgrind\n"
-        "    --leaks                      indicates that inputs resulting in memory leaks should be saved\n"
+        "    --use-memcheck               use memcheck instead of covgrind\n"
+        "    --leaks                      check for memory leaks\n"
         "                                 (ignored if '--use-memcheck' isn't specified)\n"
         "    --verbose                    much more detailed avalanche output\n" 
         "    --debug                      save some debugging information - divergent inputs, etc.\n" 
@@ -136,17 +136,11 @@ void sig_hndlr(int signo)
     cv_end = time(NULL);
     cv_time += cv_end - cv_start;
   }
-  else if (inpure)
-  {
-    kill(pure_pid, SIGKILL);
-    pure_end = time(NULL);
-    pure_time += pure_end - pure_start;
-  }
   end = time(NULL);
   char s[256];
   sprintf(s, "totally: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld, pure exec: %ld", end - start, tg_time, stp_time, cv_time, pure_time);
   LOG(logger, "\nTime statistics:\n" << s);
-  sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
+  sprintf(s, "tg_per: %f stp_per: %f cv_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start));
   LOG(logger, s);
   initial->dumpFiles();
   REPORT(logger, "\nExploits report:");

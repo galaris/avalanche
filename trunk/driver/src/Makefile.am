@@ -12,7 +12,6 @@ avalanche_SOURCES = \
        Logger.cpp \
        OptionParser.cpp \
        PluginExecutor.cpp \
-       ProgExecutor.cpp \
        FileBuffer.cpp \
        SocketBuffer.cpp \
        Input.cpp \
