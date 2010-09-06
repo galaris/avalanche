@@ -336,8 +336,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
     int fd = open("basic_blocks.log", O_RDWR);
     struct stat fileInfo;
     fstat(fd, &fileInfo);
-    int size = fileInfo.st_size / sizeof(int);
-    unsigned int* basicBlockAddrs = new unsigned int[size];
+    int size = fileInfo.st_size / sizeof(long);
+    unsigned long* basicBlockAddrs = new unsigned long[size];
     read(fd, basicBlockAddrs, fileInfo.st_size);
     for (int i = 0; i < size; i++)
     {

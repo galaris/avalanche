@@ -150,7 +150,7 @@ bool FileBuffer::filterCovgrindOutput()
     return false;
   }
   last_bug_line = last_bug_sym + 1;
-  char* tmp,* prev_new_line = NULL;
+  char* tmp,* prev_new_line = last_bug_sym;
   while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && (tmp < last_bug_sym))
   {
     prev_new_line = last_bug_sym;

@@ -65,7 +65,7 @@ public:
 private:
     OptionConfig *config;
     std::size_t   cond_depth;
-    std::set<unsigned int> basicBlocksCovered;
+    std::set<unsigned long> basicBlocksCovered;
     int exploits;
     int divergences;
 };
