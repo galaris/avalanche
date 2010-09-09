@@ -21,6 +21,7 @@ struct _stringNode
   HWord key;
   Bool declared;
   Char* filename;
+  Int filenum;
 };
 
 typedef struct _stringNode stringNode;

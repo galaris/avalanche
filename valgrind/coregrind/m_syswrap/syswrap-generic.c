@@ -78,7 +78,6 @@ Bool sockets = False;
 Bool datagrams = False;
 Bool isRecv = False;
 Int socketsNum = 0;
-Int fileNum = 0;
 UShort port;
 UChar ip1, ip2, ip3, ip4;
 
@@ -3713,7 +3712,7 @@ POST(sys_open)
        node->key = RES;
        node->name = name;
        node->offs = 0;
-       node->seqnum = fileNum++;
+       node->seqnum = sn->filenum;
        VG_(HT_add_node)(fds, node);
      }
      else
