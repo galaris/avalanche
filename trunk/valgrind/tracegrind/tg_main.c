@@ -4291,6 +4291,8 @@ static void tg_fini(Int exitcode)
 //  }
 }
 
+Int filenum = 0;
+
 static Bool tg_process_cmd_line_option(Char* arg)
 {
   Char* inputfile;
@@ -4368,6 +4370,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
     node->key = hashCode(inputfile);
     node->filename = inputfile;
     node->declared = False;
+    node->filenum = filenum++;
     VG_(HT_add_node)(inputfiles, node);
     return True;
   }
