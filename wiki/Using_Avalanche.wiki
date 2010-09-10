@@ -39,3 +39,7 @@ This command will iteratively run the _program_ with specified command line _pro
 If input data is received from file and avalanche finds a crash, then it dumps a file with the name 'exploit_i_j' where 'j' is the number of the file (multiple input files may be specified with '--filename' option) and 'i' is the number of the exploit. If the input file is single, then the generated "inputs of death" have names 'exploit_0_0', 'exploit_1_0', 'exploit_2_0' and so on. If the generated file doesn't cause a crash, but still demonstrates an error in the program (i. e. the bug is found by memcheck), then it has the name 'memcheck_i_j'.
 
 If input data is received from socket, then the generated files have the names 'exploit_i' and/or 'memcheck_i' where 'i' is the number of detected defect. See [Samples] wiki page for some examples.
+
+Avalanche also dumps stack trace of each unique exploit.
+
+After the end of the analysis Avalanche prints exploit report, where all the detected exploits are sorted into groups according to stack trace of the crash. This really simplifies the examination of analysis results.
