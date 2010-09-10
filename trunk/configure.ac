@@ -1,4 +1,4 @@
-AC_INIT([avalanche], [0.1])
+AC_INIT([avalanche], [0.2])
 AM_INIT_AUTOMAKE
 AC_PROG_LIBTOOL
 AC_PROG_CXX
