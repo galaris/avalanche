@@ -129,21 +129,24 @@ Bool checkWildcards (Char* fnName)
   Bool tmpNameUpdated = False;
   VG_(HT_ResetIter) (funcNames);
   Char tmpName[1024];
+  cutAffixes(fnName);
   while ((curCheckName = (fnNode*) VG_(HT_Next) (funcNames)))
   {
     if (isCPPFunction(curCheckName->data))
     {  
+      if (cmpNames(fnName, curCheckName->data)) return True;
+    }
+    else
+    {
       if (!tmpNameUpdated)
       {
-        VG_(memcpy) (tmpName, fnName, VG_(strlen) (fnName));
+        VG_(strcpy) (tmpName, fnName);
         cutTemplates(tmpName);
-        cutAffixes(tmpName);
         leaveFnName(tmpName);
         tmpNameUpdated = True;
       }
-      if (cmpNames(fnName, curCheckName->data)) return True;
+      if (cmpNames(tmpName, curCheckName->data)) return True;
     }
-    else if (cmpNames(tmpName, curCheckName->data)) return True;
   }
   return False;
 }
@@ -155,6 +158,7 @@ Bool cmpNames (Char* fnName, Char* checkName)
   Int iFn = 0, iCh = 0;
   Char stopWildcardSymbol = False;
   Bool activeWildcard = False;
+  Int lastWCardPosition = -1;
   if (sizeCh > sizeFn) return False;
   for (iFn = 0; iFn < sizeFn; iFn ++)
   {
@@ -162,6 +166,7 @@ Bool cmpNames (Char* fnName, Char* checkName)
     {
       if (iCh + 1 == sizeCh) return True;
       stopWildcardSymbol = checkName[++ iCh];
+      lastWCardPosition = iCh;
       activeWildcard = True;
       iFn --;
     }
@@ -175,11 +180,13 @@ Bool cmpNames (Char* fnName, Char* checkName)
       else
       {
         if (fnName[iFn] == checkName[iCh]) { iCh ++; if (iCh == sizeCh) { iFn ++; break; } }
-        else iCh = 0;
+        else if (lastWCardPosition == -1) return False;
+        else { iCh = lastWCardPosition; }
       }
     }
   }
-  if (iCh == sizeCh && iFn == sizeFn) return True;
+  if (iCh == sizeCh && iFn == sizeFn) 
+    return True;
   return False;
 }
 
