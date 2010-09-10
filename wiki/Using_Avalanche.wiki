@@ -31,7 +31,7 @@ This command will iteratively run the _program_ with specified command line _pro
 || --mask=mask_file || ||The path to the [http://code.google.com/p/avalanche/wiki/Mask_syntax mask file]||
 || --dump-calls || ||Dump the list of functions manipulating with tainted data to calldump.log||
 || --func-name=name || ||The name of function that should be used for separate function analysis (may be used multiple times)||
-|| --func-file=name || ||The path to the file with the list of functions that should be used for separate function analysis (described [Specifying_functions_for_separate_analysis here] for more specific instructions on list creation)||
+|| --func-file=name || ||The path to the file with the list of functions that should be used for separate function analysis (described [Specifying_functions_for_separate_analysis here])||
 || --suppress-subcalls || ||Ignore conditions in a nested function calls during separate analysis||
 
 === Avalanche output ===
