@@ -221,7 +221,6 @@ Bool useFiltering()
 {
   if (suppressSubcalls)
   {
-    VG_(memset) (diFunctionName, 0, VG_(strlen) (diFunctionName));
     if (getFunctionName(curIAddr, False, False))
     {
       return (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName));
@@ -237,7 +236,6 @@ Bool useFiltering()
   Int i;
   for (i = 0; i < found; i ++)
   {
-    memset(diFunctionName, 0, VG_(strlen) (diFunctionName));
     if (getFunctionName(ips[i], False, False))
     {
       if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
