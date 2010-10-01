@@ -63,9 +63,17 @@ OptionConfig *OptionParser::run() const
             string host = arg_vec[i].substr(strlen("--host="));
             config->setHost(host);
         }
+        else if (arg_vec[i].find("--dist-host=") != string::npos) {
+            string host = arg_vec[i].substr(strlen("--dist-host="));
+            config->setDistHost(host);
+        }
         else if (arg_vec[i].find("--depth=") != string::npos) {
             string depth = arg_vec[i].substr(strlen("--depth="));
             config->setDepth(atoi(depth.c_str()));
+        }
+        else if (arg_vec[i].find("--startdepth=") != string::npos) {
+            string depth = arg_vec[i].substr(strlen("--startdepth="));
+            config->setStartdepth(atoi(depth.c_str()));
         }
         else if (arg_vec[i].find("--alarm=") != string::npos) {
             string alarm = arg_vec[i].substr(strlen("--alarm="));
@@ -91,8 +99,15 @@ OptionConfig *OptionParser::run() const
             string port = arg_vec[i].substr(strlen("--port="));
             config->setPort(atoi(port.c_str()));
         }
+        else if (arg_vec[i].find("--dist-port=") != string::npos) {
+            string port = arg_vec[i].substr(strlen("--dist-port="));
+            config->setDistPort(atoi(port.c_str()));
+        }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
+        }
+        else if (arg_vec[i] == "--distributed") {
+            config->setDistributed();
         }
         else if (arg_vec[i] == "--check-danger") {
             config->setCheckDanger();

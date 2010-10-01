@@ -47,10 +47,13 @@ public:
                     leaks(false),
                     funcFilterFile(std::string("")),
                     depth(100),
+                    startdepth(1),
                     alarm(300),
                     tracegrindAlarm(0),
                     host(std::string("")),
-                    port(65536) 
+                    disthost(std::string("127.0.0.1")),
+                    port(65536),
+                    distport(10000)
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -62,6 +65,7 @@ public:
         sockets         = opt_config->sockets;
         datagrams       = opt_config->datagrams;
         depth           = opt_config->depth;
+        startdepth      = opt_config->startdepth;
         valgrind        = opt_config->valgrind;
         prog_and_arg    = opt_config->prog_and_arg;
         files           = opt_config->files;
@@ -69,6 +73,8 @@ public:
         tracegrindAlarm = opt_config->tracegrindAlarm;
         host	        = opt_config->host;
         port	        = opt_config->port;
+        disthost	= opt_config->disthost;
+        distport	= opt_config->distport;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         funcFilterFile  = opt_config->funcFilterFile;
@@ -128,6 +134,18 @@ public:
     
     bool getVerbose() const
     { return verbose; }
+
+    void setDistributed()
+    { distributed = true; }
+    
+    bool getDistributed() const
+    { return distributed; }
+
+    void setStartdepth(int startdepth)
+    { this->startdepth = startdepth; }
+    
+    int getStartdepth() const
+    { return startdepth; }
 
     void setCheckDanger()
     { checkDanger = true; }
@@ -195,6 +213,12 @@ public:
     unsigned int getPort() const
     { return port; }
 
+    void setDistPort(int port)
+    { distport = port; }
+
+    int getDistPort() const
+    { return distport; }
+
     void addProgAndArg(const std::string &arg)
     { prog_and_arg.push_back(arg); }
 
@@ -216,6 +240,12 @@ public:
     void setHost(std::string& host)
     { this->host = host; }
 
+    std::string getDistHost()
+    { return disthost; }
+
+    void setDistHost(std::string& host)
+    { disthost = host; }
+
 private:
     bool                     debug;
     bool                     verbose;
@@ -227,6 +257,7 @@ private:
     bool                     suppressSubcalls;
     bool                     dumpCalls;
     bool 		     traceChildren;
+    bool                     distributed;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
@@ -235,9 +266,12 @@ private:
     unsigned int             alarm;
     unsigned int             tracegrindAlarm;
     std::string		     host;
+    std::string              disthost;
     unsigned int	     port;
+    unsigned int             distport;
     std::vector<std::string> funcFilterUnits;
     std::string              inputFilterFile;
+    int                      startdepth;
 };
 
 
