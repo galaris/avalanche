@@ -29,7 +29,9 @@
 
 #include <cstddef>
 #include <string>
+#include <map>
 #include <set>
+#include <functional>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -38,6 +40,46 @@
 
 class OptionConfig;
 class Input;
+
+class Key
+{
+public:
+  unsigned int score;
+  unsigned int depth;
+  
+  Key(unsigned int score, unsigned int depth)
+  {
+    this->score = score;
+    this->depth = depth;
+  }
+};
+
+class cmp: public std::binary_function<Key, Key, bool>
+{
+public:
+  result_type operator()(first_argument_type k1, second_argument_type k2)
+  {
+    if (k1.score < k2.score)
+    {
+      return true;
+    }
+    else if (k1.score > k2.score)
+    {
+      return false;
+    }
+    else
+    {
+      if (k1.depth > k2.depth)
+      {
+        return true;
+      }
+      else
+      {
+        return false;
+      }
+    }
+  }
+};
 
 class ExecutionManager
 {
@@ -59,6 +101,8 @@ public:
     int checkAndScore(Input* input, bool addNoCoverage);
 
     void updateInput(Input* input);
+
+    void talkToServer(std::multimap<Key, Input*, cmp>& inputs);
   
     ~ExecutionManager();
 
@@ -68,6 +112,7 @@ private:
     std::set<unsigned long> basicBlocksCovered;
     int exploits;
     int divergences;
+    int distfd;
 };
 
 

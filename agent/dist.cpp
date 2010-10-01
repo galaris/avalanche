@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <vector>
+#include <set>
 
 using namespace std;
  
@@ -52,6 +53,7 @@ int main(int argc, char** argv)
 
   int free = -1;
   int mainfd;
+  set<int> starvating;
  
   for(;;)
   {
@@ -96,6 +98,47 @@ int main(int argc, char** argv)
       printf("accepted\n");
     }
 
+    for (set<int>::iterator fd = starvating.begin(); fd != starvating.end();)
+    {
+      write(mainfd, "g", 1);
+
+      int length, startdepth, invertdepth, alarm;
+      bool useMemcheck, leaks, traceChildren, checkDanger;
+      read(mainfd, &length, sizeof(int));
+      if (length > 0)
+      {
+        write(*fd, &length, sizeof(int));
+        char* file = new char[length];
+        int received = 0;
+        while (received < length)
+        {
+          received += read(mainfd, file + received, length - received);
+        }
+        write(*fd, file, length);
+        read(mainfd, &startdepth, sizeof(int));
+        write(*fd, &startdepth, sizeof(int));
+        read(mainfd, &invertdepth, sizeof(int));
+        write(*fd, &invertdepth, sizeof(int));
+        read(mainfd, &alarm, sizeof(int));
+        write(*fd, &alarm, sizeof(int));
+        read(mainfd, &useMemcheck, sizeof(bool));
+        write(*fd, &useMemcheck, sizeof(int));
+        read(mainfd, &leaks, sizeof(bool));
+        write(*fd, &leaks, sizeof(int));
+        read(mainfd, &traceChildren, sizeof(bool));
+        write(*fd, &traceChildren, sizeof(bool));
+        read(mainfd, &checkDanger, sizeof(bool));
+        write(*fd, &checkDanger, sizeof(bool));
+        set<int>::iterator to_erase = fd;
+        fd++;
+        starvating.erase(to_erase);
+      }
+      else
+      {
+        fd++;
+      }
+    }
+
     printf("iterating through sockets...\n");
     for (vector<int>::iterator fd = fds.begin(); fd != fds.end(); fd++)
     {
@@ -114,28 +157,35 @@ int main(int argc, char** argv)
           int length, startdepth, invertdepth, alarm;
           bool useMemcheck, leaks, traceChildren, checkDanger;
           read(mainfd, &length, sizeof(int));
-          write(*fd, &length, sizeof(int));
-          char* file = new char[length];
-          int received = 0;
-          while (received < length)
+          if (length > 0)
           {
-            received += read(mainfd, file + received, length - received);
+            write(*fd, &length, sizeof(int));
+            char* file = new char[length];
+            int received = 0;
+            while (received < length)
+            {
+              received += read(mainfd, file + received, length - received);
+            }
+            write(*fd, file, length);
+            read(mainfd, &startdepth, sizeof(int));
+            write(*fd, &startdepth, sizeof(int));
+            read(mainfd, &invertdepth, sizeof(int));
+            write(*fd, &invertdepth, sizeof(int));
+            read(mainfd, &alarm, sizeof(int));
+            write(*fd, &alarm, sizeof(int));
+            read(mainfd, &useMemcheck, sizeof(bool));
+            write(*fd, &useMemcheck, sizeof(int));
+            read(mainfd, &leaks, sizeof(bool));
+            write(*fd, &leaks, sizeof(int));
+            read(mainfd, &traceChildren, sizeof(bool));
+            write(*fd, &traceChildren, sizeof(bool));
+            read(mainfd, &checkDanger, sizeof(bool));
+            write(*fd, &checkDanger, sizeof(bool));
           }
-          write(*fd, file, length);
-          read(mainfd, &startdepth, sizeof(int));
-          write(*fd, &startdepth, sizeof(int));
-          read(mainfd, &invertdepth, sizeof(int));
-          write(*fd, &invertdepth, sizeof(int));
-          read(mainfd, &alarm, sizeof(int));
-          write(*fd, &alarm, sizeof(int));
-          read(mainfd, &useMemcheck, sizeof(bool));
-          write(*fd, &useMemcheck, sizeof(int));
-          read(mainfd, &leaks, sizeof(bool));
-          write(*fd, &leaks, sizeof(int));
-          read(mainfd, &traceChildren, sizeof(bool));
-          write(*fd, &traceChildren, sizeof(bool));
-          read(mainfd, &checkDanger, sizeof(bool));
-          write(*fd, &checkDanger, sizeof(bool));
+          else
+          {
+            starvating.insert(*fd);
+          }
         }
       }
     }

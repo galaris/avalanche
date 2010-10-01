@@ -43,10 +43,6 @@
 #include <signal.h>
 #include <string>
 #include <vector>
-#include <deque>
-#include <set>
-#include <map>
-#include <functional>
 
 using namespace std;
 
@@ -90,6 +86,47 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     config      = new OptionConfig(opt_config);
     exploits    = 0;
     divergences = 0;
+    if (opt_config->getDistributed())
+    {
+      struct sockaddr_in stSockAddr;
+      int res;
+ 
+      memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
+ 
+      stSockAddr.sin_family = AF_INET;
+      stSockAddr.sin_port = htons(opt_config->getDistPort());
+      res = inet_pton(AF_INET, opt_config->getDistHost().c_str(), &stSockAddr.sin_addr);
+ 
+      if (res < 0)
+      {
+        perror("error: first parameter is not a valid address family");
+        exit(EXIT_FAILURE);
+      }
+      else if (res == 0)
+      {
+        perror("char string (second parameter does not contain valid ipaddress");
+        exit(EXIT_FAILURE);
+      }
+
+      distfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+      if (distfd == -1)
+      {
+        perror("cannot create socket");
+        exit(EXIT_FAILURE);
+      }
+    
+      res = connect(distfd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in));
+ 
+      if (res < 0)
+      {
+        perror("error connect failed");
+        close(distfd);
+        exit(EXIT_FAILURE);
+      }  
+
+      printf("connected\n");
+   }
 }
 
 int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
@@ -356,46 +393,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
   }
 }
 
-class Key
-{
-public:
-  unsigned int score;
-  unsigned int depth;
-  
-  Key(unsigned int score, unsigned int depth)
-  {
-    this->score = score;
-    this->depth = depth;
-  }
-};
-
-class cmp: public binary_function<Key, Key, bool>
-{
-public:
-  result_type operator()(first_argument_type k1, second_argument_type k2)
-  {
-    if (k1.score < k2.score)
-    {
-      return true;
-    }
-    else if (k1.score > k2.score)
-    {
-      return false;
-    }
-    else
-    {
-      if (k1.depth > k2.depth)
-      {
-        return true;
-      }
-      else
-      {
-        return false;
-      }
-    }
-  }
-};
-
 void ExecutionManager::updateInput(Input* input)
 {
   int fd = open("replace_data", O_RDWR);
@@ -458,7 +455,7 @@ void ExecutionManager::run()
     {
       signal(SIGALRM, alarmHandler);
     }
-    initial->startdepth = 1;
+    initial->startdepth = config->getStartdepth();
     int score;
     score = checkAndScore(initial, false);
     LOG(logger, "score=" << score);
@@ -638,6 +635,10 @@ void ExecutionManager::run()
           if (scr == 0) 
           {
             runs++;
+            if (config->getDistributed())
+            {
+              talkToServer(inputs);
+            }
             continue;
           }
         }
@@ -835,8 +836,60 @@ void ExecutionManager::run()
         LOG(logger, "no QUERY's found");
       }
       runs++;
+
+      if (config->getDistributed())
+      {
+        talkToServer(inputs);
+      }
     }
     initial->dumpFiles();
+}
+
+void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
+{
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  FD_SET(distfd, &readfds);
+  struct timeval timer;
+  timer.tv_sec = 0;
+  timer.tv_usec = 0;
+  select(distfd + 1, &readfds, NULL, NULL, &timer);
+  while (FD_ISSET(distfd, &readfds)) 
+  {
+    char c;
+    read(distfd, &c, 1);
+    if ((c == 'g') && (inputs.size() > 1))
+    {
+      multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+      it--;
+      Input* fi = it->second;
+      FileBuffer* fb = fi->files.at(0);
+      write(distfd, &(fb->size), sizeof(int));
+      write(distfd, fb->buf, fb->size);
+      write(distfd, &fi->startdepth, sizeof(int));
+      int depth = config->getDepth();
+      write(distfd, &depth, sizeof(int));
+      unsigned int alarm = config->getAlarm();
+      write(distfd, &alarm, sizeof(int));
+      bool useMemcheck = config->usingMemcheck();
+      write(distfd, &useMemcheck, sizeof(bool));
+      bool leaks = config->checkForLeaks();
+      write(distfd, &leaks, sizeof(bool));
+      bool traceChildren = config->getTraceChildren();
+      write(distfd, &traceChildren, sizeof(bool));
+      bool checkDanger = config->getCheckDanger();
+      write(distfd, &checkDanger, sizeof(bool));
+      inputs.erase(it);
+    }
+    else
+    {
+      int tosend = 0;
+      write(distfd, &tosend, sizeof(int));
+    }
+    FD_ZERO(&readfds);
+    FD_SET(distfd, &readfds);
+    select(distfd + 1, &readfds, NULL, NULL, &timer);      
+  }
 }
 
 ExecutionManager::~ExecutionManager()
