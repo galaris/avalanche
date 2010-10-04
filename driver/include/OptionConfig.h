@@ -41,6 +41,7 @@ public:
 		    sockets(false),
 		    traceChildren(false),
                     datagrams(false),
+                    distributed(false), 
                     useMemcheck(false),
                     suppressSubcalls(false),
                     dumpCalls(false),
@@ -60,6 +61,7 @@ public:
     {
         traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
+        distributed     = opt_config->distributed;
         checkDanger     = opt_config->checkDanger;
         verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
