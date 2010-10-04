@@ -126,6 +126,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
       }  
 
       printf("connected\n");
+      write(distfd, "m", 1);
    }
 }
 
@@ -847,6 +848,7 @@ void ExecutionManager::run()
 
 void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
 {
+  printf("talking to server\n");
   fd_set readfds;
   FD_ZERO(&readfds);
   FD_SET(distfd, &readfds);
@@ -856,14 +858,19 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
   select(distfd + 1, &readfds, NULL, NULL, &timer);
   while (FD_ISSET(distfd, &readfds)) 
   {
+    printf("here 861\n");
     char c;
     read(distfd, &c, 1);
     if ((c == 'g') && (inputs.size() > 1))
     {
+      printf("received get\n");
       multimap<Key, Input*, cmp>::iterator it = --inputs.end();
       it--;
       Input* fi = it->second;
       FileBuffer* fb = fi->files.at(0);
+      int namelength = config->getFile(0).length();
+      write(distfd, &namelength, sizeof(int));
+      write(distfd, config->getFile(0).c_str(), namelength);
       write(distfd, &(fb->size), sizeof(int));
       write(distfd, fb->buf, fb->size);
       write(distfd, &fi->startdepth, sizeof(int));
@@ -871,6 +878,10 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       write(distfd, &depth, sizeof(int));
       unsigned int alarm = config->getAlarm();
       write(distfd, &alarm, sizeof(int));
+      int progArgsNum = config->getProgAndArg().size();
+      write(distfd, &progArgsNum, sizeof(int));
+      printf("argsnum=%d\n", progArgsNum);
+
       bool useMemcheck = config->usingMemcheck();
       write(distfd, &useMemcheck, sizeof(bool));
       bool leaks = config->checkForLeaks();
@@ -879,6 +890,12 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       write(distfd, &traceChildren, sizeof(bool));
       bool checkDanger = config->getCheckDanger();
       write(distfd, &checkDanger, sizeof(bool));
+      for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
+      {
+        int argsSize = it->length();
+        write(distfd, &argsSize, sizeof(int));
+        write(distfd, it->c_str(), argsSize);
+      }
       inputs.erase(it);
     }
     else
