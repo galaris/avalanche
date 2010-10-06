@@ -115,6 +115,7 @@ static void printHelpBanner()
     std::cout << banner << std::endl;
 }
 
+OptionConfig* opt_config;
 
 void sig_hndlr(int signo)
 {
@@ -146,7 +147,7 @@ void sig_hndlr(int signo)
   REPORT(logger, "\nExploits report:");
   for (int i = 0; i < report.size(); i++)
   {
-    report.at(i)->print(i);
+    report.at(i)->print(opt_config->getPrefix(), i);
   }
   REPORT(logger, "");
   exit(0);
@@ -158,7 +159,7 @@ int main(int argc, char *argv[])
     signal(SIGINT, sig_hndlr);
     LOG(logger, "start time: " << std::string(ctime(&start)));    
     OptionParser  opt_parser(argc, argv);
-    OptionConfig *opt_config = opt_parser.run();
+    opt_config = opt_parser.run();
 
     if (opt_config == NULL || opt_config->empty()) {
         printHelpBanner();
@@ -177,7 +178,7 @@ int main(int argc, char *argv[])
 
     ExecutionManager manager(opt_config);
     em = &manager;
-    delete(opt_config);
+    //delete(opt_config);
     
     manager.run();
     end = time(NULL);
@@ -190,7 +191,7 @@ int main(int argc, char *argv[])
     REPORT(logger, "\nExploits report:");
     for (int i = 0; i < report.size(); i++)
     {
-      report.at(i)->print(i);
+      report.at(i)->print(opt_config->getPrefix(), i);
     }
     REPORT(logger, "");
     return EXIT_SUCCESS;

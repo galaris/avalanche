@@ -26,6 +26,7 @@
 #define __CHUNK__H__
 
 #include <vector>
+#include <string>
 
 class FileBuffer;
 
@@ -41,7 +42,7 @@ public:
   
   FileBuffer* getTrace();
 
-  void print(int chunkNum);
+  void print(std::string prefix, int chunkNum);
 };
 
 #endif
