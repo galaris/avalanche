@@ -67,7 +67,7 @@ int main(int argc, char** argv)
     read(fd, &namelength, sizeof(int));
     //printf("68\n");
     //printf("namelength=%d\n", namelength);
-    char* filename = new char[namelength];
+    char* filename = new char[namelength + 1];
     int received = 0;
     while (received < namelength)
     {
@@ -78,6 +78,7 @@ int main(int argc, char** argv)
         exit(0);
       }
     }
+    filename[namelength] = '\0';
     //printf("here\n");
     read(fd, &length, sizeof(int));
     //printf("length=%d\n", length);
@@ -170,8 +171,9 @@ int main(int argc, char** argv)
     {
       int arglength;
       read(fd, &arglength, sizeof(int));
-      char* arg = new char[arglength];
+      char* arg = new char[arglength + 1];
       read(fd, arg, arglength);
+      arg[arglength] = '\0';
       avalanche_argv[argc++] = arg;
       printf("argv[%d]=%s\n", argc - 1, avalanche_argv[argc - 1]);
     }
