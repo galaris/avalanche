@@ -49,7 +49,7 @@ FileBuffer* Chunk::getTrace()
   return trace;
 }
 
-void Chunk::print(int chunkNum)
+void Chunk::print(string prefix, int chunkNum)
 {
   ostringstream out;
   out << "chunk " << chunkNum << ": ";
@@ -65,18 +65,18 @@ void Chunk::print(int chunkNum)
     {
       for (int i = 0; i < inputNum - 1; i++)
       {
-        out << "exploit_" << exploitNum << "_" << i << " + ";
+        out << prefix << "exploit_" << exploitNum << "_" << i << " + ";
       }
-      out << "exploit_" << exploitNum << "_" << inputNum - 1;
+      out << prefix << "exploit_" << exploitNum << "_" << inputNum - 1;
     }
     else
     {
-      out << "exploit_" << exploitNum;
+      out << prefix << "exploit_" << exploitNum;
     }
   }
   if (trace != NULL)
   {
-    out << " - stacktrace_" << chunkNum << ".log";
+    out << " - " << prefix << "stacktrace_" << chunkNum << ".log";
   }
   else
   {
