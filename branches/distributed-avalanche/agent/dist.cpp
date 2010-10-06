@@ -53,7 +53,8 @@ int main(int argc, char** argv)
 
   //int free = -1;
   int mainfd = -1;
-  set<int> starvating;
+  set<int> starvating_a;
+  set<int> starvating_g;
 
   bool gameBegan = false;
  
@@ -81,10 +82,10 @@ int main(int argc, char** argv)
     if (gameBegan)
     {
       printf("iterating through starvated\n");
-      for (set<int>::iterator fd = starvating.begin(); fd != starvating.end();)
+      for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end();)
       {
-        write(mainfd, "g", 1);
-        printf("sent get from %d to %d\n", *fd, mainfd);
+        write(mainfd, "a", 1);
+        printf("sent all from %d to %d\n", *fd, mainfd);
         int namelength, length, startdepth, invertdepth, alarm, argsnum;
         bool useMemcheck, leaks, traceChildren, checkDanger;
         int res = read(mainfd, &namelength, sizeof(int));
@@ -94,7 +95,7 @@ int main(int argc, char** argv)
           close(sfd);
           exit(0);
         }
-        printf("res=%d namelength=%d\n", res, namelength);
+        printf("namelength=%d\n", namelength);
         if (namelength > 0)
         {
           write(*fd, &namelength, sizeof(int));
@@ -103,12 +104,17 @@ int main(int argc, char** argv)
           printf("buf=%s\n", buf);
           write(*fd, buf, namelength);
           read(mainfd, &length, sizeof(int));
+          printf("length=%d\n", length);
           write(*fd, &length, sizeof(int));
           char* file = new char[length];
           int received = 0;
           while (received < length)
           {
             received += read(mainfd, file + received, length - received);
+          }
+          for (int j = 0; j < length; j++)
+          {
+            printf("%x", file[j]);
           }
           write(*fd, file, length);
           read(mainfd, &startdepth, sizeof(int));
@@ -142,7 +148,39 @@ int main(int argc, char** argv)
           }
           set<int>::iterator to_erase = fd;
           fd++;
-          starvating.erase(to_erase);
+          starvating_a.erase(to_erase);
+        }
+        else
+        {
+          fd++;
+        }
+      }
+
+      for (set<int>::iterator fd = starvating_g.begin(); fd != starvating_g.end();)
+      {
+        write(mainfd, "g", 1);
+        printf("sent get from %d to %d\n", *fd, mainfd);
+        int length, startdepth;
+        int res = read(mainfd, &length, sizeof(int));
+        if (res == 0)
+        {
+          printf("job is done\n");
+          close(sfd);
+          exit(0);
+        }
+        printf("length=%d\n", length);
+        if (length > 0)
+        {
+          write(*fd, &length, sizeof(int));
+          char* file = new char[length];
+          int received = 0;
+          while (received < length)
+          {
+            received += read(mainfd, file + received, length - received);
+          }
+          set<int>::iterator to_erase = fd;
+          fd++;
+          starvating_g.erase(to_erase);
         }
         else
         {
@@ -184,7 +222,7 @@ int main(int argc, char** argv)
         //printf("106\n");
         char command;
         int res = read(*fd, &command, 1);
-        //printf("res=%d\n", res);
+        printf("res=%d command=%c\n", res, command);
         if ((res == 0) && (*fd == mainfd))
         {
           printf("job is done\n");
@@ -197,11 +235,39 @@ int main(int argc, char** argv)
           mainfd = *fd;
           gameBegan = true;
         }
-        else if ((command == 'g') && gameBegan)
+        else if (command == 'g')
         {
           printf("get from %d\n", *fd);
           printf("sending get to %d\n", mainfd);
           write(mainfd, "g", 1);
+
+          int length, startdepth;
+          read(mainfd, &length, sizeof(int));
+          printf("length=%d\n", length);
+          if (length > 0)
+          {
+            write(*fd, &length, sizeof(int));
+            char* file = new char[length];
+            int received = 0;
+            while (received < length)
+            {
+              received += read(mainfd, file + received, length - received);
+            }
+            write(*fd, file, length);
+            read(mainfd, &startdepth, sizeof(int));
+            write(*fd, &startdepth, sizeof(int));
+          }
+          else
+          {
+            printf("added %d to starvated_g\n", *fd);
+            starvating_g.insert(*fd);
+          }          
+        } 
+        /*else if ((command == 'a') && gameBegan)
+        {
+          printf("all from %d\n", *fd);
+          printf("sending all to %d\n", mainfd);
+          write(mainfd, "a", 1);
 
           int namelength, length, startdepth, invertdepth, alarm, argsnum;
           bool useMemcheck, leaks, traceChildren, checkDanger;
@@ -253,14 +319,14 @@ int main(int argc, char** argv)
           }
           else
           {
-            printf("added %d to starvated\n", *fd);
-            starvating.insert(*fd);
+            printf("added %d to starvated_a\n", *fd);
+            starvating_a.insert(*fd);
           }
-        }
+        }*/
         else //game not began
         {
-          printf("added %d to starvated\n", *fd);
-          starvating.insert(*fd);
+          printf("added %d to starvated_a\n", *fd);
+          starvating_a.insert(*fd);
         }
       }
     }

@@ -63,6 +63,10 @@ OptionConfig *OptionParser::run() const
             string host = arg_vec[i].substr(strlen("--host="));
             config->setHost(host);
         }
+        else if (arg_vec[i].find("--prefix=") != string::npos) {
+            string prefix = arg_vec[i].substr(strlen("--prefix="));
+            config->setPrefix(prefix);
+        }
         else if (arg_vec[i].find("--dist-host=") != string::npos) {
             string host = arg_vec[i].substr(strlen("--dist-host="));
             config->setDistHost(host);

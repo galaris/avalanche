@@ -254,7 +254,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
     if (config->usingSockets() || config->usingDatagrams())
     {
       stringstream ss(stringstream::in | stringstream::out);
-      ss << "exploit_" << exploits;
+      ss << config->getPrefix() << "exploit_" << exploits;
       REPORT(logger, "Dumping an exploit to file " << ss.str());
       input->dumpExploit((char*) ss.str().c_str(), false);
       if (infoAvailable)
@@ -262,14 +262,14 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
         if (!sameExploit)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << report.size() - 1 << ".log";
+          ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
           cv_output->dumpFile((char*) ss.str().c_str());
           REPORT(logger, "Dumping stack trace to file " << ss.str());
         }
         else
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << exploitGroup << ".log";
+          ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
           REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
         }
       }
@@ -285,14 +285,14 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
         if (!sameExploit)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << report.size() - 1 << ".log";
+          ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
           cv_output->dumpFile((char*) ss.str().c_str());
           REPORT(logger, "Dumping stack trace to file " << ss.str());
         }
         else
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << exploitGroup << ".log";
+          ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
           REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
         }
       }
@@ -303,7 +303,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
       for (int i = 0; i < input->files.size(); i++)
       {
         stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits << "_" << i;
+        ss << config->getPrefix() << "exploit_" << exploits << "_" << i;
         REPORT(logger, "Dumping an exploit to file " << ss.str());
         input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
       }
@@ -350,7 +350,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
       if (config->usingSockets() || config->usingDatagrams())
       {
         stringstream ss(stringstream::in | stringstream::out);
-        ss << "memcheck_" << memchecks;
+        ss << config->getPrefix() << "memcheck_" << memchecks;
         REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
         input->dumpExploit((char*) ss.str().c_str(), false);
       }
@@ -359,7 +359,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
         for (int i = 0; i < input->files.size(); i++)
         {
           stringstream ss(stringstream::in | stringstream::out);
-          ss << "memcheck_" << memchecks << "_" << i;
+          ss << config->getPrefix() << "memcheck_" << memchecks << "_" << i;
           REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
           input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
         }
@@ -616,7 +616,7 @@ void ExecutionManager::run()
           if (config->usingSockets() || config->usingDatagrams())
           {
             stringstream ss(stringstream::in | stringstream::out);
-            ss << "divergence_" << divergences;
+            ss << config->getPrefix() << "divergence_" << divergences;
             LOG(logger, "dumping divergent input to file " << ss.str());
             fi->parent->dumpExploit((char*) ss.str().c_str(), false);
           }
@@ -625,7 +625,7 @@ void ExecutionManager::run()
             for (int i = 0; i < fi->parent->files.size(); i++)
             {
               stringstream ss(stringstream::in | stringstream::out);
-              ss << "divergence_" << divergences << "_" << i;
+              ss << config->getPrefix() << "divergence_" << divergences << "_" << i;
               LOG(logger, "dumping divergent input to file " << ss.str());
               fi->parent->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
             }
@@ -861,9 +861,9 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
     printf("here 861\n");
     char c;
     read(distfd, &c, 1);
-    if ((c == 'g') && (inputs.size() > 1))
+    if ((c == 'a') && (inputs.size() > 1))
     {
-      printf("received get\n");
+      printf("received all\n");
       multimap<Key, Input*, cmp>::iterator it = --inputs.end();
       it--;
       Input* fi = it->second;
@@ -873,6 +873,12 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       write(distfd, config->getFile(0).c_str(), namelength);
       write(distfd, &(fb->size), sizeof(int));
       write(distfd, fb->buf, fb->size);
+      printf("fb->size=%d\n", fb->size);
+      for (int j = 0; j < fb->size; j++)
+      {
+        printf("%x", fb->buf[j]);
+      }
+      printf("\n");
       write(distfd, &fi->startdepth, sizeof(int));
       int depth = config->getDepth();
       write(distfd, &depth, sizeof(int));
@@ -896,6 +902,18 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
         write(distfd, &argsSize, sizeof(int));
         write(distfd, it->c_str(), argsSize);
       }
+      inputs.erase(it);
+    }
+    else if ((c == 'g') && (inputs.size() > 1))
+    {
+      printf("received get\n");
+      multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+      it--;
+      Input* fi = it->second;
+      FileBuffer* fb = fi->files.at(0);
+      write(distfd, &(fb->size), sizeof(int));
+      write(distfd, fb->buf, fb->size);
+      write(distfd, &fi->startdepth, sizeof(int));
       inputs.erase(it);
     }
     else

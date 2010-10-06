@@ -52,6 +52,7 @@ public:
                     alarm(300),
                     tracegrindAlarm(0),
                     host(std::string("")),
+                    prefix(std::string("")),
                     disthost(std::string("127.0.0.1")),
                     port(65536),
                     distport(10000)
@@ -84,6 +85,7 @@ public:
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
         inputFilterFile = opt_config->inputFilterFile;
+        prefix          = opt_config->prefix;
     }
 
     bool empty() const
@@ -242,6 +244,12 @@ public:
     void setHost(std::string& host)
     { this->host = host; }
 
+    std::string getPrefix()
+    { return prefix; }
+
+    void setPrefix(std::string& prefix)
+    { this->prefix = prefix; }
+
     std::string getDistHost()
     { return disthost; }
 
@@ -273,6 +281,7 @@ private:
     unsigned int             distport;
     std::vector<std::string> funcFilterUnits;
     std::string              inputFilterFile;
+    std::string              prefix;
     int                      startdepth;
 };
 
