@@ -92,6 +92,7 @@ int main(int argc, char** argv)
         if (res == 0)
         {
           printf("job is done\n");
+          shutdown(sfd, SHUT_RDWR);
           close(sfd);
           exit(0);
         }
@@ -165,6 +166,7 @@ int main(int argc, char** argv)
         if (res == 0)
         {
           printf("job is done\n");
+          shutdown(sfd, SHUT_RDWR);
           close(sfd);
           exit(0);
         }
