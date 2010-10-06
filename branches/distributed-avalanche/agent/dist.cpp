@@ -52,7 +52,7 @@ int main(int argc, char** argv)
   vector<int> fds;
 
   //int free = -1;
-  int mainfd;
+  int mainfd = -1;
   set<int> starvating;
 
   bool gameBegan = false;
@@ -87,8 +87,14 @@ int main(int argc, char** argv)
         printf("sent get from %d to %d\n", *fd, mainfd);
         int namelength, length, startdepth, invertdepth, alarm, argsnum;
         bool useMemcheck, leaks, traceChildren, checkDanger;
-        read(mainfd, &namelength, sizeof(int));
-        printf("namelength=%d\n", namelength);
+        int res = read(mainfd, &namelength, sizeof(int));
+        if (res == 0)
+        {
+          printf("job is done\n");
+          close(sfd);
+          exit(0);
+        }
+        printf("res=%d namelength=%d\n", res, namelength);
         if (namelength > 0)
         {
           write(*fd, &namelength, sizeof(int));
@@ -128,8 +134,10 @@ int main(int argc, char** argv)
           {
             int arglength;
             read(mainfd, &arglength, sizeof(int));
+            printf("arglength=%d\n", arglength);
             write(*fd, &arglength, sizeof(int));
             read(mainfd, buf, arglength);
+            printf("buf=%s\n", buf);
             write(*fd, buf, arglength);
           }
           set<int>::iterator to_erase = fd;
@@ -170,16 +178,19 @@ int main(int argc, char** argv)
     printf("iterating through sockets...\n");
     for (vector<int>::iterator fd = fds.begin(); fd != fds.end(); fd++)
     {
-      if (*fd == mainfd)
-      {
-        continue;
-      }
       //printf("103\n");
       if (FD_ISSET(*fd, &readfds)) 
       {
         //printf("106\n");
         char command;
-        read(*fd, &command, 1);
+        int res = read(*fd, &command, 1);
+        //printf("res=%d\n", res);
+        if ((res == 0) && (*fd == mainfd))
+        {
+          printf("job is done\n");
+          close(sfd);
+          exit(0);
+        }
         if (command == 'm') 
         {
           printf("received m\n");
