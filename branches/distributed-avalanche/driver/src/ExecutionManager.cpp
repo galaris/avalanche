@@ -44,6 +44,7 @@
 #include <signal.h>
 #include <string>
 #include <vector>
+#include <set>
 
 using namespace std;
 
@@ -80,7 +81,7 @@ Kind kind;
   
 vector<Chunk*> report;
 
-vector <int> modified_input;
+set <int> modified_input;
 
 pthread_mutex_t add_inputs_mutex;
 pthread_mutex_t add_exploits_mutex;
@@ -212,7 +213,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
         if (!strcmp(new_prog_and_args[i].c_str(), input->files.at(j)->name))
         {
           new_prog_and_args[i].append(string(fileNameModifier));
-          modified_input.push_back(i);
+          modified_input.insert(i);
         }
       }
     }
@@ -541,13 +542,12 @@ void* exec_STP_CG(void* data)
   else if (out->getFile() != NULL)
   {
     FileBuffer f(out->getFile());
-    DBG(logger, "stp output:\n" << string(f.buf));
+    DBG(logger, "Thread #" << cur_tid << ": stp output:\n" << string(f.buf));
     Input* next = new Input();
     int st_depth = first_input->startdepth;
     for (int k = 0; k < first_input->files.size(); k++)
     { 
       FileBuffer* fb = first_input->files.at(k);
-      LOG(logger, first_input->files.size());
       fb = fb->forkInput(out->getFile());
       if (fb == NULL)
       {
@@ -575,7 +575,7 @@ void* exec_STP_CG(void* data)
       int score = this_pointer->checkAndScore(next, trace_kind, input_modifier.str().c_str());
       if (!trace_kind)
       {
-        LOG(logger, "score=" << score << "\n");
+        LOG(logger, "Thread #" << cur_tid << ": score=" << score << "\n");
         pthread_mutex_lock(inputs_mutex);
         inputs->insert(make_pair(Key(score, first_depth + depth + 1), next));
         pthread_mutex_unlock(inputs_mutex);
