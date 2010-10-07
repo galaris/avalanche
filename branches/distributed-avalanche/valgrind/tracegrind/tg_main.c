@@ -240,6 +240,7 @@ Bool useFiltering()
     {
       if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
       {
+        VG_(printf) ("checking %s\n", diFunctionName);
         return True;
       }
     }

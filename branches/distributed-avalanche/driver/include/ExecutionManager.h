@@ -98,12 +98,15 @@ public:
    
     void cleanfifo();
 
-    int checkAndScore(Input* input, bool addNoCoverage);
+    void runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth);
+    int checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier = "", bool first_run = false);
 
     void updateInput(Input* input);
 
     void talkToServer(std::multimap<Key, Input*, cmp>& inputs);
-  
+
+    OptionConfig* getConfig() { return config; }
+
     ~ExecutionManager();
 
 private:

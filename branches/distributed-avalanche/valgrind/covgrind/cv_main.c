@@ -61,6 +61,7 @@ extern Bool isRecv;
 static Int socketsNum = 0;
 static Int socketsBoundary;
 static replaceData* replace_data;
+static Char* bbFileName = NULL;
 
 static void cv_post_clo_init(void)
 {
@@ -114,7 +115,15 @@ static void cv_fini(Int exitcode)
   {
     VG_(HT_ResetIter)(basicBlocksTable);
     bbNode* n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
-    SysRes fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+    SysRes fd;
+    if (bbFileName != NULL)
+    {
+      fd = VG_(open)(bbFileName, VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+    }
+    else
+    {
+      fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+    }
     if (fd.res != -1)
     {
       while (n != NULL)
@@ -140,6 +149,10 @@ static Bool cv_process_cmd_line_option(Char* arg)
   Char* dataToReplace;
   if (VG_INT_CLO(arg, "--alarm", alarm))
   { 
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--filename", bbFileName))
+  {
     return True;
   }
   else if (VG_STR_CLO(arg, "--port", addr))

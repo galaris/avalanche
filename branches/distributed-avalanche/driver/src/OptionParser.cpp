@@ -107,6 +107,10 @@ OptionConfig *OptionParser::run() const
             string port = arg_vec[i].substr(strlen("--dist-port="));
             config->setDistPort(atoi(port.c_str()));
         }
+        else if (arg_vec[i].find("--stp-threads=") != string::npos) {
+            string thread_num = arg_vec[i].substr(strlen("--stp-threads="));
+            config->setSTPThreads(atoi(thread_num.c_str()));
+        }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
         }

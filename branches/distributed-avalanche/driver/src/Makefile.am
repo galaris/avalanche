@@ -2,6 +2,7 @@ bin_PROGRAMS = avalanche
 
 INCLUDES = -I../include
 
+CXXFLAGS += -pthread
 avalanche_CFLAGS = -Wno-deprecated
 
 avalanche_SOURCES = \
@@ -17,4 +18,5 @@ avalanche_SOURCES = \
        Input.cpp \
        STP_Executor.cpp \
        STP_Output.cpp \
-       TmpFile.cpp
+       TmpFile.cpp \
+       Thread.cpp

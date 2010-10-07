@@ -34,7 +34,7 @@
 #include <fcntl.h>
 #include <iostream>
 
-FileBuffer::FileBuffer(char* name)
+FileBuffer::FileBuffer(const char* name)
 {
   this->name = strdup(name);
   int fd = open(name, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
@@ -64,13 +64,13 @@ FileBuffer* FileBuffer::forkInput(char* stpOutputFile)
   if ((stp.buf[0] == 'V') && (stp.buf[1] == 'a') && (stp.buf[2] == 'l') && (stp.buf[3] == 'i') && (stp.buf[4] == 'd'))
   {
     return NULL;
-  } 
+  }
   FileBuffer* res = new FileBuffer(*this);
   res->applySTPSolution(stp.buf);
   return res;
 }
 
-void FileBuffer::dumpFile(char* name)
+void FileBuffer::dumpFile(const char* name)
 {  
   int fd;
   if (name == NULL)
