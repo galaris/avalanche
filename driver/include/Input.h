@@ -32,8 +32,8 @@ class Input
 {
 public:
   Input();
-  void dumpFiles(char* name = NULL);
-  void dumpExploit(char* name, bool predict);
+  void dumpFiles(char* name = NULL, const char* name_modifier = "");
+  void dumpExploit(const char* name, bool predict, const char* name_modifier = "");
 
   std::vector<FileBuffer*> files;
   int startdepth;

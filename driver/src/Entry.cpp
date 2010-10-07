@@ -40,6 +40,7 @@
 #include "OptionParser.h"
 #include "Input.h"
 #include "Chunk.h"
+#include "Thread.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -61,22 +62,25 @@ ExecutionManager* em;
 extern time_t tg_time;
 extern time_t tg_start;
 extern time_t tg_end;
-extern time_t cv_time;
-extern time_t cv_start;
-extern time_t cv_end;
-extern time_t stp_time;
-extern time_t stp_start;
-extern time_t stp_end;
-extern time_t pure_time;
-extern time_t pure_start;
-extern time_t pure_end;
+extern time_t *cv_time;
+extern time_t *cv_start;
+extern time_t *cv_end;
+extern time_t *stp_time;
+extern time_t *stp_start;
+extern time_t *stp_end;
+extern PoolThread *threads;
 extern bool intg;
-extern bool incv;
-extern bool instp;
-extern bool inpure;
-extern pid_t tg_pid, cv_pid, stp_pid;
+extern bool *incv;
+extern bool *instp;
+extern pid_t tg_pid;
+extern pid_t *cv_pid, *stp_pid;
 extern Input* initial;
 extern vector<Chunk*> report;
+
+extern vector <int> modified_input;
+
+pthread_mutex_t child_pid_mutex;
+int thread_num;
 
 static void printHelpBanner()
 {
@@ -119,30 +123,50 @@ OptionConfig* opt_config;
 
 void sig_hndlr(int signo)
 {
-  if (instp)
-  {
-    kill(stp_pid, SIGKILL);
-    stp_end = time(NULL);
-    stp_time += stp_end - stp_start;
-  }
-  else if (intg)
+  if (intg)
   {
     kill(tg_pid, SIGKILL);
     tg_end = time(NULL);
     tg_time += tg_end - tg_start;
   }
-  else if (incv)
+  if (thread_num > 1)
   {
-    kill(cv_pid, SIGKILL);
-    cv_end = time(NULL);
-    cv_time += cv_end - cv_start;
-  }
+    for (int i = 0; i < thread_num; i ++)
+    {
+      if (instp[i])
+      {
+        pthread_cancel(threads[i].getTID());
+        kill(stp_pid[i], SIGKILL);
+        stp_end[i] = time(NULL);
+        stp_time[i] = stp_end[i] - stp_start[i];
+      }
+      else if (incv[i])
+      {
+        pthread_cancel(threads[i].getTID());
+        kill(cv_pid[i], SIGKILL);
+        cv_end[i] = time(NULL);
+        cv_time[i] = cv_end[i] - cv_start[i];
+      }
+    }
+  }  
   end = time(NULL);
+  time_t res_stp_time, res_cv_time;
+  res_stp_time = *stp_time;
+  res_cv_time = *cv_time;
+  if (thread_num > 1)
+  {
+    for (int i = 1; i < thread_num; i ++)
+    {
+      res_stp_time += stp_time[i];
+      res_cv_time += cv_time[i];
+    }
+  }
   char s[256];
-  sprintf(s, "totally: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld, pure exec: %ld", end - start, tg_time, stp_time, cv_time, pure_time);
+  sprintf(s, "total: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld", end - start, tg_time, res_stp_time, res_cv_time);
   LOG(logger, "\nTime statistics:\n" << s);
-  sprintf(s, "tg_per: %f stp_per: %f cv_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start));
-  LOG(logger, s);
+  sprintf(s, "tg_per: %f, stp_per: %f, cv_per: %f", ((double) tg_time) / (end - start), 
+                                                                 ((double) res_stp_time) / (end - start), 
+                                                                 ((double) res_cv_time) / (end - start)); LOG(logger, s);
   initial->dumpFiles();
   REPORT(logger, "\nExploits report:");
   for (int i = 0; i < report.size(); i++)
@@ -167,7 +191,41 @@ int main(int argc, char *argv[])
     }
 
     if (opt_config->getVerbose()) logger->enableVerbose();
-    
+
+    thread_num = opt_config->getSTPThreads();
+    if (thread_num > 1)
+    {
+      stp_time = new time_t[thread_num];
+      stp_start = new time_t[thread_num];
+      stp_end = new time_t[thread_num];
+      cv_time = new time_t[thread_num];
+      cv_start = new time_t[thread_num];
+      cv_end = new time_t[thread_num];
+      cv_pid = new pid_t[thread_num];
+      stp_pid = new pid_t[thread_num];
+      instp = new bool[thread_num];
+      incv = new bool[thread_num];
+      for (int i = 0; i < thread_num; i ++)
+      {
+        stp_time[i] = stp_start[i] = stp_end[i] = cv_time[i] = cv_start[i] = cv_end[i] = 0;
+        stp_pid[i] = cv_pid[i] = 0;
+        instp[i] = incv[i] = false;
+      }
+      pthread_mutex_init(&child_pid_mutex, NULL);
+    }
+    else
+    {
+      stp_time = new time_t(0);
+      stp_start = new time_t(0);
+      stp_end = new time_t(0);
+      cv_time = new time_t(0);
+      cv_start = new time_t(0);
+      cv_end = new time_t(0);
+      cv_pid = new pid_t(0);
+      stp_pid = new pid_t(0);
+      incv = new bool(false);
+      instp = new bool(false);
+    }
     time_t starttime;
     time(&starttime);
 
@@ -179,13 +237,25 @@ int main(int argc, char *argv[])
     ExecutionManager manager(opt_config);
     em = &manager;
     //delete(opt_config);
-    
     manager.run();
     end = time(NULL);
+    time_t res_stp_time, res_cv_time;
+    res_stp_time = *stp_time;
+    res_cv_time = *cv_time;
+    if (thread_num > 1)
+    {
+      for (int i = 1; i < thread_num; i ++)
+      {
+        res_stp_time += stp_time[i];
+        res_cv_time += cv_time[i];
+      }
+    }
     char s[256];
-    sprintf(s, "totally: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld, pure exec: %ld", end - start, tg_time, stp_time, cv_time, pure_time);
+    sprintf(s, "total: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld", end - start, tg_time, res_stp_time, res_cv_time);
     LOG(logger, "\nTime statistics:\n" << s);
-    sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
+    sprintf(s, "tg_per: %f, stp_per: %f, cv_per: %f", ((double) tg_time) / (end - start), 
+                                                                 ((double) res_stp_time) / (end - start), 
+                                                                 ((double) res_cv_time) / (end - start));
     LOG(logger, s);
     initial->dumpFiles();
     REPORT(logger, "\nExploits report:");
@@ -194,6 +264,43 @@ int main(int argc, char *argv[])
       report.at(i)->print(opt_config->getPrefix(), i);
     }
     REPORT(logger, "");
+    if (thread_num > 1)
+    {
+      delete []stp_time;
+      delete []stp_start;
+      delete []stp_end;
+      delete []cv_time;
+      delete []cv_start;
+      delete []cv_end;
+      delete []stp_pid;
+      delete []cv_pid;
+      pthread_mutex_destroy(&child_pid_mutex);
+      for (int i = 0; i < thread_num; i ++)
+      {
+        ostringstream file_modifier;
+        file_modifier << "_" << i;
+        remove(string("basic_blocks").append(file_modifier.str()).append(".log").c_str());
+        remove(string("execution").append(file_modifier.str()).append(".log").c_str());
+        remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
+        remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
+        for (int j = 0; j < modified_input.size(); j ++)
+        {
+          string f_name = string((opt_config->getProgAndArg())[modified_input[j]]);
+          remove(f_name.append(file_modifier.str()).c_str());
+        }
+      }
+    }
+    else
+    {
+      delete stp_time;
+      delete stp_start;
+      delete stp_end;
+      delete cv_time;
+      delete cv_start;
+      delete cv_end;
+      delete stp_pid;
+      delete cv_pid;
+    }
     return EXIT_SUCCESS;
 }
 

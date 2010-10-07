@@ -34,10 +34,14 @@
 #include <cstdlib>
 #include <vector>
 #include <string>
+#include <pthread.h>
 
 extern pid_t child_pid;
 pid_t tg_pid;
-pid_t cv_pid;
+pid_t* cv_pid;
+
+extern pthread_mutex_t child_pid_mutex;
+extern int thread_num;
 
 using namespace std;
 
@@ -90,7 +94,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     output = NULL;
 }
 
-int PluginExecutor::run()
+int PluginExecutor::run(int thread_index)
 {
     if (prog == NULL)
         return NULL;
@@ -103,6 +107,8 @@ int PluginExecutor::run()
     redirect_stdout(file_out.getName());
     redirect_stderr(file_err.getName());
 
+    if (thread_num > 1)
+      pthread_mutex_lock(&child_pid_mutex);
     int ret = exec(false);
     if (kind == TRACEGRIND)
     {
@@ -110,8 +116,10 @@ int PluginExecutor::run()
     }
     else
     {
-      cv_pid = child_pid;
+      cv_pid[thread_index] = child_pid;
     }
+    if (thread_num > 1)
+      pthread_mutex_unlock(&child_pid_mutex);
     if (ret == -1) 
     {
       ERR(logger, "Problem in execution: " << strerror(errno));

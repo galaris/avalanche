@@ -35,10 +35,14 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <pthread.h>
 
 using namespace std;
-pid_t stp_pid;
+pid_t* stp_pid;
 extern pid_t child_pid;
+
+extern pthread_mutex_t child_pid_mutex;
+extern int thread_num;
 
 
 static Logger *logger = Logger::getLogger();
@@ -56,7 +60,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
     args[1] = strdup("-p");
 }
 
-STP_Output *STP_Executor::run(STP_Input *input)
+STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
 {
     LOG(logger, "Running STP");
     
@@ -72,8 +76,13 @@ STP_Output *STP_Executor::run(STP_Input *input)
     redirect_stdout(file_out.getName());
     redirect_stderr(file_err.getName());
 
+    if (thread_num > 1)
+      pthread_mutex_lock(&child_pid_mutex);
     int ret = exec(true);
-    stp_pid = child_pid;
+    stp_pid[thread_index] = child_pid;
+    if (thread_num > 1)
+      pthread_mutex_unlock(&child_pid_mutex);
+  
     if (ret == -1) {
         ERR(logger, "Problem in execution: " << strerror(errno));
         return NULL;

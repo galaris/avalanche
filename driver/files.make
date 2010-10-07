@@ -11,4 +11,5 @@ CPPFILES := \
        src/Input.cpp \
        src/STP_Executor.cpp \
        src/STP_Output.cpp \
-       src/TmpFile.cpp
+       src/TmpFile.cpp \
+       src/Thread.cpp

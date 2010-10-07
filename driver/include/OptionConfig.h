@@ -55,7 +55,8 @@ public:
                     prefix(std::string("")),
                     disthost(std::string("127.0.0.1")),
                     port(65536),
-                    distport(10000)
+                    distport(10000),
+                    STPThreads(0)
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -85,6 +86,7 @@ public:
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
         inputFilterFile = opt_config->inputFilterFile;
+        STPThreads	= opt_config->STPThreads;
         prefix          = opt_config->prefix;
     }
 
@@ -144,6 +146,12 @@ public:
     
     bool getDistributed() const
     { return distributed; }
+
+    void setSTPThreads(int num)
+    { STPThreads = num; }
+    
+    int getSTPThreads() const
+    { return STPThreads; }
 
     void setStartdepth(int startdepth)
     { this->startdepth = startdepth; }
@@ -283,6 +291,7 @@ private:
     std::string              inputFilterFile;
     std::string              prefix;
     int                      startdepth;
+    int                      STPThreads;
 };
 
 
