@@ -77,7 +77,7 @@ extern pid_t *cv_pid, *stp_pid;
 extern Input* initial;
 extern vector<Chunk*> report;
 
-extern vector <int> modified_input;
+extern set <int> modified_input;
 
 pthread_mutex_t child_pid_mutex;
 int thread_num;
@@ -120,6 +120,47 @@ static void printHelpBanner()
 }
 
 OptionConfig* opt_config;
+
+void clean_up()
+{
+  if (thread_num > 1)
+  {
+    delete []stp_time;
+    delete []stp_start;
+    delete []stp_end;
+    delete []cv_time;
+    delete []cv_start;
+    delete []cv_end;
+    delete []stp_pid;
+    delete []cv_pid;
+    pthread_mutex_destroy(&child_pid_mutex);
+    for (int i = 0; i < thread_num; i ++)
+    {
+      ostringstream file_modifier;
+      file_modifier << "_" << i;
+      remove(string("basic_blocks").append(file_modifier.str()).append(".log").c_str());
+      remove(string("execution").append(file_modifier.str()).append(".log").c_str());
+      remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
+      remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
+      for (set <int>::iterator j = modified_input.begin(); j != modified_input.end(); j ++)
+      {
+        string f_name = string((opt_config->getProgAndArg())[*j]);
+        remove(f_name.append(file_modifier.str()).c_str());
+      }
+    }
+  }
+  else
+  {
+    delete stp_time;
+    delete stp_start;
+    delete stp_end;
+    delete cv_time;
+    delete cv_start;
+    delete cv_end;
+    delete stp_pid;
+    delete cv_pid;
+  }
+}
 
 void sig_hndlr(int signo)
 {
@@ -174,7 +215,9 @@ void sig_hndlr(int signo)
     report.at(i)->print(opt_config->getPrefix(), i);
   }
   REPORT(logger, "");
+  clean_up();
   exit(0);
+  
 }
 
 int main(int argc, char *argv[])
@@ -264,43 +307,7 @@ int main(int argc, char *argv[])
       report.at(i)->print(opt_config->getPrefix(), i);
     }
     REPORT(logger, "");
-    if (thread_num > 1)
-    {
-      delete []stp_time;
-      delete []stp_start;
-      delete []stp_end;
-      delete []cv_time;
-      delete []cv_start;
-      delete []cv_end;
-      delete []stp_pid;
-      delete []cv_pid;
-      pthread_mutex_destroy(&child_pid_mutex);
-      for (int i = 0; i < thread_num; i ++)
-      {
-        ostringstream file_modifier;
-        file_modifier << "_" << i;
-        remove(string("basic_blocks").append(file_modifier.str()).append(".log").c_str());
-        remove(string("execution").append(file_modifier.str()).append(".log").c_str());
-        remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
-        remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
-        for (int j = 0; j < modified_input.size(); j ++)
-        {
-          string f_name = string((opt_config->getProgAndArg())[modified_input[j]]);
-          remove(f_name.append(file_modifier.str()).c_str());
-        }
-      }
-    }
-    else
-    {
-      delete stp_time;
-      delete stp_start;
-      delete stp_end;
-      delete cv_time;
-      delete cv_start;
-      delete cv_end;
-      delete stp_pid;
-      delete cv_pid;
-    }
+    clean_up();
     return EXIT_SUCCESS;
 }
 

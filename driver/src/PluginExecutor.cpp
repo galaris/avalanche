@@ -144,12 +144,12 @@ int PluginExecutor::run(int thread_index)
 
     switch (kind)
     {
-      case TRACEGRIND: DBG(logger, "Tracegrind is finished");
+      case TRACEGRIND: DBG(logger, "Thread #" << thread_index << ": Tracegrind is finished");
 		       break;
-      case MEMCHECK:   DBG(logger, "Memcheck is finished");
+      case MEMCHECK:   DBG(logger, "Thread #" << thread_index << ": Memcheck is finished");
                        output = new FileBuffer(file_err.exportFile());
                        break;
-      case COVGRIND:   DBG(logger, "Covgrind is finished");
+      case COVGRIND:   DBG(logger, "Thread #" << thread_index << ": Covgrind is finished");
     }
 
     return 0;

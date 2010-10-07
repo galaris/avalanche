@@ -93,7 +93,7 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
         ERR(logger, "Problem in waiting: " << strerror(errno));
         return NULL;
     }
-    DBG(logger, "STP is finished.");
+    DBG(logger, "Thread #" << thread_index << ": STP is finished.");
 
     if (ret != 0) {
         LOG(logger, "STP exits with code " << ret);
