@@ -77,6 +77,8 @@ int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
+
+set <unsigned long> delta_bb_covered;
   
 vector<Chunk*> report;
 
@@ -425,9 +427,17 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
     if (enableMutexes) pthread_mutex_lock(&add_bb_mutex);
     for (int i = 0; i < size; i++)
     {
-      if (basicBlocksCovered.insert(basicBlockAddrs[i]).second)
+      if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
       {
         res++;
+      }
+      if(thread_num < 1)
+      {
+        basicBlocksCovered.insert(basicBlockAddrs[i]);
+      }
+      else
+      {
+        delta_bb_covered.insert(basicBlockAddrs[i]);
       }
     }
     if (enableMutexes) pthread_mutex_unlock(&add_bb_mutex);
@@ -489,6 +499,7 @@ void* exec_STP_CG(void* data)
   int first_depth = (int) (actor->getPrivateDataUnit("first_depth"));
   int cur_tid = actor->getCustomTID();
   ostringstream cur_trace_log, input_modifier;
+  input_modifier << "_" << actor->getCustomTID();
   cur_trace_log << "curtrace_" << actor->getCustomTID() << ".log";
   STP_Input si;
   si.setFile(cur_trace_log.str().c_str());
@@ -669,6 +680,7 @@ void ExecutionManager::run()
     initial->startdepth = config->getStartdepth();
     int score;
     score = checkAndScore(initial, false, "", true);
+    basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
 
@@ -676,6 +688,7 @@ void ExecutionManager::run()
     {
       REPORT(logger, "Starting iteration " << runs);
       LOG(logger, "inputs.size()=" << inputs.size());
+      delta_bb_covered.clear();
       multimap<Key, Input*, cmp>::iterator it = --inputs.end();
       Input* fi = it->second;
       unsigned int scr = it->first.score;
@@ -1006,6 +1019,7 @@ void ExecutionManager::run()
       }
       runs++;
 
+      basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
       if (config->getDistributed())
       {
         talkToServer(inputs);
