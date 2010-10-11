@@ -84,6 +84,35 @@ void FileBuffer::dumpFile(const char* name)
   write(fd, buf, size);
   close(fd);
 }
+
+void FileBuffer::invertQueryAndDump(const char* name)
+{
+  char* query = strstr(buf, "QUERY(FALSE);");
+  if (query[-4] == '0')
+  {
+    query[-4] = '1';
+  } 
+  else if (query[-4] == '1')
+  {
+    query[-4] = '0';
+  }
+  unsigned int oldsize = size;
+  size = (query - buf) + 13;
+  dumpFile(name);
+  for (int k = 0; k < 13; k++)
+  {
+    query[k] = '\n';
+  }
+  if (query[-4] == '0')
+  {
+    query[-4] = '1';
+  } 
+  else if (query[-4] == '1')
+  {
+    query[-4] = '0';
+  }
+  size = oldsize;
+}
   
 void FileBuffer::applySTPSolution(char* buf)
 {

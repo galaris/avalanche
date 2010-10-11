@@ -46,9 +46,6 @@ using namespace std;
 
 static Logger *logger = Logger::getLogger();
 
-pid_t child_pid;
-
-
 int Executor::exec(bool setlimit)
 {
     child_pid = fork();

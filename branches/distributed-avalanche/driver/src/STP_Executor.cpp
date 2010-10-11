@@ -39,9 +39,7 @@
 
 using namespace std;
 pid_t* stp_pid;
-extern pid_t child_pid;
 
-extern pthread_mutex_t child_pid_mutex;
 extern int thread_num;
 
 
@@ -76,13 +74,9 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
     redirect_stdout(file_out.getName());
     redirect_stderr(file_err.getName());
 
-    if (thread_num > 1)
-      pthread_mutex_lock(&child_pid_mutex);
     int ret = exec(true);
     stp_pid[thread_index] = child_pid;
-    if (thread_num > 1)
-      pthread_mutex_unlock(&child_pid_mutex);
-  
+ 
     if (ret == -1) {
         ERR(logger, "Problem in execution: " << strerror(errno));
         return NULL;

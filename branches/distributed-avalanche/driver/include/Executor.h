@@ -59,6 +59,7 @@ public:
 protected:
     char  *prog;
     char **args;
+    pid_t child_pid;
 
 private:
     void do_redirect(int file_to_redirect, int with_file);
