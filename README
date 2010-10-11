@@ -9,6 +9,9 @@ http://code.google.com/p/avalanche/wiki/Avalanche for more details.
 
 INSTALLATION:
 
+Run './autogen.sh' to create intermediate makefiles and configure
+script.
+
 Type './configure' to configure valgrind and STP. You may specify 
 '--prefix=<path_to_dir>' option to install avalanche to a certain 
 directory. For example
@@ -16,6 +19,8 @@ directory. For example
 ./configure --prefix=`pwd`/inst
 
 If everything is configured successfully, run 'make'.
+
+If 'make' completed successfully, run 'make install'.
 
 Then SET THE PROGRAM STACK SIZE TO BE UNLIMITED:
 
@@ -52,6 +57,15 @@ avalanche [options] prog-and-args
     --depth=<number>             the number of conditions inverted during one run of tracegrind (default is 100)
     --alarm=<number>             timer value in seconds (for infinite loop recognition) (default is 300)
     --filename=<input_file>      the path to the file with the input data for the application being tested
+    --trace-children             run valgrind plugins with '--trace-children=yes' option
+    --check-danger               emit special constraints for memory access operations
+                                 and divisions (slows down the analysis)
+    --dump-calls                 dump the list of functions manipulating with tainted data to calldump.log
+    --func-name=<name>           the name of function that should be used for separate function analysis
+    --func-file=<name>           the path to the file with the list of functions that
+                                 should be used for separate function analysis
+    --mask=<mask_file>           the path to the file with input mask
+    --suppress-subcalls          ignore conditions in a nested function calls during separate analysis
 
   special options for sockets:
     --sockets                    mark data read from TCP sockets as tainted
