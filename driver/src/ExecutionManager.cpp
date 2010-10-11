@@ -64,7 +64,6 @@ time_t *stp_end;
 PoolThread *threads;
 extern int thread_num;
 
-extern pid_t child_pid;
 bool killed = false;
 bool nokill = false;
 
@@ -470,7 +469,7 @@ void alarmHandler(int signo)
   LOG(logger, "time is out");
   if (!nokill)
   {
-    kill(child_pid, SIGALRM);
+//    kill(child_pid, SIGALRM);
     killed = true;
     DBG(logger, "Time out. Valgrind is going to be killed");
   }
@@ -485,43 +484,12 @@ void* exec_STP_CG(void* data)
   multimap<Key, Input*, cmp>* inputs = (multimap <Key, Input*, cmp> *) (inp.data_unit);
   pthread_mutex_t* inputs_mutex = inp.mutex;
   Input* first_input = (Input*) (actor->getReadonlyDataUnit("first_input"));
-  inp = actor->getSharedDataUnit("trace");
-  FileBuffer * fbuf = (FileBuffer*) (inp.data_unit);
-  pthread_mutex_t* trace_mutex = inp.mutex;
   bool* actual = (bool*) (actor->getReadonlyDataUnit("actual"));
   int depth = (int) (actor->getPrivateDataUnit("depth"));
   int first_depth = (int) (actor->getPrivateDataUnit("first_depth"));
   int cur_tid = actor->getCustomTID();
   ostringstream cur_trace_log, input_modifier;
-  cur_trace_log << "curtrace_" << cur_tid << ".log";
-  input_modifier << "_" << cur_tid;
-  pthread_mutex_lock(trace_mutex);
-  char* query = strstr(fbuf->buf, "QUERY(FALSE);");
-  if (query[-4] == '0')
-  {
-    query[-4] = '1';
-  } 
-  else if (query[-4] == '1')
-  {
-    query[-4] = '0';
-  }
-  unsigned int oldsize = fbuf->size;
-  fbuf->size = (query - fbuf->buf) + 13;
-  fbuf->dumpFile(cur_trace_log.str().c_str());
-  for (int k = 0; k < 13; k++)
-  {
-    query[k] = '\n';
-  }
-  if (query[-4] == '0')
-  {
-    query[-4] = '1';
-  } 
-  else if (query[-4] == '1')
-  {
-    query[-4] = '0';
-  }
-  fbuf->size = oldsize;
-  pthread_mutex_unlock(trace_mutex);
+  cur_trace_log << "curtrace_" << actor->getCustomTID() << ".log";
   STP_Input si;
   si.setFile(cur_trace_log.str().c_str());
   STP_Executor stp_exe(this_pointer->getConfig()->getDebug(), this_pointer->getConfig()->getValgrind());        
@@ -585,7 +553,7 @@ void* exec_STP_CG(void* data)
   if (out != NULL) delete out;
 }
 
-void ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth)
+int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth)
 {
   int actualfd = open("actual.log", O_RDWR);
   bool* actual = new bool[first_input->startdepth - 1 + config->getDepth()];
@@ -594,7 +562,6 @@ void ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input
   threads = new PoolThread[thread_num];
   pthread_mutex_t finish_mutex;
   pthread_cond_t finish_cond;
-  pthread_mutex_t cutSTP_mutex;
   int active_threads = thread_num;
   int depth = 0;
   int thread_status[thread_num];
@@ -603,7 +570,6 @@ void ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input
   pthread_mutex_init(&add_bb_mutex, NULL);
   pthread_mutex_init(&finish_mutex, NULL);
   pthread_cond_init(&finish_cond, NULL);
-  pthread_mutex_init(&cutSTP_mutex, NULL);
   FileBuffer trace((!trace_kind) ? "trace.log" : "dangertrace.log");
   trace_kind = _trace_kind;
   for (int j = 0; j < thread_num; j ++)
@@ -614,7 +580,6 @@ void ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input
     threads[j].addSharedDataUnit((void*) first_input, string("first_input"));
     threads[j].addSharedDataUnit((void*) actual, string("actual"));
     threads[j].addSharedDataUnit((void*) this, string("this_pointer"));
-    threads[j].addSharedDataUnit((void*) &trace, string("trace"), &cutSTP_mutex);
     thread_status[j] = -1;
   }
   char* query = trace.buf;
@@ -645,6 +610,9 @@ void ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input
     threads[thread_counter].addPrivateDataUnit((void*) first_depth, string("first_depth"));
     external_data[i].work_func = exec_STP_CG;
     external_data[i].data = &(threads[thread_counter]);
+    ostringstream cur_trace;
+    cur_trace << "curtrace_" << thread_counter << ".log";
+    trace.invertQueryAndDump(cur_trace.str().c_str());
     threads[thread_counter].createThread(&(external_data[i]));
     pthread_mutex_unlock(&finish_mutex);
   }
@@ -665,11 +633,11 @@ void ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input
   pthread_mutex_destroy(&add_inputs_mutex);
   pthread_mutex_destroy(&add_exploits_mutex);
   pthread_mutex_destroy(&add_bb_mutex);
-  pthread_mutex_destroy(&cutSTP_mutex);
   pthread_mutex_destroy(&finish_mutex);
   pthread_cond_destroy(&finish_cond);
   delete []external_data;
   delete []threads;
+  return depth;
 }
 
 void ExecutionManager::run()
@@ -900,9 +868,9 @@ void ExecutionManager::run()
       {
         if (config->getCheckDanger())
         {
-          runSTPAndCGParallel(true, &inputs, fi, dpth);
+          depth = runSTPAndCGParallel(true, &inputs, fi, dpth);
         }
-        runSTPAndCGParallel(false, &inputs, fi, dpth);
+        depth = runSTPAndCGParallel(false, &inputs, fi, dpth);
       }
       else
       {
@@ -917,26 +885,7 @@ void ExecutionManager::run()
           char* dquery;
           while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
           {
-            //dump to the separate file
-            unsigned int oldsize = dtrace.size;
-            dtrace.size = (dquery - dtrace.buf) + 13;
-            //dtrace.dumpFile(".avalanche/curdtrace.log");
-            dtrace.dumpFile("curdtrace.log");
-            //replace QUERY(FALSE); with newlines
-            int k = 0;
-            for (; k < 13; k++)
-            {
-              dquery[k] = '\n';
-            }
-            k = -1;
-            while (dquery[k] != '\n')
-            {
-              dquery[k] = '\n';
-              k--;
-            }
-            //restore the FileBuffer size
-            dtrace.size = oldsize;
-            //set up the STP_Input to the newly dumped trace
+            dtrace.invertQueryAndDump("curdtrace.log");
             STP_Input si;
             //si.setFile(".avalanche/curdtrace.log");
             si.setFile("curdtrace.log");
@@ -990,37 +939,7 @@ void ExecutionManager::run()
         while ((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
         {
           depth++;
-          //invert the last condition
-          if (query[-4] == '0')
-          {
-            query[-4] = '1';
-          } 
-          else if (query[-4] == '1')
-          {
-            query[-4] = '0';
-          }
-          //dump to the separate file
-          unsigned int oldsize = trace.size;
-          trace.size = (query - trace.buf) + 13;
-          //trace.dumpFile(".avalanche/curtrace.log");
-          trace.dumpFile("curtrace.log");
-          //replace QUERY(FALSE); with newlines
-          for (int k = 0; k < 13; k++)
-          {
-            query[k] = '\n';
-          }
-          //restore the previously inverted condition
-          if (query[-4] == '0')
-          {
-            query[-4] = '1';
-          } 
-          else if (query[-4] == '1')
-          {
-            query[-4] = '0';
-          }
-          //restore the FileBuffer size
-          trace.size = oldsize;
-          //set up the STP_Input to the newly dumped trace
+          trace.invertQueryAndDump("curtrace.log");
           STP_Input si;
           //si.setFile(".avalanche/curtrace.log");
           si.setFile("curtrace.log");

@@ -98,7 +98,7 @@ public:
    
     void cleanfifo();
 
-    void runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth);
+    int runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth);
     int checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier = "", bool first_run = false);
 
     void updateInput(Input* input);

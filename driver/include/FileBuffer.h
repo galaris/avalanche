@@ -49,6 +49,8 @@ public:
 
   virtual void dumpFile(const char* name = NULL);
 
+  void invertQueryAndDump(const char* name);
+
   virtual void applySTPSolution(char* buf);
   
   bool filterCovgrindOutput();

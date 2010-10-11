@@ -79,7 +79,6 @@ extern vector<Chunk*> report;
 
 extern set <int> modified_input;
 
-pthread_mutex_t child_pid_mutex;
 int thread_num;
 
 static void printHelpBanner()
@@ -133,7 +132,6 @@ void clean_up()
     delete []cv_end;
     delete []stp_pid;
     delete []cv_pid;
-    pthread_mutex_destroy(&child_pid_mutex);
     for (int i = 0; i < thread_num; i ++)
     {
       ostringstream file_modifier;
@@ -254,7 +252,6 @@ int main(int argc, char *argv[])
         stp_pid[i] = cv_pid[i] = 0;
         instp[i] = incv[i] = false;
       }
-      pthread_mutex_init(&child_pid_mutex, NULL);
     }
     else
     {
