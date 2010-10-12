@@ -86,8 +86,8 @@ int main(int argc, char** argv)
       {
         write(mainfd, "a", 1);
         printf("sent all from %d to %d\n", *fd, mainfd);
-        int namelength, length, startdepth, invertdepth, alarm, argsnum;
-        bool useMemcheck, leaks, traceChildren, checkDanger;
+        int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
+        bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
         int res = read(mainfd, &namelength, sizeof(int));
         if (res == 0)
         {
@@ -124,6 +124,11 @@ int main(int argc, char** argv)
           write(*fd, &invertdepth, sizeof(int));
           read(mainfd, &alarm, sizeof(int));
           write(*fd, &alarm, sizeof(int));
+          read(mainfd, &tracegrindAlarm, sizeof(int));
+          printf("tracegrindAlarm=%d\n", tracegrindAlarm);
+          write(*fd, &tracegrindAlarm, sizeof(int));
+          read(mainfd, &threads, sizeof(int));
+          write(*fd, &threads, sizeof(int));
           read(mainfd, &argsnum, sizeof(int));
           printf("argsnum=%d\n", argsnum);
           write(*fd, &argsnum, sizeof(int));
@@ -136,6 +141,62 @@ int main(int argc, char** argv)
           write(*fd, &traceChildren, sizeof(bool));
           read(mainfd, &checkDanger, sizeof(bool));
           write(*fd, &checkDanger, sizeof(bool));
+          read(mainfd, &debug, sizeof(bool));
+          write(*fd, &debug, sizeof(bool));
+          read(mainfd, &verbose, sizeof(bool));
+          write(*fd, &verbose, sizeof(bool));
+          read(mainfd, &sockets, sizeof(bool));
+          write(*fd, &sockets, sizeof(bool));
+          read(mainfd, &datagrams, sizeof(bool));
+          write(*fd, &datagrams, sizeof(bool));
+          read(mainfd, &suppressSubcalls, sizeof(bool));
+          write(*fd, &suppressSubcalls, sizeof(bool));
+
+          if (sockets)
+          {
+            int length;
+            read(mainfd, &length, sizeof(int));
+            write(*fd, &length, sizeof(int));
+            read(mainfd, buf, length);
+            write(*fd, buf, length);
+            int port;
+            read(mainfd, &port, sizeof(int));
+            write(*fd, &port, sizeof(int));
+          }
+
+          int masklength;
+          read(mainfd, &masklength, sizeof(int));
+          write(*fd, &masklength, sizeof(int));
+          if (masklength != 0)
+          {
+            char* mask = new char[masklength];
+            read(mainfd, mask, masklength);
+            write(*fd, mask, masklength);
+            delete[] mask;
+          }
+
+          int filtersNum;
+          read(mainfd, &filtersNum, sizeof(int));
+          write(*fd, &filtersNum, sizeof(int));
+          for (int i = 0; i < filtersNum; i++)
+          {
+            int length; 
+            read(mainfd, &length, sizeof(int));
+            write(*fd, &length, sizeof(int));
+            read(mainfd, buf, length);
+            write(*fd, buf, length);
+          }
+
+          int filterlength;
+          read(mainfd, &filterlength, sizeof(int));
+          write(*fd, &filterlength, sizeof(int));
+          if (filterlength != 0)
+          {
+            char* filter = new char[filterlength];
+            read(mainfd, filter, filterlength);
+            write(*fd, filter, filterlength);
+            delete[] filter;
+          }
 
           for (int i = 0; i < argsnum; i++)
           {

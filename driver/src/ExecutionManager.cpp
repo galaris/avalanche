@@ -1066,6 +1066,11 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       write(distfd, &depth, sizeof(int));
       unsigned int alarm = config->getAlarm();
       write(distfd, &alarm, sizeof(int));
+      unsigned int tracegrindAlarm = config->getTracegrindAlarm();
+      write(distfd, &tracegrindAlarm, sizeof(int));
+      int threads = config->getSTPThreads();
+      write(distfd, &threads, sizeof(int));
+
       int progArgsNum = config->getProgAndArg().size();
       write(distfd, &progArgsNum, sizeof(int));
       printf("argsnum=%d\n", progArgsNum);
@@ -1078,6 +1083,60 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       write(distfd, &traceChildren, sizeof(bool));
       bool checkDanger = config->getCheckDanger();
       write(distfd, &checkDanger, sizeof(bool));
+      bool debug = config->getDebug();
+      write(distfd, &debug, sizeof(bool));
+      bool verbose = config->getVerbose();
+      write(distfd, &verbose, sizeof(bool));
+      bool sockets = config->usingSockets();
+      write(distfd, &sockets, sizeof(bool));
+      bool datagrams = config->usingDatagrams();
+      write(distfd, &datagrams, sizeof(bool));
+      bool suppressSubcalls = config->getSuppressSubcalls();
+      write(distfd, &suppressSubcalls, sizeof(bool));
+
+      if (sockets)
+      {
+        string host = config->getHost();
+        int length = host.length();
+        write(distfd, &length, sizeof(int));
+        write(distfd, host.c_str(), length);
+        unsigned int port = config->getPort();
+        write(distfd, &port, sizeof(int));
+      }
+
+      if (config->getInputFilterFile() != "")
+      {
+        FileBuffer mask(config->getInputFilterFile().c_str());
+        write(distfd, &mask.size, sizeof(int));
+        write(distfd, mask.buf, mask.size);
+      }
+      else
+      {
+        int z = 0;
+        write(distfd, &z, sizeof(int));
+      }
+
+      int funcFilters = config->getFuncFilterUnitsNum();
+      write(distfd, &funcFilters, sizeof(int));
+      for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
+      {
+        string f = config->getFuncFilterUnit(i);
+        int length = f.length();
+        write(distfd, &length, sizeof(int));
+        write(distfd, f.c_str(), length);
+      }
+      if (config->getFuncFilterFile() != "")
+      {
+        FileBuffer filter(config->getFuncFilterFile().c_str());
+        write(distfd, &filter.size, sizeof(int));
+        write(distfd, filter.buf, filter.size);
+      }
+      else
+      {
+        int z = 0;
+        write(distfd, &z, sizeof(int));
+      }
+
       for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
       {
         int argsSize = it->length();
