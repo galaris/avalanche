@@ -59,8 +59,8 @@ int main(int argc, char** argv)
   printf("connected\n");
 
   write(fd, "a", 1);
-  int namelength, length, startdepth, invertdepth, alarm, argsnum;
-  bool useMemcheck, leaks, traceChildren, checkDanger;
+  int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
+  bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
   res = read(fd, &namelength, sizeof(int));
   if (res == 0)
   {
@@ -94,6 +94,8 @@ int main(int argc, char** argv)
   //printf("invertdepth=%d\n", invertdepth);
   read(fd, &alarm, sizeof(int));
   //printf("alarm=%d\n", alarm);
+  read(fd, &tracegrindAlarm, sizeof(int));
+  read(fd, &threads, sizeof(int));
   read(fd, &argsnum, sizeof(int));
   //printf("argsnum=%d\n", argsnum);
 
@@ -105,6 +107,11 @@ int main(int argc, char** argv)
   //printf("traceChildren=%d\n", traceChildren);
   read(fd, &checkDanger, sizeof(bool));
   //printf("checkDanger=%d\n", checkDanger);
+  read(fd, &debug, sizeof(bool));
+  read(fd, &verbose, sizeof(bool));
+  read(fd, &sockets, sizeof(bool));
+  read(fd, &datagrams, sizeof(bool));
+  read(fd, &suppressSubcalls, sizeof(bool));
 
   char* avalanche_argv[100];
   string argstr(argv[0]);
@@ -138,9 +145,22 @@ int main(int argc, char** argv)
 
   avalanche_argv[5] = "--prefix=branch0_";
   printf("argv[5]=%s\n", avalanche_argv[5]);
+
+  char thrds[128];
+  sprintf(thrds, "--stp-threads=%d", threads);
+  avalanche_argv[6] = thrds;
+  printf("argv[6]=%s\n", avalanche_argv[6]);
+
   int runs = 0;
 
-  int av_argc = 6;
+  int av_argc = 7;
+  if (tracegrindAlarm != 0)
+  {
+    char alrm[128];
+    sprintf(alrm, "--tracegrind-alarm=%d", tracegrindAlarm);
+    avalanche_argv[av_argc++] = alrm;
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
   if (useMemcheck)
   {
     avalanche_argv[av_argc++] = "--use-memcheck";
@@ -159,6 +179,93 @@ int main(int argc, char** argv)
   if (checkDanger)
   {
     avalanche_argv[av_argc++] = "--check-danger";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+  if (debug)
+  {
+    avalanche_argv[av_argc++] = "--debug";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+  if (verbose)
+  {
+    avalanche_argv[av_argc++] = "--verbose";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+  if (sockets)
+  {
+    avalanche_argv[av_argc++] = "--sockets";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+  if (datagrams)
+  {
+    avalanche_argv[av_argc++] = "--datagrams";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+  if (suppressSubcalls)
+  {
+    avalanche_argv[av_argc++] = "--suppress-subcalls";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+
+  if (sockets)
+  {
+    int length;
+    read(fd, &length, sizeof(int));
+    char buf[128];
+    read(fd, buf, length);
+    buf[length] = '\0';
+    char host[128];
+    sprintf(host, "--host=%s", buf);
+    avalanche_argv[av_argc++] = host;
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+    int port;
+    read(fd, &port, sizeof(int));
+    char prt[128];
+    sprintf(prt, "--port=%d", prt);
+    avalanche_argv[av_argc++] = host;
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);    
+  }
+
+  int masklength;
+  read(fd, &masklength, sizeof(int));
+  if (masklength != 0)
+  {
+    char* mask = new char[masklength];
+    read(fd, mask, masklength);
+    int descr = open("mask", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    write(descr, mask, masklength);
+    close(descr);
+    delete[] mask;
+    avalanche_argv[av_argc++] = "--mask=mask";
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }
+
+  int filtersNum;
+  read(fd, &filtersNum, sizeof(int));
+  for (int i = 0; i < filtersNum; i++)
+  {
+    int length;
+    char buf[128];
+    read(fd, &length, sizeof(int));
+    read(fd, buf, length);
+    buf[length] = '\0';
+    char* fltr = new char[128];
+    sprintf(fltr, "--func-name=%s", buf);
+    avalanche_argv[av_argc++] = fltr;
+    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
+  }  
+
+  int flength;
+  read(fd, &flength, sizeof(int));
+  if (flength != 0)
+  {
+    char* filter = new char[flength];
+    read(fd, filter, flength);
+    int descr = open("filter", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    write(descr, filter, flength);
+    close(descr);
+    delete[] filter;
+    avalanche_argv[av_argc++] = "--func-file=filter";
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
   }
 

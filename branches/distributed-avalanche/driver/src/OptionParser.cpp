@@ -84,7 +84,7 @@ OptionConfig *OptionParser::run() const
             config->setAlarm(atoi(alarm.c_str()));
         }
         else if (arg_vec[i].find("--func-name=") != string::npos) {
-            string name = arg_vec[i].substr(strlen("--func-addr="));
+            string name = arg_vec[i].substr(strlen("--func-name="));
             config->addFuncFilterUnit(name);
         }
         else if (arg_vec[i].find("--func-file=") != string::npos) {
