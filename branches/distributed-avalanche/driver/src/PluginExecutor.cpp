@@ -28,6 +28,7 @@
 #include "FileBuffer.h"
 #include "STP_Input.h"
 #include "TmpFile.h"
+#include "Monitor.h"
 
 #include <cstring>
 #include <cerrno>
@@ -36,13 +37,11 @@
 #include <string>
 #include <pthread.h>
 
-pid_t tg_pid;
-pid_t* cv_pid;
 
 extern int thread_num;
+extern Monitor* monitor;
 
 using namespace std;
-
 
 static Logger *logger = Logger::getLogger();
 
@@ -97,7 +96,7 @@ int PluginExecutor::run(int thread_index)
     if (prog == NULL)
         return NULL;
 
-    LOG(logger, "Running plugin kind=" << kind);
+    LOG(logger, "Thread #" << thread_index << ": Running plugin kind=" << kind);
 
     TmpFile file_out;
     TmpFile file_err;
@@ -106,14 +105,7 @@ int PluginExecutor::run(int thread_index)
     redirect_stderr(file_err.getName());
 
     int ret = exec(false);
-    if (kind == TRACEGRIND)
-    {
-      tg_pid = child_pid;
-    }
-    else
-    {
-      cv_pid[thread_index] = child_pid;
-    }
+    monitor->setPID(child_pid, thread_index);
     if (ret == -1) 
     {
       ERR(logger, "Problem in execution: " << strerror(errno));
@@ -128,22 +120,29 @@ int PluginExecutor::run(int thread_index)
 
     if (ret == -1) 
     {
-      LOG(logger, "exited on signal");
-      if (kind == MEMCHECK)
+      if (!monitor->getKilledStatus())
       {
-        output = new FileBuffer(file_err.exportFile());
-      }
+        LOG(logger, "exited on signal");
+        if (kind == MEMCHECK)
+        {
+          output = new FileBuffer(file_err.exportFile());
+        }
       return -1;
+      }
+      else
+      {
+        return 0;
+      }
     }
 
     switch (kind)
     {
-      case TRACEGRIND: DBG(logger, "Thread #" << thread_index << ": Tracegrind is finished");
+      case TRACEGRIND: LOG(logger, "Thread #" << thread_index << ": Tracegrind is finished");
 		       break;
-      case MEMCHECK:   DBG(logger, "Thread #" << thread_index << ": Memcheck is finished");
+      case MEMCHECK:   LOG(logger, "Thread #" << thread_index << ": Memcheck is finished");
                        output = new FileBuffer(file_err.exportFile());
                        break;
-      case COVGRIND:   DBG(logger, "Thread #" << thread_index << ": Covgrind is finished");
+      case COVGRIND:   LOG(logger, "Thread #" << thread_index << ": Covgrind is finished");
     }
 
     return 0;

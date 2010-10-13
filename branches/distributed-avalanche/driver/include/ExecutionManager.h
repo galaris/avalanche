@@ -37,7 +37,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-
+class FileBuffer;
 class OptionConfig;
 class Input;
 
@@ -98,8 +98,11 @@ public:
    
     void cleanfifo();
 
-    int runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth);
+    int runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input* first_input, unsigned int first_depth);
     int checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier = "", bool first_run = false);
+
+    void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
+    bool dumpMCExploit(Input* input, const char* exec_log);
 
     void updateInput(Input* input);
 

@@ -36,6 +36,7 @@
 #include "SocketBuffer.h"
 #include "Input.h"
 #include "Thread.h"
+#include "Monitor.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -48,18 +49,7 @@
 
 using namespace std;
 
-time_t tg_time = 0;
-bool intg = false;
-time_t tg_start;
-time_t tg_end;
-time_t *cv_time;
-bool *incv;
-time_t *cv_start;
-time_t *cv_end;
-time_t *stp_time;
-bool *instp;
-time_t *stp_start;
-time_t *stp_end;
+extern Monitor* monitor;
 
 PoolThread *threads;
 extern int thread_num;
@@ -87,7 +77,8 @@ set <int> modified_input;
 pthread_mutex_t add_inputs_mutex;
 pthread_mutex_t add_exploits_mutex;
 pthread_mutex_t add_bb_mutex;
-pthread_mutex_t add_cv_time_mutex;
+pthread_mutex_t add_time_mutex;
+pthread_cond_t finish_cond;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -139,6 +130,128 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
       printf("connected\n");
       write(distfd, "m", 1);
    }
+}
+
+void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploitGroup)
+{
+  time_t exploittime;
+  time(&exploittime);
+  string t = string(ctime(&exploittime));
+  REPORT(logger, "Crash detected.");
+  LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
+  if (config->usingSockets() || config->usingDatagrams())
+  {
+    stringstream ss(stringstream::in | stringstream::out);
+    ss << config->getPrefix() << "exploit_" << exploits;
+    REPORT(logger, "Dumping an exploit to file " << ss.str());
+    input->dumpExploit((char*) ss.str().c_str(), false);
+    if (info_available)
+    {
+      if (!same_exploit)
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
+        stack_trace->dumpFile((char*) ss.str().c_str());
+        REPORT(logger, "Dumping stack trace to file " << ss.str());
+      }
+      else
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
+        REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
+      }
+    }
+    else
+    {
+      REPORT(logger, "No stack trace is available.");
+    }
+  }
+  else
+  {
+    if (info_available)
+    {
+      if (!same_exploit)
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
+        stack_trace->dumpFile((char*) ss.str().c_str());
+        REPORT(logger, "Dumping stack trace to file " << ss.str());
+      }
+      else
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
+        REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
+      }
+    }
+    else
+    {
+      REPORT(logger, "No stack trace is available.");
+    }
+    for (int i = 0; i < input->files.size(); i++)
+    {
+      stringstream ss(stringstream::in | stringstream::out);
+      ss << config->getPrefix() << "exploit_" << exploits << "_" << i;
+      REPORT(logger, "Dumping an exploit to file " << ss.str());
+      input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+    }
+  }
+}
+
+bool ExecutionManager::dumpMCExploit(Input* input, const char *exec_log)
+{
+  FileBuffer* mc_output = new FileBuffer(exec_log);
+  char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
+  long errors = -1;
+  long definitely_lost = -1;
+  long possibly_lost = -1;
+  bool res = false;
+  if (error != NULL)
+  {
+    errors = strtol(error + 15, NULL, 10);
+  }
+  char* leak = NULL;
+  if (config->checkForLeaks())
+  {
+    leak = strstr(mc_output->buf, "definitely lost: ");
+    if (leak != NULL)
+    {
+      definitely_lost = strtol(leak + 17, NULL, 10);
+    }
+    leak = strstr(mc_output->buf, "possibly lost: ");
+    if (leak != NULL)
+    {
+      possibly_lost = strtol(leak + 15, NULL, 10);
+    }
+  }
+  if ((errors > 0) || (((definitely_lost != -1) || (possibly_lost != -1)) && !killed))
+  {
+    time_t memchecktime;
+    time(&memchecktime);
+    string t = string(ctime(&memchecktime));
+    REPORT(logger, "Error detected.");
+    LOG(logger, "memcheck error time: " << t.substr(0, t.size() - 1));   
+    if (config->usingSockets() || config->usingDatagrams())
+    {
+      stringstream ss(stringstream::in | stringstream::out);
+      ss << config->getPrefix() << "memcheck_" << memchecks;
+      REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
+      input->dumpExploit((char*) ss.str().c_str(), false);
+    }
+    else
+    {
+      for (int i = 0; i < input->files.size(); i++)
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "memcheck_" << memchecks << "_" << i;
+        REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
+        input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+      }
+    }
+    res = true; 
+  }
+  delete mc_output;
+  return res;
 }
 
 int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier, bool first_run)
@@ -196,7 +309,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   {
     plugin_opts.push_back("--no-coverage=yes");
   }
-  if (strcmp(fileNameModifier, "") && kind == COVGRIND)
+  if (strcmp(fileNameModifier, ""))
   {
     ostringstream cv_bb_log;
     cv_bb_log << "--filename=basic_blocks" << fileNameModifier << ".log";
@@ -221,24 +334,24 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   }
   PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
   curSockets = 0;
-  bool enableMutexes = (config->getSTPThreads() != 0) && !first_run;
+  bool enable_mutexes = (config->getSTPThreads() != 0) && !first_run;
   int thread_index = 0;
   if (strcmp(fileNameModifier, ""))
   {
     thread_index = atoi(string(fileNameModifier).substr(1).c_str());
   }
-  cv_start[thread_index] = time(NULL);
-  incv[thread_index] = true;
+  time_t start_time = time(NULL);
+  monitor->setState(CHECKER, start_time, thread_index);
   int exitCode = plugin_exe.run(thread_index);
-  incv[thread_index] = false;
-  cv_end[thread_index] = time(NULL);
-  cv_time[thread_index] += cv_end[thread_index] - cv_start[thread_index];
+  if (enable_mutexes) pthread_mutex_lock(&add_time_mutex);
+  monitor->addTime(time(NULL), thread_index);
+  if (enable_mutexes) pthread_mutex_unlock(&add_time_mutex);
   FileBuffer* mc_output;
   bool infoAvailable = false;
   bool sameExploit = false;
   int exploitGroup = 0;
   
-  if (enableMutexes) pthread_mutex_lock(&add_exploits_mutex);
+  if (enable_mutexes) pthread_mutex_lock(&add_exploits_mutex);
   if ((exitCode == -1) && !killed)
   {
     FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
@@ -291,68 +404,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
       deleteBuffer = false;
       report.push_back(ch);
     }
-    time_t exploittime;
-    time(&exploittime);
-    string t = string(ctime(&exploittime));
-    REPORT(logger, "Crash detected.");
-    LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
-    if (config->usingSockets() || config->usingDatagrams())
-    {
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << config->getPrefix() << "exploit_" << exploits;
-      REPORT(logger, "Dumping an exploit to file " << ss.str());
-      input->dumpExploit((char*) ss.str().c_str(), false);
-      if (infoAvailable)
-      {
-        if (!sameExploit)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
-          cv_output->dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping stack trace to file " << ss.str());
-        }
-        else
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
-          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
-        }
-      }
-      else
-      {
-        REPORT(logger, "No stack trace is available.");
-      }
-    }
-    else
-    {
-      if (infoAvailable)
-      {
-        if (!sameExploit)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
-          cv_output->dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping stack trace to file " << ss.str());
-        }
-        else
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
-          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
-        }
-      }
-      else
-      {
-        REPORT(logger, "No stack trace is available.");
-      }
-      for (int i = 0; i < input->files.size(); i++)
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "exploit_" << exploits << "_" << i;
-        REPORT(logger, "Dumping an exploit to file " << ss.str());
-        input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
-      }
-    }
+    dumpExploit(input, cv_output, infoAvailable, sameExploit, exploitGroup);
     exploits++;
     if (deleteBuffer)
     {
@@ -361,58 +413,12 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   }
   else if (config->usingMemcheck() && !addNoCoverage)
   {
-    FileBuffer* mc_output = new FileBuffer(cv_exec_log.str().c_str());
-    char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
-    long errors = -1;
-    long definitely_lost = -1;
-    long possibly_lost = -1;
-    if (error != NULL)
+    if (dumpMCExploit(input, cv_exec_file.c_str()))
     {
-      errors = strtol(error + 15, NULL, 10);
+      memchecks ++;
     }
-    char* leak = NULL;
-    if (config->checkForLeaks())
-    {
-      leak = strstr(mc_output->buf, "definitely lost: ");
-      if (leak != NULL)
-      {
-        definitely_lost = strtol(leak + 17, NULL, 10);
-      }
-      leak = strstr(mc_output->buf, "possibly lost: ");
-      if (leak != NULL)
-      {
-        possibly_lost = strtol(leak + 15, NULL, 10);
-      }
-    }
-    if ((errors > 0) || (definitely_lost != -1) && !killed || (possibly_lost != -1) && !killed)
-    {
-      time_t memchecktime;
-      time(&memchecktime);
-      string t = string(ctime(&memchecktime));
-      REPORT(logger, "Error detected.");
-      LOG(logger, "memcheck error time: " << t.substr(0, t.size() - 1));   
-      if (config->usingSockets() || config->usingDatagrams())
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "memcheck_" << memchecks;
-        REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
-        input->dumpExploit((char*) ss.str().c_str(), false);
-      }
-      else
-      {
-        for (int i = 0; i < input->files.size(); i++)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << config->getPrefix() << "memcheck_" << memchecks << "_" << i;
-          REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
-          input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
-        }
-      }
-      memchecks++;  
-    }
-    delete mc_output;
   }
-  if (enableMutexes) pthread_mutex_unlock(&add_exploits_mutex);
+  if (enable_mutexes) pthread_mutex_unlock(&add_exploits_mutex);
   if (!addNoCoverage)
   {
     int res = 0;
@@ -424,7 +430,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
     unsigned long* basicBlockAddrs = new unsigned long[size];
     read(fd, basicBlockAddrs, fileInfo.st_size);
     close(fd);
-    if (enableMutexes) pthread_mutex_lock(&add_bb_mutex);
+    if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
     for (int i = 0; i < size; i++)
     {
       if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
@@ -440,7 +446,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
         delta_bb_covered.insert(basicBlockAddrs[i]);
       }
     }
-    if (enableMutexes) pthread_mutex_unlock(&add_bb_mutex);
+    if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);
     delete[] basicBlockAddrs;
     return res;
   }
@@ -479,7 +485,7 @@ void alarmHandler(int signo)
   LOG(logger, "time is out");
   if (!nokill)
   {
-//    kill(child_pid, SIGALRM);
+    //add here!!!!!!!!!!!!
     killed = true;
     DBG(logger, "Time out. Valgrind is going to be killed");
   }
@@ -495,8 +501,8 @@ void* exec_STP_CG(void* data)
   pthread_mutex_t* inputs_mutex = inp.mutex;
   Input* first_input = (Input*) (actor->getReadonlyDataUnit("first_input"));
   bool* actual = (bool*) (actor->getReadonlyDataUnit("actual"));
-  int depth = (int) (actor->getPrivateDataUnit("depth"));
-  int first_depth = (int) (actor->getPrivateDataUnit("first_depth"));
+  long depth = (long) (actor->getPrivateDataUnit("depth"));
+  long first_depth = (long) (actor->getPrivateDataUnit("first_depth"));
   int cur_tid = actor->getCustomTID();
   ostringstream cur_trace_log, input_modifier;
   input_modifier << "_" << actor->getCustomTID();
@@ -504,15 +510,15 @@ void* exec_STP_CG(void* data)
   STP_Input si;
   si.setFile(cur_trace_log.str().c_str());
   STP_Executor stp_exe(this_pointer->getConfig()->getDebug(), this_pointer->getConfig()->getValgrind());        
-  stp_start[cur_tid] = time(NULL);
-  instp[cur_tid] = true;
   nokill = true;
+  time_t start_time = time(NULL);
+  monitor->setState(STP, start_time, cur_tid);
   STP_Output *out = stp_exe.run(&si, cur_tid);
+  pthread_mutex_lock(&add_time_mutex);
+  monitor->addTime(time(NULL), cur_tid);
+  pthread_mutex_unlock(&add_time_mutex);
   nokill = false;
-  instp[cur_tid] = false;
-  stp_end[cur_tid] = time(NULL);
-  stp_time[cur_tid] += stp_end[cur_tid] - stp_start[cur_tid];
-  if (out == NULL)
+  if (out == NULL && !monitor->getKilledStatus())
   {
     ERR(logger, "STP has encountered an error");
     FileBuffer f(cur_trace_log.str().c_str());
@@ -570,22 +576,21 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   bool* actual = new bool[first_input->startdepth - 1 + config->getDepth()];
   read(actualfd, actual, (first_input->startdepth - 1 + config->getDepth()) * sizeof(bool));
   close(actualfd);
-  threads = new PoolThread[thread_num];
   pthread_mutex_t finish_mutex;
-  pthread_cond_t finish_cond;
   int active_threads = thread_num;
   int depth = 0;
   int thread_status[thread_num];
   pthread_mutex_init(&add_inputs_mutex, NULL);
   pthread_mutex_init(&add_exploits_mutex, NULL);
   pthread_mutex_init(&add_bb_mutex, NULL);
+  pthread_mutex_init(&add_time_mutex, NULL);
   pthread_mutex_init(&finish_mutex, NULL);
   pthread_cond_init(&finish_cond, NULL);
   FileBuffer trace((!trace_kind) ? "trace.log" : "dangertrace.log");
   trace_kind = _trace_kind;
   for (int j = 0; j < thread_num; j ++)
   {
-    threads[j].setCustomTID(j);
+    threads[j].setCustomTID(j + 1);
     threads[j].setPoolSync(&finish_mutex, &finish_cond, &(thread_status[j]), &active_threads);
     threads[j].addSharedDataUnit((void*) inputs, string("inputs"),  &add_inputs_mutex);
     threads[j].addSharedDataUnit((void*) first_input, string("first_input"));
@@ -622,7 +627,7 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
     external_data[i].work_func = exec_STP_CG;
     external_data[i].data = &(threads[thread_counter]);
     ostringstream cur_trace;
-    cur_trace << "curtrace_" << thread_counter << ".log";
+    cur_trace << "curtrace_" << thread_counter + 1 << ".log";
     trace.invertQueryAndDump(cur_trace.str().c_str());
     threads[thread_counter].createThread(&(external_data[i]));
     pthread_mutex_unlock(&finish_mutex);
@@ -644,10 +649,10 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   pthread_mutex_destroy(&add_inputs_mutex);
   pthread_mutex_destroy(&add_exploits_mutex);
   pthread_mutex_destroy(&add_bb_mutex);
+  pthread_mutex_destroy(&add_time_mutex);
   pthread_mutex_destroy(&finish_mutex);
   pthread_cond_destroy(&finish_cond);
   delete []external_data;
-  delete []threads;
   return depth;
 }
 
@@ -801,20 +806,23 @@ void ExecutionManager::run()
       }
       
       PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
-      tg_start = time(NULL);
-      intg = true;
+      /*tg_start = time(NULL);
+      intg = true;*/
       if (config->getTracegrindAlarm() == 0)
       {
         nokill = true;
       }
+      time_t start_time = time(NULL);
+      monitor->setState(TRACER, start_time);
       int exitCode = plugin_exe.run();
+      monitor->addTime(time(NULL));
       if (config->getTracegrindAlarm() == 0)
       {      
         nokill = false;
       }
-      intg = false;
+/*      intg = false;
       tg_end = time(NULL);
-      tg_time += tg_end - tg_start;
+      tg_time += tg_end - tg_start;*/
       if (config->usingSockets() || config->usingDatagrams())
       {
         updateInput(fi);
@@ -904,14 +912,12 @@ void ExecutionManager::run()
             si.setFile("curdtrace.log");
             //the rest stuff
             STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-            *stp_start = time(NULL);
-            *instp = true;
             nokill = true;
+            time_t start_time = time(NULL);
+            monitor->setState(STP, start_time);
             STP_Output *stp_output = stp_exe.run(&si);
+            monitor->addTime(time(NULL));
             nokill = false;
-            *instp = false;
-            *stp_end = time(NULL);
-            *stp_time += *(stp_end) - *(stp_start);
             if (stp_output == NULL)
             {
             ERR(logger, "STP has encountered an error");
@@ -958,14 +964,12 @@ void ExecutionManager::run()
           si.setFile("curtrace.log");
           //the rest stuff
           STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-          *stp_start = time(NULL);
-          *instp = true;
           nokill = true;
+          time_t start_time = time(NULL);
+          monitor->setState(STP, start_time);
           STP_Output *stp_output = stp_exe.run(&si);
+          monitor->addTime(time(NULL));
           nokill = false;
-          *instp = false;
-          *stp_end = time(NULL);
-          *stp_time += *(stp_end) - *(stp_start);
           if (stp_output == NULL)
           {
             ERR(logger, "STP has encountered an error");
