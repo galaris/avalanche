@@ -30,6 +30,7 @@
 #include "STP_Input.h"
 #include "STP_Output.h"
 #include "TmpFile.h"
+#include "Monitor.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -38,10 +39,9 @@
 #include <pthread.h>
 
 using namespace std;
-pid_t* stp_pid;
 
 extern int thread_num;
-
+extern Monitor* monitor;
 
 static Logger *logger = Logger::getLogger();
 
@@ -60,7 +60,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
 
 STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
 {
-    LOG(logger, "Running STP");
+    LOG(logger, "Thread #" << thread_index << ": Running STP");
     
     if (input == NULL) {
         DBG(logger, "No input");
@@ -75,7 +75,7 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
     redirect_stderr(file_err.getName());
 
     int ret = exec(true);
-    stp_pid[thread_index] = child_pid;
+    monitor->setPID(child_pid, thread_index);
  
     if (ret == -1) {
         ERR(logger, "Problem in execution: " << strerror(errno));
@@ -84,10 +84,13 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
 
     ret = wait();
     if (ret == -1) {
-        ERR(logger, "Problem in waiting: " << strerror(errno));
+        if (!monitor->getKilledStatus())
+        {
+          ERR(logger, "Problem in waiting: " << strerror(errno));
+        }
         return NULL;
     }
-    DBG(logger, "Thread #" << thread_index << ": STP is finished.");
+    LOG(logger, "Thread #" << thread_index << ": STP is finished.");
 
     if (ret != 0) {
         LOG(logger, "STP exits with code " << ret);
