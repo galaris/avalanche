@@ -50,6 +50,7 @@ class Monitor
             virtual std::string getStats(time_t global_time = 0) = 0;
             virtual state getCurrentState(unsigned int thread_index = 0) = 0;
             virtual void handleSIGKILL() = 0;
+            virtual void handleSIGALARM() = 0;
             bool getKilledStatus() { return is_killed; }
             void setKilledStatus(bool _is_killed) { is_killed = _is_killed; }
 };
@@ -80,6 +81,7 @@ class SimpleMonitor : public Monitor
             
             state getCurrentState(unsigned int thread_index = 0) { return current_state; }
             void handleSIGKILL();
+            void handleSIGALARM();
 };
 
 class ParallelMonitor : public Monitor
@@ -90,6 +92,7 @@ class ParallelMonitor : public Monitor
 
             state* current_state;
             pid_t* current_pid;
+            bool* alarm_killed;
 
             time_t* checker_start_time;
             time_t* stp_start_time;
@@ -98,9 +101,19 @@ class ParallelMonitor : public Monitor
             std::set <interval> checker_time;
             std::set <interval> stp_time;
             time_t tracer_time;
+            time_t checker_alarm;
+            time_t tracer_alarm;
   public:
             ParallelMonitor(std::string checker_name, unsigned int _thread_num, time_t _time_shift); 
             ~ParallelMonitor();
+
+            void setAlarm(time_t _checker_alarm, time_t _tracer_alarm)
+            {
+              checker_alarm = _checker_alarm;
+              tracer_alarm = _tracer_alarm;
+            }
+
+            bool getAlarmKilled(unsigned int thread_index = 0) { return alarm_killed[thread_index - 1]; }
 
             void setState(state _state, time_t _start_time, unsigned int thread_index = 0);
 
@@ -114,6 +127,8 @@ class ParallelMonitor : public Monitor
             std::string getStats(time_t global_time = 0);
              
             state getCurrentState(unsigned int thread_index = 0) { return current_state[thread_index]; }
+            
+            void handleSIGALARM();
 
             void handleSIGKILL();
 };

@@ -78,7 +78,10 @@ pthread_mutex_t add_inputs_mutex;
 pthread_mutex_t add_exploits_mutex;
 pthread_mutex_t add_bb_mutex;
 pthread_mutex_t add_time_mutex;
+pthread_mutex_t finish_mutex;
 pthread_cond_t finish_cond;
+
+int in_thread_creation = -1;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -318,7 +321,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
 
   vector <string> new_prog_and_args = config->getProgAndArg();
   
-  if (strcmp(fileNameModifier, ""))
+  if (strcmp(fileNameModifier, "") && !(config->usingSockets()) && !(config->usingDatagrams()))
   {
     for (int i = 0; i < new_prog_and_args.size(); i ++)
     {
@@ -350,9 +353,17 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   bool infoAvailable = false;
   bool sameExploit = false;
   int exploitGroup = 0;
-  
   if (enable_mutexes) pthread_mutex_lock(&add_exploits_mutex);
-  if ((exitCode == -1) && !killed)
+  bool has_crashed = (exitCode == -1);
+  if (!thread_num)
+  {
+    has_crashed = has_crashed && !killed;
+  }
+  else
+  {
+    has_crashed = has_crashed && !(((ParallelMonitor*) monitor)->getAlarmKilled(thread_index));
+  }
+  if (has_crashed)
   {
     FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
     bool deleteBuffer = true;
@@ -424,30 +435,36 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
     int res = 0;
     string bb_name = string("basic_blocks") + string(fileNameModifier) + string(".log");
     int fd = open(bb_name.c_str(), O_RDWR);
-    struct stat fileInfo;
-    fstat(fd, &fileInfo);
-    int size = fileInfo.st_size / sizeof(long);
-    unsigned long* basicBlockAddrs = new unsigned long[size];
-    read(fd, basicBlockAddrs, fileInfo.st_size);
-    close(fd);
-    if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
-    for (int i = 0; i < size; i++)
+    if (fd != -1)
     {
-      if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+      struct stat fileInfo;
+      fstat(fd, &fileInfo);
+      int size = fileInfo.st_size / sizeof(long);
+      if (size > 0)
       {
-        res++;
-      }
-      if(thread_num < 1)
-      {
-        basicBlocksCovered.insert(basicBlockAddrs[i]);
-      }
-      else
-      {
-        delta_bb_covered.insert(basicBlockAddrs[i]);
+        unsigned long* basicBlockAddrs = new unsigned long[size];
+        read(fd, basicBlockAddrs, fileInfo.st_size);
+        close(fd);
+        if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
+        for (int i = 0; i < size; i++)
+        {
+          if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+          {
+            res++;
+          }
+          if(thread_num < 1)
+          {
+            basicBlocksCovered.insert(basicBlockAddrs[i]);
+          }
+          else
+          {
+            delta_bb_covered.insert(basicBlockAddrs[i]);
+          }
+        }
+        if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);
+        delete[] basicBlockAddrs;
       }
     }
-    if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);
-    delete[] basicBlockAddrs;
     return res;
   }
   else
@@ -485,7 +502,7 @@ void alarmHandler(int signo)
   LOG(logger, "time is out");
   if (!nokill)
   {
-    //add here!!!!!!!!!!!!
+    monitor->handleSIGALARM();
     killed = true;
     DBG(logger, "Time out. Valgrind is going to be killed");
   }
@@ -518,11 +535,14 @@ void* exec_STP_CG(void* data)
   monitor->addTime(time(NULL), cur_tid);
   pthread_mutex_unlock(&add_time_mutex);
   nokill = false;
-  if (out == NULL && !monitor->getKilledStatus())
+  if (out == NULL)
   {
-    ERR(logger, "STP has encountered an error");
-    FileBuffer f(cur_trace_log.str().c_str());
-    ERR(logger, cur_trace_log.str().c_str() << ":\n" << string(f.buf));
+    if (!monitor->getKilledStatus())
+    {
+      ERR(logger, "STP has encountered an error");
+      FileBuffer f(cur_trace_log.str().c_str());
+      ERR(logger, cur_trace_log.str().c_str() << ":\n" << string(f.buf));
+    }
   }
   else if (out->getFile() != NULL)
   {
@@ -576,7 +596,6 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   bool* actual = new bool[first_input->startdepth - 1 + config->getDepth()];
   read(actualfd, actual, (first_input->startdepth - 1 + config->getDepth()) * sizeof(bool));
   close(actualfd);
-  pthread_mutex_t finish_mutex;
   int active_threads = thread_num;
   int depth = 0;
   int thread_status[thread_num];
@@ -629,7 +648,9 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
     ostringstream cur_trace;
     cur_trace << "curtrace_" << thread_counter + 1 << ".log";
     trace.invertQueryAndDump(cur_trace.str().c_str());
+    in_thread_creation = thread_counter;
     threads[thread_counter].createThread(&(external_data[i]));
+    in_thread_creation = -1;
     pthread_mutex_unlock(&finish_mutex);
   }
   bool do_wait = false;
@@ -806,8 +827,6 @@ void ExecutionManager::run()
       }
       
       PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
-      /*tg_start = time(NULL);
-      intg = true;*/
       if (config->getTracegrindAlarm() == 0)
       {
         nokill = true;
@@ -820,9 +839,6 @@ void ExecutionManager::run()
       {      
         nokill = false;
       }
-/*      intg = false;
-      tg_end = time(NULL);
-      tg_time += tg_end - tg_start;*/
       if (config->usingSockets() || config->usingDatagrams())
       {
         updateInput(fi);
