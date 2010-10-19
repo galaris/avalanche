@@ -51,7 +51,7 @@ struct shared_data_unit
 
 class Thread
 {
-  private:
+  protected:
            std::map <std::string, void*> private_data;
            std::map <std::string, void*> readonly_data;
            std::map <std::string, shared_data_unit> shared_data;

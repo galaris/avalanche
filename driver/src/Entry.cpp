@@ -65,10 +65,11 @@ extern PoolThread *threads;
 extern Input* initial;
 extern vector<Chunk*> report;
 
-extern pthread_cond_t finish_cond;
+extern int in_thread_creation;
 
 extern set <int> modified_input;
 
+extern pthread_mutex_t finish_mutex;
 int thread_num;
 
 static void printHelpBanner()
@@ -112,7 +113,6 @@ OptionConfig* opt_config;
 
 void clean_up()
 {
-  delete monitor;
   if (thread_num > 0)
   {
     for (int i = 1; i < thread_num + 1; i ++)
@@ -123,6 +123,7 @@ void clean_up()
       remove(string("execution").append(file_modifier.str()).append(".log").c_str());
       remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
       remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
+      remove(string("replace_data").append(file_modifier.str()).c_str());
       for (set <int>::iterator j = modified_input.begin(); j != modified_input.end(); j ++)
       {
         string f_name = string((opt_config->getProgAndArg())[*j]);
@@ -131,20 +132,26 @@ void clean_up()
     }
     delete []threads;
   }
+  delete opt_config;
+  delete monitor;
 }
 
 void sig_hndlr(int signo)
 {
-  initial->dumpFiles();
+  if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+  {
+    initial->dumpFiles();
+  }
+  pthread_mutex_unlock(&finish_mutex);
   monitor->setKilledStatus(true);
+  monitor->handleSIGKILL();
   for (int i = 0; i < thread_num; i ++)
   {
-    if (!threads[i].getStatus())
+    if (!threads[i].getStatus() && in_thread_creation != i)
     {
       threads[i].waitForThread();
     }
   }
-  monitor->handleSIGKILL();
   end = time(NULL);
   char s[256];
   sprintf(s, "total: %ld, ", end - start);
@@ -180,6 +187,7 @@ int main(int argc, char *argv[])
     if (thread_num > 0)
     {
       monitor = new ParallelMonitor(checker_name, thread_num, start);
+      ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
       threads = new PoolThread[thread_num];
     }
     else
@@ -196,7 +204,6 @@ int main(int argc, char *argv[])
 
     ExecutionManager manager(opt_config);
     em = &manager;
-    //delete(opt_config);
     manager.run();
     end = time(NULL);
     char s[256];
