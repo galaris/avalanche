@@ -603,7 +603,6 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   pthread_mutex_init(&add_exploits_mutex, NULL);
   pthread_mutex_init(&add_bb_mutex, NULL);
   pthread_mutex_init(&add_time_mutex, NULL);
-  pthread_mutex_init(&finish_mutex, NULL);
   pthread_cond_init(&finish_cond, NULL);
   FileBuffer trace((!trace_kind) ? "trace.log" : "dangertrace.log");
   trace_kind = _trace_kind;
@@ -671,7 +670,6 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   pthread_mutex_destroy(&add_exploits_mutex);
   pthread_mutex_destroy(&add_bb_mutex);
   pthread_mutex_destroy(&add_time_mutex);
-  pthread_mutex_destroy(&finish_mutex);
   pthread_cond_destroy(&finish_cond);
   delete []external_data;
   return depth;

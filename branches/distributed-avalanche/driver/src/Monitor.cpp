@@ -121,6 +121,10 @@ void ParallelMonitor::setState(state _state, time_t _start_time, unsigned int th
   }
   else if (_state == CHECKER)
   {
+    if (!thread_index)
+    {
+      thread_index = 1;
+    }
     checker_start_time[thread_index - 1] = _start_time;
     alarm_killed[thread_index - 1] = false;
   }
@@ -143,7 +147,12 @@ void ParallelMonitor::addTime(time_t end_time, unsigned int thread_index)
   }
   else if (current_state[thread_index] != OUT)
   {
-    time_t st_time = (current_state[thread_index] == CHECKER) ? checker_start_time[thread_index - 1] : stp_start_time[thread_index - 1];
+    time_t st_time = (current_state[thread_index] == CHECKER) ? checker_start_time[((thread_index == 0) ? 1 : thread_index) - 1] 
+                                                              : stp_start_time[thread_index - 1];
+    if (!thread_index)
+    {
+      thread_index = 1;
+    }
     if (end_time > st_time && st_time != 0)
     {
       interval new_interval;
