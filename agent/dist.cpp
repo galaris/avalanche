@@ -92,7 +92,10 @@ int main(int argc, char** argv)
         if (res == 0)
         {
           printf("job is done\n");
-          shutdown(sfd, SHUT_RDWR);
+          if (shutdown(sfd, SHUT_RDWR) == -1)
+          {
+            perror("shutdown failed");
+          }
           close(sfd);
           exit(0);
         }
