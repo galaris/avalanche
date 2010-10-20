@@ -1,0 +1,26 @@
+*This page describes features under development (a custom [http://code.google.com/p/avalanche/source/browse/#svn/branches/distributed-avalanche branch] is used for that)*
+
+To run Avalanche with multiple STP threads, use --stp-threads=number option
+
+To run distributed analysis, first start the dist server:
+
+{{{
+user@machine1:$ ./inst/bin/av-dist <port number> 
+}}}
+
+Then start a number of agents on different machines:
+
+{{{
+user@machine2:$ ./inst/bin/av-agent <machine1 IP address> <port number>
+}}}
+
+Finally, start Avalanche, adding --distributed, --dist-host and --dist-port options:
+
+{{{
+user@machinei:$ inst/bin/avalanche --stp-threads=4 --dist-host=<machine1 IP address> --dist-port=<port number> --distributed --mask=mask_pbc_dump --debug --verbose --filename=PGE.pbc parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
+}}}
+
+Some exploits found in pbc_dump by distributed Avalanche (not found in a usual, non-distributed mode without STP threads):
+
+[http://avalanche.googlecode.com/files/branch0_exploit_324_0 one_exploit]<br>
+[http://avalanche.googlecode.com/files/branch0_exploit_859_0 another_exploit]
