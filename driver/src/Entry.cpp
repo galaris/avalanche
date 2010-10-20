@@ -61,6 +61,8 @@ time_t end;
 
 ExecutionManager* em;
 
+pthread_t main_tid;
+
 extern PoolThread *threads;
 extern Input* initial;
 extern vector<Chunk*> report;
@@ -131,40 +133,46 @@ void clean_up()
       }
     }
     delete []threads;
+    pthread_mutex_destroy(&finish_mutex);
   }
-  delete opt_config;
   delete monitor;
 }
 
 void sig_hndlr(int signo)
 {
-  if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+  if (pthread_self() != main_tid)
   {
-    initial->dumpFiles();
+    pthread_kill(main_tid, SIGINT);
   }
-  pthread_mutex_unlock(&finish_mutex);
-  monitor->setKilledStatus(true);
-  monitor->handleSIGKILL();
-  for (int i = 0; i < thread_num; i ++)
+  else
   {
-    if (!threads[i].getStatus() && in_thread_creation != i)
+    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
     {
-      threads[i].waitForThread();
+      initial->dumpFiles();
     }
+    pthread_mutex_unlock(&finish_mutex);
+    monitor->setKilledStatus(true);
+    monitor->handleSIGKILL();
+    for (int i = 0; i < thread_num; i ++)
+    {
+      if (!threads[i].getStatus() && in_thread_creation != i)
+      {
+        threads[i].waitForThread();
+      }
+    }
+    end = time(NULL);
+    char s[256];
+    sprintf(s, "total: %ld, ", end - start);
+    LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
+    REPORT(logger, "\nExploits report:");
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i);
+    }
+    REPORT(logger, "");
+    clean_up();
+    exit(0);
   }
-  end = time(NULL);
-  char s[256];
-  sprintf(s, "total: %ld, ", end - start);
-  LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
-  REPORT(logger, "\nExploits report:");
-  for (int i = 0; i < report.size(); i++)
-  {
-    report.at(i)->print(opt_config->getPrefix(), i);
-  }
-  REPORT(logger, "");
-  clean_up();
-  exit(0);
-  
 }
 
 int main(int argc, char *argv[])
@@ -172,7 +180,7 @@ int main(int argc, char *argv[])
     start = time(NULL); 
     signal(SIGINT, sig_hndlr);
     LOG(logger, "start time: " << std::string(ctime(&start)));    
-    OptionParser  opt_parser(argc, argv);
+    OptionParser opt_parser(argc, argv);
     opt_config = opt_parser.run();
 
     if (opt_config == NULL || opt_config->empty()) {
@@ -189,6 +197,8 @@ int main(int argc, char *argv[])
       monitor = new ParallelMonitor(checker_name, thread_num, start);
       ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
       threads = new PoolThread[thread_num];
+      main_tid = pthread_self();
+      pthread_mutex_init(&finish_mutex, NULL);
     }
     else
     {

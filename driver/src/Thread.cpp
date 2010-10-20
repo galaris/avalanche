@@ -83,7 +83,6 @@ void PoolThread::doWork(void* data)
   pthread_mutex_lock(work_finish_mutex);
   (*thread_status) = 1;
   (*active_threads) ++;
-  //LOG(logger, "Thread #" << user_tid << ": signalling end of work!");
   pthread_cond_signal(work_finish_cond);
   pthread_mutex_unlock(work_finish_mutex);
   pthread_exit(NULL);
