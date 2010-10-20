@@ -1,4 +1,4 @@
-*This page describes features under development (a custom [http://code.google.com/p/avalanche/source/browse/#svn/branches/distributed-avalanche branch] is used for that)*
+*This page describes features under development (a custom [http://code.google.com/p/avalanche/source/browse/#svn/branches/distributed-avalanche branch] is used for that). They are very far from being stable*
 
 To run Avalanche with multiple STP threads, use --stp-threads=number option
 
