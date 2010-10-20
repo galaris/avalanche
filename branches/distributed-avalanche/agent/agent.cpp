@@ -118,7 +118,7 @@ int main(int argc, char** argv)
   string argstr(argv[0]);
   size_t sl = argstr.find_last_of('/');
   if (sl != string::npos) {
-      avalanche_argv[0] = (char*) (argstr.substr(0, sl + 1) + string("avalanche")).c_str();
+      avalanche_argv[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("avalanche")).c_str());
   }
   else {
       avalanche_argv[0] = "avalanche";
