@@ -64,6 +64,7 @@ int main(int argc, char** argv)
   res = read(fd, &namelength, sizeof(int));
   if (res == 0)
   {
+    close(fd);
     exit(0);
   }
   //printf("namelength=%d\n", namelength);
@@ -321,7 +322,8 @@ int main(int argc, char** argv)
     avalanche_argv[5] = prefix;
     printf("argv[5]=%s\n", avalanche_argv[5]);    
   }
-
+  close(fd);
+ 
   return 0;
 }
 

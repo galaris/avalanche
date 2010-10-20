@@ -61,8 +61,6 @@ time_t end;
 
 ExecutionManager* em;
 
-pthread_t main_tid;
-
 extern PoolThread *threads;
 extern Input* initial;
 extern vector<Chunk*> report;
@@ -140,39 +138,32 @@ void clean_up()
 
 void sig_hndlr(int signo)
 {
-  if (pthread_self() != main_tid)
+  if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
   {
-    pthread_kill(main_tid, SIGINT);
+    initial->dumpFiles();
   }
-  else
+  pthread_mutex_unlock(&finish_mutex);
+  monitor->setKilledStatus(true);
+  monitor->handleSIGKILL();
+  for (int i = 0; i < thread_num; i ++)
   {
-    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+    if (!threads[i].getStatus() && in_thread_creation != i)
     {
-      initial->dumpFiles();
+      threads[i].waitForThread();
     }
-    pthread_mutex_unlock(&finish_mutex);
-    monitor->setKilledStatus(true);
-    monitor->handleSIGKILL();
-    for (int i = 0; i < thread_num; i ++)
-    {
-      if (!threads[i].getStatus() && in_thread_creation != i)
-      {
-        threads[i].waitForThread();
-      }
-    }
-    end = time(NULL);
-    char s[256];
-    sprintf(s, "total: %ld, ", end - start);
-    LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
-    REPORT(logger, "\nExploits report:");
-    for (int i = 0; i < report.size(); i++)
-    {
-      report.at(i)->print(opt_config->getPrefix(), i);
-    }
-    REPORT(logger, "");
-    clean_up();
-    exit(0);
   }
+  end = time(NULL);
+  char s[256];
+  sprintf(s, "total: %ld, ", end - start);
+  LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
+  REPORT(logger, "\nExploits report:");
+  for (int i = 0; i < report.size(); i++)
+  {
+    report.at(i)->print(opt_config->getPrefix(), i);
+  }
+  REPORT(logger, "");
+  clean_up();
+  exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -197,7 +188,6 @@ int main(int argc, char *argv[])
       monitor = new ParallelMonitor(checker_name, thread_num, start);
       ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
       threads = new PoolThread[thread_num];
-      main_tid = pthread_self();
       pthread_mutex_init(&finish_mutex, NULL);
     }
     else
