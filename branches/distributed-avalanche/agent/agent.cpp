@@ -16,6 +16,39 @@
 #include <string>
 
 using namespace std;
+
+int fd;
+pid_t pid;
+char* filename;
+
+void sig_hndlr(int signo)
+{
+  write(fd, "g", 1);
+  int length, startdepth;
+  int res = read(fd, &length, sizeof(int));
+  if (res == 0)
+  {
+    exit(0);
+  }
+  char* file = new char[length];
+  int received = 0;
+  while (received < length)
+  {
+    received += read(fd, file + received, length - received);
+  }
+  read(fd, &startdepth, sizeof(int));
+
+  int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  write(descr, file, length);
+  close(descr);
+  delete[] file;
+
+  descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  write(descr, &startdepth, sizeof(int));
+  close(descr);
+
+  kill(pid, SIGUSR2);
+}
  
 int main(int argc, char** argv)
 {
@@ -39,7 +72,7 @@ int main(int argc, char** argv)
     exit(EXIT_FAILURE);
   }
 
-  int fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 
   if (fd == -1)
   {
@@ -68,7 +101,7 @@ int main(int argc, char** argv)
     exit(0);
   }
   //printf("namelength=%d\n", namelength);
-  char* filename = new char[namelength + 1];
+  filename = new char[namelength + 1];
   int received = 0;
   while (received < namelength)
   {
@@ -147,14 +180,17 @@ int main(int argc, char** argv)
   avalanche_argv[5] = "--prefix=branch0_";
   printf("argv[5]=%s\n", avalanche_argv[5]);
 
+  avalanche_argv[6] = "--agent";
+  printf("argv[6]=%s\n", avalanche_argv[6]);
+
   char thrds[128];
   sprintf(thrds, "--stp-threads=%d", threads);
-  avalanche_argv[6] = thrds;
-  printf("argv[6]=%s\n", avalanche_argv[6]);
+  avalanche_argv[7] = thrds;
+  printf("argv[7]=%s\n", avalanche_argv[7]);
 
   int runs = 0;
 
-  int av_argc = 7;
+  int av_argc = 8;
   if (tracegrindAlarm != 0)
   {
     char alrm[128];
@@ -222,7 +258,7 @@ int main(int argc, char** argv)
     int port;
     read(fd, &port, sizeof(int));
     char prt[128];
-    sprintf(prt, "--port=%d", prt);
+    sprintf(prt, "--port=%d", port);
     avalanche_argv[av_argc++] = host;
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);    
   }
@@ -285,7 +321,9 @@ int main(int argc, char** argv)
 
   for (;;)
   {
-    if (fork() == 0)
+    signal(SIGUSR1, sig_hndlr);
+    pid = fork();
+    if (pid == 0)
     {
       printf("starting child avalanche...\n");
       execvp(avalanche_argv[0], avalanche_argv);

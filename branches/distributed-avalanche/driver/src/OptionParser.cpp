@@ -117,6 +117,9 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i] == "--distributed") {
             config->setDistributed();
         }
+        else if (arg_vec[i] == "--agent") {
+            config->setAgent();
+        }
         else if (arg_vec[i] == "--check-danger") {
             config->setCheckDanger();
         }
