@@ -675,6 +675,11 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   return depth;
 }
 
+void dummy_handler(int signo)
+{
+
+}
+
 void ExecutionManager::run()
 {
     DBG(logger, "Running execution manager");
@@ -718,7 +723,6 @@ void ExecutionManager::run()
       unsigned int scr = it->first.score;
       unsigned int dpth = it->first.depth;
       LOG(logger, "selected next input with score " << scr);
-      inputs.erase(it);
 
       if (config->usingSockets() || config->usingDatagrams())
       {
@@ -728,8 +732,25 @@ void ExecutionManager::run()
       {
         fi->dumpFiles();
       }
+
       ostringstream tg_depth;
-      tg_depth << "--startdepth=" << fi->startdepth;
+      if ((scr == 0) && config->getAgent())
+      {
+        LOG(logger, "All inputs have zero score: requesting new input");
+        signal(SIGUSR2, dummy_handler);
+        kill(getppid(), SIGUSR1);
+        pause();
+        int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+        int startdepth;
+        read(descr, &startdepth, sizeof(int));
+        close(descr);
+        tg_depth << "--startdepth=" << startdepth;
+      }
+      else
+      {
+        inputs.erase(it);
+        tg_depth << "--startdepth=" << fi->startdepth;
+      }
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
    
@@ -1074,10 +1095,10 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       write(distfd, &(fb->size), sizeof(int));
       write(distfd, fb->buf, fb->size);
       printf("fb->size=%d\n", fb->size);
-      for (int j = 0; j < fb->size; j++)
+      /*for (int j = 0; j < fb->size; j++)
       {
         printf("%x", fb->buf[j]);
-      }
+      }*/
       printf("\n");
       write(distfd, &fi->startdepth, sizeof(int));
       int depth = config->getDepth();

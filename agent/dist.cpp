@@ -116,10 +116,10 @@ int main(int argc, char** argv)
           {
             received += read(mainfd, file + received, length - received);
           }
-          for (int j = 0; j < length; j++)
+          /*for (int j = 0; j < length; j++)
           {
             printf("%x", file[j]);
-          }
+          }*/
           write(*fd, file, length);
           read(mainfd, &startdepth, sizeof(int));
           write(*fd, &startdepth, sizeof(int));

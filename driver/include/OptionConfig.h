@@ -42,6 +42,7 @@ public:
 		    traceChildren(false),
                     datagrams(false),
                     distributed(false), 
+                    agent(false), 
                     useMemcheck(false),
                     suppressSubcalls(false),
                     dumpCalls(false),
@@ -64,6 +65,7 @@ public:
         traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
         distributed     = opt_config->distributed;
+        agent           = opt_config->agent;
         checkDanger     = opt_config->checkDanger;
         verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
@@ -146,6 +148,12 @@ public:
     
     bool getDistributed() const
     { return distributed; }
+
+    void setAgent()
+    { agent = true; }
+    
+    bool getAgent() const
+    { return agent; }
 
     void setSTPThreads(int num)
     { STPThreads = num; }
@@ -276,6 +284,7 @@ private:
     bool                     dumpCalls;
     bool 		     traceChildren;
     bool                     distributed;
+    bool                     agent;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
