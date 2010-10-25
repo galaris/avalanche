@@ -28,13 +28,28 @@ void sig_hndlr(int signo)
   int res = read(fd, &length, sizeof(int));
   if (res == 0)
   {
-    exit(0);
+    int startdepth = 0;
+    int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    write(descr, &startdepth, sizeof(int));
+    close(descr);   
+    kill(pid, SIGUSR2); 
+    return;
   }
   char* file = new char[length];
   int received = 0;
   while (received < length)
   {
-    received += read(fd, file + received, length - received);
+    int r = read(fd, file + received, length - received);
+    if (r == 0)
+    {
+      int startdepth = 0;
+      int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      write(descr, &startdepth, sizeof(int));
+      close(descr);
+      kill(pid, SIGUSR2);
+      return;
+    }
+    received += r;
   }
   read(fd, &startdepth, sizeof(int));
 

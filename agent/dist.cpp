@@ -244,6 +244,9 @@ int main(int argc, char** argv)
           {
             received += read(mainfd, file + received, length - received);
           }
+          write(*fd, file, length);
+          read(mainfd, &startdepth, sizeof(int));
+          write(*fd, &startdepth, sizeof(int));
           set<int>::iterator to_erase = fd;
           fd++;
           starvating_g.erase(to_erase);
