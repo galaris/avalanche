@@ -734,6 +734,8 @@ void ExecutionManager::run()
       }
 
       ostringstream tg_depth;
+      vector<string> plugin_opts;
+      bool newInput = false;
       if ((scr == 0) && config->getAgent())
       {
         LOG(logger, "All inputs have zero score: requesting new input");
@@ -744,17 +746,34 @@ void ExecutionManager::run()
         int startdepth;
         read(descr, &startdepth, sizeof(int));
         close(descr);
-        tg_depth << "--startdepth=" << startdepth;
+        if (startdepth > 0)
+        {
+          tg_depth << "--startdepth=" << startdepth;
+          newInput = true;
+        }
+        else
+        {
+          config->setNotAgent();
+          inputs.erase(it);
+          if (runs > 0)
+          {
+            plugin_opts.push_back("--check-prediction=yes");
+          }
+          tg_depth << "--startdepth=" << fi->startdepth;
+        }
       }
       else
       {
         inputs.erase(it);
+        if (runs > 0)
+        {
+          plugin_opts.push_back("--check-prediction=yes");
+        }
         tg_depth << "--startdepth=" << fi->startdepth;
       }
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
    
-      vector<string> plugin_opts;
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
 
@@ -839,11 +858,6 @@ void ExecutionManager::run()
           plugin_opts.push_back(tg_inputfile.str());
         }
       }
-
-      if (runs > 0)
-      {
-        plugin_opts.push_back("--check-prediction=yes");
-      }
       
       PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
       if (config->getTracegrindAlarm() == 0)
@@ -869,7 +883,7 @@ void ExecutionManager::run()
       }
 
       int divfd = open("divergence.log", O_RDWR);
-      if ((divfd != -1) && config->getDebug() && (runs > 0))
+      if ((divfd != -1) && config->getDebug() && (runs > 0) && !newInput)
       {
         bool divergence;
         read(divfd, &divergence, sizeof(bool));
@@ -1080,7 +1094,7 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
   while (FD_ISSET(distfd, &readfds)) 
   {
     printf("here 861\n");
-    char c;
+    char c = '\0';
     read(distfd, &c, 1);
     if ((c == 'a') && (inputs.size() > 1))
     {

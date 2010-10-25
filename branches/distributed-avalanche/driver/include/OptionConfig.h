@@ -151,6 +151,9 @@ public:
 
     void setAgent()
     { agent = true; }
+
+    void setNotAgent()
+    { agent = false; }
     
     bool getAgent() const
     { return agent; }
