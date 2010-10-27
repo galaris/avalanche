@@ -699,8 +699,12 @@ void ExecutionManager::run()
         initial->files.push_back(new FileBuffer((char*) config->getFile(i).c_str()));
       }
     }
-    else
+    else 
     {
+      if (config->getAgent())
+      {
+        updateInput(initial);
+      }
       signal(SIGALRM, alarmHandler);
     }
     initial->startdepth = config->getStartdepth();
@@ -1109,7 +1113,6 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
   select(distfd + 1, &readfds, NULL, NULL, &timer);
   while (FD_ISSET(distfd, &readfds)) 
   {
-//    printf("here 861\n");
     char c = '\0';
     if (read(distfd, &c, 1) < 1)
     {
@@ -1129,12 +1132,19 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       Input* fi = it->second;
       int filenum = fi->files.size();
       WRITE(&filenum, sizeof(int));
+      bool sockets = config->usingSockets();
+      WRITE(&sockets, sizeof(bool));
+      bool datagrams = config->usingDatagrams();
+      WRITE(&datagrams, sizeof(bool));
       for (int j = 0; j < fi->files.size(); j ++)
       {
         FileBuffer* fb = fi->files.at(j);
-        int namelength = config->getFile(j).length();
-        WRITE(&namelength, sizeof(int));
-        WRITE(config->getFile(j).c_str(), namelength);
+        if (!config->usingDatagrams() && ! config->usingSockets())
+        {
+          int namelength = config->getFile(j).length();
+          WRITE(&namelength, sizeof(int));
+          WRITE(config->getFile(j).c_str(), namelength);
+        }
         WRITE(&(fb->size), sizeof(int));
         WRITE(fb->buf, fb->size);
         /*printf("fb->size=%d\n", fb->size);
@@ -1170,10 +1180,6 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       WRITE(&debug, sizeof(bool));
       bool verbose = config->getVerbose();
       WRITE(&verbose, sizeof(bool));
-      bool sockets = config->usingSockets();
-      WRITE(&sockets, sizeof(bool));
-      bool datagrams = config->usingDatagrams();
-      WRITE(&datagrams, sizeof(bool));
       bool suppressSubcalls = config->getSuppressSubcalls();
       WRITE(&suppressSubcalls, sizeof(bool));
 

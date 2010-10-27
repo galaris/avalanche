@@ -135,23 +135,34 @@ int main(int argc, char** argv)
   if (write(fd, "a", 1) < 1) conn_error("connection with server is down");
   int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
   bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
-  int received;
-  char buf[2];
+  int received, net_fd;
+  
   READ(file_num, int, "d", true);
+  READ(sockets, bool, "d", false);
+  READ(datagrams, bool, "d", false);
+  if (sockets || datagrams)
+  {
+    net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    write(net_fd, &file_num, sizeof(int));
+  }
   for (int j = 0; j < file_num; j ++)
   {
-    READ(namelength, int, "d", true);
-    char *filename = new char[namelength + 1];
-    received = 0;
-    while (received < namelength)
+    char *filename;
+    if (!sockets && !datagrams)
     {
-      res = read(fd, filename + received, namelength - received);
-      if (res < 0) conn_error("connection with server is down");
-      received += res;
+      READ(namelength, int, "d", true);
+      filename = new char[namelength + 1];
+      received = 0;
+      while (received < namelength)
+      {
+        res = read(fd, filename + received, namelength - received);
+        if (res < 1) conn_error("connection with server is down");
+        received += res;
+      }
+      filename[namelength] = '\0';
+      file_name.push_back(strdup(filename));
+      printf("filename=%s\n", filename);
     }
-    filename[namelength] = '\0';
-    file_name.push_back(filename);
-    printf("filename=%s\n", filename);
     READ(length, int, "d", true);
     char* file = new char[length];
     received = 0;
@@ -162,15 +173,25 @@ int main(int argc, char** argv)
       received += res;
     }
     printf("\n");
-    int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-    if (descr == -1)
+    if (sockets || datagrams)
     {
-      perror("open failed");
-      close(fd);
-      exit(EXIT_FAILURE);
+      write(net_fd, &length, sizeof(int));
+      write(net_fd, file, length);
+      close(net_fd);
     }
-    write(descr, file, length);
-    close(descr);
+    else
+    {
+      int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      if (descr == -1)
+      {
+        perror("open failed");
+        close(fd);
+        exit(EXIT_FAILURE);
+      }
+      write(descr, file, length);
+      delete []filename;
+      close(descr);
+    }
     delete[] file;
   }
   READ(startdepth, int, "d", true);
@@ -185,8 +206,6 @@ int main(int argc, char** argv)
   READ(checkDanger, bool, "d", false);
   READ(debug, bool, "d", false);
   READ(verbose, bool, "d", false);
-  READ(sockets, bool, "d", false);
-  READ(datagrams, bool, "d", false);
   READ(suppressSubcalls, bool, "d", false);
  
   char* avalanche_argv[100];
@@ -203,7 +222,7 @@ int main(int argc, char** argv)
   {
     char s[128];
     sprintf(s, "--filename=%s", file_name.at(i));
-    avalanche_argv[1 + i] = s;
+    avalanche_argv[1 + i] = strdup(s);
   }
 
   char depth[128];
@@ -374,7 +393,9 @@ int main(int argc, char** argv)
 
   for (;;)
   {
-    if (fork() == 0)
+    signal(SIGUSR1, sig_hndlr);
+    pid = fork();
+    if (pid == 0)
     {
       printf("starting child avalanche...\n");
       execvp(avalanche_argv[0], avalanche_argv);
@@ -398,20 +419,19 @@ int main(int argc, char** argv)
         free(avalanche_argv[0]);
         return 0;
       }
+      printf("%d\n", length);
       char* file = new char[length];
       received = 0;
       while (received < length)
       {
         res = read(fd, file + received, length - received);
-        if (res < 0)
+        if (res < 1)
         {
           free(avalanche_argv[0]);
           conn_error("connection with server is down");
         }
         received += res;
       }
-      READ(startdepth, int, "d", true);
-      
       int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
       if (descr == -1)
       {
@@ -428,7 +448,7 @@ int main(int argc, char** argv)
       close(descr);
       delete[] file;
     }
-
+    READ(startdepth, int, "d", true);
     char sdepth[128];
     sprintf(sdepth, "--startdepth=%d", startdepth);
     avalanche_argv[2 + file_num] = sdepth;
