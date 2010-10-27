@@ -8,16 +8,58 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
+#include <algorithm>
 #include <vector>
 #include <set>
 
 using namespace std;
+
+vector<int> fds;
+int sfd;
+int mainfd = -1;
+
+#define READ_MAIN(var, size) \
+  if (read(mainfd, var, size) == -1) { \
+    printf("connection with main avalanche is down\n"); \
+    send_exit(); }
+
+#define WRITE(fd, var, size) \
+  if (write(fd, var, size) == -1) { \
+    printf("connection with %d is down\n", fd); \
+    fds.erase(find(fds.begin(), fds.end(), fd)); }
+
+
+void send_exit()
+{
+  for (int i = 0; i < fds.size() && fds.at(i) != mainfd; i ++)
+  {
+    printf("sending exit to %d\n", fds.at(i));
+    write(fds.at(i), "e", 1);
+    close(fds.at(i));
+  }
+  close(mainfd);
+  exit(0);
+}
+
+void sig_handler(int signo)
+{
+  shutdown(sfd, SHUT_RDWR);
+  close(sfd);
+  for (int i = 0; i < fds.size() && fds.at(i) != mainfd; i ++)
+  {
+    close(fds.at(i));
+  }
+  exit(0);
+}
  
 int main(int argc, char** argv)
 {
+  signal(SIGINT, sig_handler);
+  signal(SIGPIPE, SIG_IGN);
   struct sockaddr_in stSockAddr;
-  int sfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  sfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 
   if(sfd == -1)
   {
@@ -49,14 +91,12 @@ int main(int argc, char** argv)
     exit(EXIT_FAILURE);
   }
 
-  vector<int> fds;
-
-  //int free = -1;
-  int mainfd = -1;
   set<int> starvating_a;
   set<int> starvating_g;
 
   bool gameBegan = false;
+
+  int filenum;
  
   for(;;)
   {
@@ -88,88 +128,93 @@ int main(int argc, char** argv)
         printf("sent all from %d to %d\n", *fd, mainfd);
         int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
         bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
-        int res = read(mainfd, &namelength, sizeof(int));
-        if (res == 0)
+        char buf[128];
+        READ_MAIN(buf, 1);
+//first read 1 byte - either "r" or "q"
+        if (*buf == 'q')
         {
-          printf("job is done\n");
-          if (shutdown(sfd, SHUT_RDWR) == -1)
-          {
-            perror("shutdown failed");
-          }
-          close(sfd);
-          exit(0);
+          printf("main avalanche finished work\n");
+          send_exit();
         }
-        printf("namelength=%d\n", namelength);
-        if (namelength > 0)
+        READ_MAIN( &filenum, sizeof(int));
+        printf("filenum=%d\n", filenum);
+        if (filenum > 0)
         {
-          write(*fd, &namelength, sizeof(int));
-          char buf[128];
-          read(mainfd, buf, namelength);
-          printf("buf=%s\n", buf);
-          write(*fd, buf, namelength);
-          read(mainfd, &length, sizeof(int));
-          printf("length=%d\n", length);
-          write(*fd, &length, sizeof(int));
-          char* file = new char[length];
-          int received = 0;
-          while (received < length)
+          WRITE(*fd, &filenum, sizeof(int));
+          for (int j = 0; j < filenum; j ++)
           {
-            received += read(mainfd, file + received, length - received);
+            READ_MAIN( &namelength, sizeof(int));
+            printf("namelength=%d\n", namelength);
+            WRITE(*fd, &namelength, sizeof(int));
+            read(mainfd, buf, namelength);
+            buf[namelength] = '\0';
+            printf("buf=%s\n", buf);
+            write(*fd, buf, namelength);
+            READ_MAIN( &length, sizeof(int));
+            printf("length=%d\n", length);
+            WRITE(*fd, &length, sizeof(int));
+            char* file = new char[length];
+            int received = 0;
+            while (received < length)
+            {
+              received += read(mainfd, file + received, length - received);
+            }
+            for (int j = 0; j < length; j++)
+            {
+              printf("%x", file[j]);
+            }
+            write(*fd, file, length);
+            delete []file;
           }
-          /*for (int j = 0; j < length; j++)
-          {
-            printf("%x", file[j]);
-          }*/
-          write(*fd, file, length);
-          read(mainfd, &startdepth, sizeof(int));
-          write(*fd, &startdepth, sizeof(int));
-          read(mainfd, &invertdepth, sizeof(int));
-          write(*fd, &invertdepth, sizeof(int));
-          read(mainfd, &alarm, sizeof(int));
-          write(*fd, &alarm, sizeof(int));
-          read(mainfd, &tracegrindAlarm, sizeof(int));
+          READ_MAIN( &startdepth, sizeof(int));
+          WRITE(*fd, &startdepth, sizeof(int));
+          READ_MAIN( &invertdepth, sizeof(int));
+          WRITE(*fd, &invertdepth, sizeof(int));
+          READ_MAIN( &alarm, sizeof(int));
+          WRITE(*fd, &alarm, sizeof(int));
+          READ_MAIN( &tracegrindAlarm, sizeof(int));
           printf("tracegrindAlarm=%d\n", tracegrindAlarm);
-          write(*fd, &tracegrindAlarm, sizeof(int));
-          read(mainfd, &threads, sizeof(int));
-          write(*fd, &threads, sizeof(int));
-          read(mainfd, &argsnum, sizeof(int));
+          WRITE(*fd, &tracegrindAlarm, sizeof(int));
+          READ_MAIN( &threads, sizeof(int));
+          WRITE(*fd, &threads, sizeof(int));
+          READ_MAIN( &argsnum, sizeof(int));
           printf("argsnum=%d\n", argsnum);
-          write(*fd, &argsnum, sizeof(int));
+          WRITE(*fd, &argsnum, sizeof(int));
 
-          read(mainfd, &useMemcheck, sizeof(bool));
-          write(*fd, &useMemcheck, sizeof(bool));
-          read(mainfd, &leaks, sizeof(bool));
-          write(*fd, &leaks, sizeof(bool));
-          read(mainfd, &traceChildren, sizeof(bool));
-          write(*fd, &traceChildren, sizeof(bool));
-          read(mainfd, &checkDanger, sizeof(bool));
-          write(*fd, &checkDanger, sizeof(bool));
-          read(mainfd, &debug, sizeof(bool));
-          write(*fd, &debug, sizeof(bool));
-          read(mainfd, &verbose, sizeof(bool));
-          write(*fd, &verbose, sizeof(bool));
-          read(mainfd, &sockets, sizeof(bool));
-          write(*fd, &sockets, sizeof(bool));
-          read(mainfd, &datagrams, sizeof(bool));
-          write(*fd, &datagrams, sizeof(bool));
-          read(mainfd, &suppressSubcalls, sizeof(bool));
-          write(*fd, &suppressSubcalls, sizeof(bool));
+          READ_MAIN( &useMemcheck, sizeof(bool));
+          WRITE(*fd, &useMemcheck, sizeof(bool));
+          READ_MAIN( &leaks, sizeof(bool));
+          WRITE(*fd, &leaks, sizeof(bool));
+          READ_MAIN( &traceChildren, sizeof(bool));
+          WRITE(*fd, &traceChildren, sizeof(bool));
+          READ_MAIN( &checkDanger, sizeof(bool));
+          WRITE(*fd, &checkDanger, sizeof(bool));
+          READ_MAIN( &debug, sizeof(bool));
+          WRITE(*fd, &debug, sizeof(bool));
+          READ_MAIN( &verbose, sizeof(bool));
+          WRITE(*fd, &verbose, sizeof(bool));
+          READ_MAIN( &sockets, sizeof(bool));
+          WRITE(*fd, &sockets, sizeof(bool));
+          READ_MAIN( &datagrams, sizeof(bool));
+          WRITE(*fd, &datagrams, sizeof(bool));
+          READ_MAIN( &suppressSubcalls, sizeof(bool));
+          WRITE(*fd, &suppressSubcalls, sizeof(bool));
 
           if (sockets)
           {
             int length;
-            read(mainfd, &length, sizeof(int));
-            write(*fd, &length, sizeof(int));
+            READ_MAIN( &length, sizeof(int));
+            WRITE(*fd, &length, sizeof(int));
             read(mainfd, buf, length);
             write(*fd, buf, length);
             int port;
-            read(mainfd, &port, sizeof(int));
-            write(*fd, &port, sizeof(int));
+            READ_MAIN( &port, sizeof(int));
+            WRITE(*fd, &port, sizeof(int));
           }
 
           int masklength;
-          read(mainfd, &masklength, sizeof(int));
-          write(*fd, &masklength, sizeof(int));
+          READ_MAIN( &masklength, sizeof(int));
+          WRITE(*fd, &masklength, sizeof(int));
           if (masklength != 0)
           {
             char* mask = new char[masklength];
@@ -179,20 +224,20 @@ int main(int argc, char** argv)
           }
 
           int filtersNum;
-          read(mainfd, &filtersNum, sizeof(int));
-          write(*fd, &filtersNum, sizeof(int));
+          READ_MAIN( &filtersNum, sizeof(int));
+          WRITE(*fd, &filtersNum, sizeof(int));
           for (int i = 0; i < filtersNum; i++)
           {
             int length; 
-            read(mainfd, &length, sizeof(int));
-            write(*fd, &length, sizeof(int));
+            READ_MAIN( &length, sizeof(int));
+            WRITE(*fd, &length, sizeof(int));
             read(mainfd, buf, length);
             write(*fd, buf, length);
           }
 
           int filterlength;
-          read(mainfd, &filterlength, sizeof(int));
-          write(*fd, &filterlength, sizeof(int));
+          READ_MAIN( &filterlength, sizeof(int));
+          WRITE(*fd, &filterlength, sizeof(int));
           if (filterlength != 0)
           {
             char* filter = new char[filterlength];
@@ -204,10 +249,11 @@ int main(int argc, char** argv)
           for (int i = 0; i < argsnum; i++)
           {
             int arglength;
-            read(mainfd, &arglength, sizeof(int));
+            READ_MAIN( &arglength, sizeof(int));
             printf("arglength=%d\n", arglength);
-            write(*fd, &arglength, sizeof(int));
+            WRITE(*fd, &arglength, sizeof(int));
             read(mainfd, buf, arglength);
+            buf[arglength] = '\0';
             printf("buf=%s\n", buf);
             write(*fd, buf, arglength);
           }
@@ -225,28 +271,38 @@ int main(int argc, char** argv)
       {
         write(mainfd, "g", 1);
         printf("sent get from %d to %d\n", *fd, mainfd);
+        bool g_successful = false;
         int length, startdepth;
-        int res = read(mainfd, &length, sizeof(int));
-        if (res == 0)
+        char buf[2];
+        READ_MAIN(buf, 1);
+//first read 1 byte - either "r" or "q"
+        if (*buf == 'q')
         {
-          printf("job is done\n");
-          shutdown(sfd, SHUT_RDWR);
-          close(sfd);
-          exit(0);
+          printf("main avalanche finished work\n");
+          send_exit();
         }
-        printf("length=%d\n", length);
-        if (length > 0)
+        for (int j = 0; j < filenum; j ++)
         {
-          write(*fd, &length, sizeof(int));
-          char* file = new char[length];
-          int received = 0;
-          while (received < length)
+          READ_MAIN(&length, sizeof(int));
+          if (length > 0)
           {
-            received += read(mainfd, file + received, length - received);
+            WRITE(*fd, &length, sizeof(int));
+            char* file = new char[length];
+            int received = 0;
+            while (received < length)
+            {
+              received += read(mainfd, file + received, length - received);
+            }
+            g_successful = true;
+            write(*fd, file, length);
+            delete []file;
           }
-          write(*fd, file, length);
-          read(mainfd, &startdepth, sizeof(int));
-          write(*fd, &startdepth, sizeof(int));
+          else break;      
+        }
+        if (g_successful)
+        {
+          READ_MAIN(&startdepth, sizeof(int));
+          WRITE(*fd, &startdepth, sizeof(int));
           set<int>::iterator to_erase = fd;
           fd++;
           starvating_g.erase(to_erase);
@@ -283,6 +339,7 @@ int main(int argc, char** argv)
     }
 
     printf("iterating through sockets...\n");
+    vector<int> to_erase;
     for (vector<int>::iterator fd = fds.begin(); fd != fds.end(); fd++)
     {
       //printf("103\n");
@@ -290,13 +347,18 @@ int main(int argc, char** argv)
       {
         //printf("106\n");
         char command;
-        int res = read(*fd, &command, 1);
-        printf("res=%d command=%c\n", res, command);
-        if ((res == 0) && (*fd == mainfd))
+        if (read(*fd, &command, 1) < 1)
         {
-          printf("job is done\n");
-          close(sfd);
-          exit(0);
+          if (*fd != mainfd)
+          {
+            printf("connection with %d is down\n", *fd);
+            to_erase.push_back(*fd);
+            continue;
+          }
+          else
+          {
+            send_exit();
+          }
         }
         if (command == 'm') 
         {
@@ -304,100 +366,28 @@ int main(int argc, char** argv)
           mainfd = *fd;
           gameBegan = true;
         }
+        else if (command == 'q')
+        {
+          printf("main avalanche finished work\n");
+          send_exit();
+        }
         else if (command == 'g')
         {
-          printf("get from %d\n", *fd);
-          printf("sending get to %d\n", mainfd);
-          write(mainfd, "g", 1);
-
-          int length, startdepth;
-          read(mainfd, &length, sizeof(int));
-          printf("length=%d\n", length);
-          if (length > 0)
-          {
-            write(*fd, &length, sizeof(int));
-            char* file = new char[length];
-            int received = 0;
-            while (received < length)
-            {
-              received += read(mainfd, file + received, length - received);
-            }
-            write(*fd, file, length);
-            read(mainfd, &startdepth, sizeof(int));
-            write(*fd, &startdepth, sizeof(int));
-          }
-          else
-          {
-            printf("added %d to starvated_g\n", *fd);
-            starvating_g.insert(*fd);
-          }          
-        } 
-        /*else if ((command == 'a') && gameBegan)
-        {
-          printf("all from %d\n", *fd);
-          printf("sending all to %d\n", mainfd);
-          write(mainfd, "a", 1);
-
-          int namelength, length, startdepth, invertdepth, alarm, argsnum;
-          bool useMemcheck, leaks, traceChildren, checkDanger;
-          read(mainfd, &namelength, sizeof(int));
-          printf("namelength=%d\n", namelength);
-          if (namelength > 0)
-          {
-            write(*fd, &namelength, sizeof(int));
-            char buf[128];
-            read(mainfd, buf, namelength);
-            printf("buf=%s\n", buf);
-            write(*fd, buf, namelength);
-            read(mainfd, &length, sizeof(int));
-            write(*fd, &length, sizeof(int));
-            char* file = new char[length];
-            int received = 0;
-            while (received < length)
-            {
-              received += read(mainfd, file + received, length - received);
-            }
-            write(*fd, file, length);
-            read(mainfd, &startdepth, sizeof(int));
-            write(*fd, &startdepth, sizeof(int));
-            read(mainfd, &invertdepth, sizeof(int));
-            write(*fd, &invertdepth, sizeof(int));
-            read(mainfd, &alarm, sizeof(int));
-            write(*fd, &alarm, sizeof(int));
-            read(mainfd, &argsnum, sizeof(int));
-            printf("argsnum=%d\n", argsnum);
-            write(*fd, &argsnum, sizeof(int));
-
-            read(mainfd, &useMemcheck, sizeof(bool));
-            write(*fd, &useMemcheck, sizeof(bool));
-            read(mainfd, &leaks, sizeof(bool));
-            write(*fd, &leaks, sizeof(bool));
-            read(mainfd, &traceChildren, sizeof(bool));
-            write(*fd, &traceChildren, sizeof(bool));
-            read(mainfd, &checkDanger, sizeof(bool));
-            write(*fd, &checkDanger, sizeof(bool));
-
-            for (int i = 0; i < argsnum; i++)
-            {
-              int arglength;
-              read(mainfd, &arglength, sizeof(int));
-              write(*fd, &arglength, sizeof(int));
-              read(mainfd, buf, arglength);
-              write(*fd, buf, arglength);
-            }
-          }
-          else
-          {
-            printf("added %d to starvated_a\n", *fd);
-            starvating_a.insert(*fd);
-          }
-        }*/
+          printf("added %d to starvated_g\n", *fd);
+          starvating_g.insert(*fd);
+        }         
         else //game not began
         {
           printf("added %d to starvated_a\n", *fd);
           starvating_a.insert(*fd);
         }
       }
+    }
+    for (vector<int>::iterator fd = to_erase.begin(); fd != to_erase.end(); fd ++)
+    {
+      fds.erase(find(fds.begin(), fds.end(), *fd));
+      starvating_a.erase(*fd);
+      starvating_g.erase(*fd);
     }
   }
   return 0;

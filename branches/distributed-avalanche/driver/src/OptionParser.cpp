@@ -38,7 +38,7 @@ using namespace std;
 OptionParser::OptionParser(int argc, char *argv[])
 {
     for (int i = 0; i < argc; i++)
-        arg_vec.push_back(argv[i]);
+        arg_vec.push_back(string(argv[i]));
 }
 
 OptionConfig *OptionParser::run() const

@@ -15,58 +15,84 @@
 #include <vector>
 #include <string>
 
+#define READ(var, type, fmt, sanity_check) \
+    do \
+    { \
+      if (read(fd, &var, sizeof(type)) <= 0) conn_error("connection with server is down"); \
+      if (sanity_check && var < 0) conn_error("bad data"); \
+      printf(#var "=%" fmt "\n", var); \
+    } \
+    while(0) 
+
 using namespace std;
 
 int fd;
 pid_t pid;
-char* filename;
+vector <char*> file_name;
+int file_num;
+
+void conn_error(const char* msg)
+{
+  printf("%s\n", msg);
+  close(fd);
+  for (int i = 0; i < file_name.size(); i ++)
+  {
+    delete [](file_name.at(i));
+  }
+  exit(EXIT_FAILURE);
+}
 
 void sig_hndlr(int signo)
 {
   write(fd, "g", 1);
-  int length, startdepth;
-  int res = read(fd, &length, sizeof(int));
-  if (res == 0)
+  int length, startdepth = 0;
+  int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  for (int i = 0; i < file_num; i ++)
   {
-    int startdepth = 0;
-    int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-    write(descr, &startdepth, sizeof(int));
-    close(descr);   
-    kill(pid, SIGUSR2); 
-    return;
-  }
-  char* file = new char[length];
-  int received = 0;
-  while (received < length)
-  {
-    int r = read(fd, file + received, length - received);
-    if (r == 0)
+    int res = read(fd, &length, sizeof(int));
+    if (res < 1)
     {
-      int startdepth = 0;
-      int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
       write(descr, &startdepth, sizeof(int));
-      close(descr);
-      kill(pid, SIGUSR2);
+      close(descr);   
+      kill(pid, SIGUSR2); 
       return;
     }
-    received += r;
+    if (length <= 0)
+    {
+      write(descr, &startdepth, sizeof(int));
+      close(descr);   
+      kill(pid, SIGUSR2); 
+      conn_error("bad data");
+    }
+    char* file = new char[length];
+    int received = 0;
+    while (received < length)
+    {
+      int r = read(fd, file + received, length - received);
+      if (r < 1)
+      {
+        write(descr, &startdepth, sizeof(int));
+        close(descr);
+        kill(pid, SIGUSR2);
+        return;
+      }
+      received += r;
+    }
+    int fdescr = open(file_name.at(i), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    write(fdescr, file, length);
+    close(fdescr);
+    delete[] file;
   }
   read(fd, &startdepth, sizeof(int));
-
-  int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-  write(descr, file, length);
-  close(descr);
-  delete[] file;
-
-  descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   write(descr, &startdepth, sizeof(int));
   close(descr);
-
+  
   kill(pid, SIGUSR2);
 }
  
 int main(int argc, char** argv)
 {
+  signal(SIGPIPE, SIG_IGN);
   struct sockaddr_in stSockAddr;
   int res;
  
@@ -106,62 +132,63 @@ int main(int argc, char** argv)
 
   printf("connected\n");
 
-  write(fd, "a", 1);
+  if (write(fd, "a", 1) < 1) conn_error("connection with server is down");
   int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
   bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
-  res = read(fd, &namelength, sizeof(int));
-  if (res == 0)
+  int received;
+  char buf[2];
+  READ(file_num, int, "d", true);
+  for (int j = 0; j < file_num; j ++)
   {
-    close(fd);
-    exit(0);
+    READ(namelength, int, "d", true);
+    char *filename = new char[namelength + 1];
+    received = 0;
+    while (received < namelength)
+    {
+      res = read(fd, filename + received, namelength - received);
+      if (res < 0) conn_error("connection with server is down");
+      received += res;
+    }
+    filename[namelength] = '\0';
+    file_name.push_back(filename);
+    printf("filename=%s\n", filename);
+    READ(length, int, "d", true);
+    char* file = new char[length];
+    received = 0;
+    while (received < length)
+    {
+      res = read(fd, file + received, length - received);
+      if (res < 0) conn_error("connection with server is down");
+      received += res;
+    }
+    printf("\n");
+    int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    if (descr == -1)
+    {
+      perror("open failed");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
+    write(descr, file, length);
+    close(descr);
+    delete[] file;
   }
-  //printf("namelength=%d\n", namelength);
-  filename = new char[namelength + 1];
-  int received = 0;
-  while (received < namelength)
-  {
-    received += read(fd, filename + received, namelength - received);
-  }
-  filename[namelength] = '\0';
-  //printf("filename=%s\n", filename);
-  read(fd, &length, sizeof(int));
-  //printf("length=%d\n", length);
-  char* file = new char[length];
-  received = 0;
-  while (received < length)
-  {
-    received += read(fd, file + received, length - received);
-  }
-  printf("\n");
-  int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-  write(descr, file, length);
-  close(descr);
-  delete[] file;
-  read(fd, &startdepth, sizeof(int));
-  //printf("startdepth=%d\n", startdepth);
-  read(fd, &invertdepth, sizeof(int));
-  //printf("invertdepth=%d\n", invertdepth);
-  read(fd, &alarm, sizeof(int));
-  //printf("alarm=%d\n", alarm);
-  read(fd, &tracegrindAlarm, sizeof(int));
-  read(fd, &threads, sizeof(int));
-  read(fd, &argsnum, sizeof(int));
-  //printf("argsnum=%d\n", argsnum);
-
-  read(fd, &useMemcheck, sizeof(bool));
-  //printf("useMemcheck=%d\n", useMemcheck);
-  read(fd, &leaks, sizeof(bool));
-  //printf("leaks=%d\n", leaks);
-  read(fd, &traceChildren, sizeof(bool));
-  //printf("traceChildren=%d\n", traceChildren);
-  read(fd, &checkDanger, sizeof(bool));
-  //printf("checkDanger=%d\n", checkDanger);
-  read(fd, &debug, sizeof(bool));
-  read(fd, &verbose, sizeof(bool));
-  read(fd, &sockets, sizeof(bool));
-  read(fd, &datagrams, sizeof(bool));
-  read(fd, &suppressSubcalls, sizeof(bool));
-
+  READ(startdepth, int, "d", true);
+  READ(invertdepth, int, "d", true);
+  READ(alarm, int, "d", true);
+  READ(tracegrindAlarm, int, "d", true);
+  READ(threads, int, "d", true);
+  READ(argsnum, int, "d", true);
+  READ(useMemcheck, bool, "d", false);
+  READ(leaks, bool, "d", false);
+  READ(traceChildren, bool, "d", false);
+  READ(checkDanger, bool, "d", false);
+  READ(debug, bool, "d", false);
+  READ(verbose, bool, "d", false);
+  READ(sockets, bool, "d", false);
+  READ(datagrams, bool, "d", false);
+  READ(suppressSubcalls, bool, "d", false);
+ 
   char* avalanche_argv[100];
   string argstr(argv[0]);
   size_t sl = argstr.find_last_of('/');
@@ -171,41 +198,40 @@ int main(int argc, char** argv)
   else {
       avalanche_argv[0] = "avalanche";
   }
-  printf("argv[0]=%s\n", avalanche_argv[0]);
-  char s[128];
-  sprintf(s, "--filename=%s", filename);
-  avalanche_argv[1] = s;
-  printf("argv[1]=%s\n", avalanche_argv[1]);
+  argstr.clear();
+  for (int i = 0; i < file_num; i ++)
+  {
+    char s[128];
+    sprintf(s, "--filename=%s", file_name.at(i));
+    avalanche_argv[1 + i] = s;
+  }
 
   char depth[128];
   sprintf(depth, "--depth=%d", invertdepth);
-  avalanche_argv[2] = depth;
-  printf("argv[2]=%s\n", avalanche_argv[2]);
+  avalanche_argv[1 + file_num] = depth;
 
   char sdepth[128];
   sprintf(sdepth, "--startdepth=%d", startdepth);
-  avalanche_argv[3] = sdepth;
-  printf("argv[3]=%s\n", avalanche_argv[3]);
+  avalanche_argv[2 + file_num] = sdepth;
 
   char alrm[128];
   sprintf(alrm, "--alarm=%d", alarm);
-  avalanche_argv[4] = alrm;
-  printf("argv[4]=%s\n", avalanche_argv[4]);
+  avalanche_argv[3 + file_num] = alrm;
 
-  avalanche_argv[5] = "--prefix=branch0_";
-  printf("argv[5]=%s\n", avalanche_argv[5]);
+  avalanche_argv[4 + file_num] = "--prefix=branch0_";
 
-  avalanche_argv[6] = "--agent";
-  printf("argv[6]=%s\n", avalanche_argv[6]);
+  avalanche_argv[5 + file_num] = "--agent";
 
   char thrds[128];
   sprintf(thrds, "--stp-threads=%d", threads);
-  avalanche_argv[7] = thrds;
-  printf("argv[7]=%s\n", avalanche_argv[7]);
-
+  avalanche_argv[6 + file_num] = thrds;
+  for (int i = 0; i < 7 + file_num; i ++)
+  {
+    printf("argv[%d]=%s\n", i, avalanche_argv[i]);
+  }
   int runs = 0;
 
-  int av_argc = 8;
+  int av_argc = 7 + file_num;
   if (tracegrindAlarm != 0)
   {
     char alrm[128];
@@ -262,29 +288,35 @@ int main(int argc, char** argv)
   if (sockets)
   {
     int length;
-    read(fd, &length, sizeof(int));
+    READ(length, int, "d", true);
     char buf[128];
-    read(fd, buf, length);
+    if (read(fd, buf, length) < 0) conn_error("connection with server is down");
     buf[length] = '\0';
     char host[128];
     sprintf(host, "--host=%s", buf);
     avalanche_argv[av_argc++] = host;
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
     int port;
-    read(fd, &port, sizeof(int));
+    READ(port, int, "d", true);
     char prt[128];
-    sprintf(prt, "--port=%d", port);
+    sprintf(prt, "--port=%d", prt);
     avalanche_argv[av_argc++] = host;
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);    
   }
 
   int masklength;
-  read(fd, &masklength, sizeof(int));
+  READ(masklength, int, "d", true);
   if (masklength != 0)
   {
     char* mask = new char[masklength];
-    read(fd, mask, masklength);
-    int descr = open("mask", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    if (read(fd, mask, masklength) < 0) conn_error("connection with server is down");
+    int descr = open("mask", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    if (descr == -1)
+    {
+      perror("open failed");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
     write(descr, mask, masklength);
     close(descr);
     delete[] mask;
@@ -293,13 +325,13 @@ int main(int argc, char** argv)
   }
 
   int filtersNum;
-  read(fd, &filtersNum, sizeof(int));
+  READ(filtersNum, int, "d", true);
   for (int i = 0; i < filtersNum; i++)
   {
     int length;
     char buf[128];
-    read(fd, &length, sizeof(int));
-    read(fd, buf, length);
+    READ(length, int, "d", true);
+    if (read(fd, buf, length) < 0) conn_error("connection with server is down");
     buf[length] = '\0';
     char* fltr = new char[128];
     sprintf(fltr, "--func-name=%s", buf);
@@ -312,8 +344,14 @@ int main(int argc, char** argv)
   if (flength != 0)
   {
     char* filter = new char[flength];
-    read(fd, filter, flength);
+    if (read(fd, filter, flength) < 0) conn_error("connection with server is down");
     int descr = open("filter", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    if (descr == -1)
+    {
+      perror("open failed");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
     write(descr, filter, flength);
     close(descr);
     delete[] filter;
@@ -324,9 +362,9 @@ int main(int argc, char** argv)
   for (int i = 0; i < argsnum; i++)
   {
     int arglength;
-    read(fd, &arglength, sizeof(int));
+    READ(arglength, int, "d", true);
     char* arg = new char[arglength + 1];
-    read(fd, arg, arglength);
+    if (read(fd, arg, arglength) < 0) conn_error("connection with server is down");
     arg[arglength] = '\0';
     avalanche_argv[av_argc++] = arg;
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
@@ -336,9 +374,7 @@ int main(int argc, char** argv)
 
   for (;;)
   {
-    signal(SIGUSR1, sig_hndlr);
-    pid = fork();
-    if (pid == 0)
+    if (fork() == 0)
     {
       printf("starting child avalanche...\n");
       execvp(avalanche_argv[0], avalanche_argv);
@@ -347,35 +383,67 @@ int main(int argc, char** argv)
 
     write(fd, "g", 1);
     int length, startdepth;
-    int res = read(fd, &length, sizeof(int));
-    if (res == 0)
+    for (int j = 0; j < file_num; j ++)
     {
-      exit(0);
+      res = read(fd, &length, sizeof(int));
+      if (res == -1) conn_error("connection with server is down");
+      if (res == 1)
+      {
+        printf("no data from server\n");
+        close(fd);
+        for (int i = 0; i < file_name.size(); i ++)
+        {
+          delete [](file_name.at(i));
+        }
+        free(avalanche_argv[0]);
+        return 0;
+      }
+      char* file = new char[length];
+      received = 0;
+      while (received < length)
+      {
+        res = read(fd, file + received, length - received);
+        if (res < 0)
+        {
+          free(avalanche_argv[0]);
+          conn_error("connection with server is down");
+        }
+        received += res;
+      }
+      READ(startdepth, int, "d", true);
+      
+      int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      if (descr == -1)
+      {
+        perror("open failed");
+        close(fd);
+        for (int i = 0; i < file_name.size(); i ++)
+        {
+          delete [](file_name.at(i));
+        }
+        free(avalanche_argv[0]);
+        return 0;
+      }
+      write(descr, file, length);
+      close(descr);
+      delete[] file;
     }
-    char* file = new char[length];
-    received = 0;
-    while (received < length)
-    {
-      received += read(fd, file + received, length - received);
-    }
-    read(fd, &startdepth, sizeof(int));
-
-    int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-    write(descr, file, length);
-    close(descr);
-    delete[] file;
 
     char sdepth[128];
     sprintf(sdepth, "--startdepth=%d", startdepth);
-    avalanche_argv[3] = sdepth;
-    printf("argv[3]=%s\n", avalanche_argv[3]);
+    avalanche_argv[2 + file_num] = sdepth;
+    printf("argv[%d]=%s\n", 2 + file_num, avalanche_argv[2 + file_num]);
 
     char prefix[128];
     sprintf(prefix, "--prefix=branch%d_", ++runs);
-    avalanche_argv[5] = prefix;
-    printf("argv[5]=%s\n", avalanche_argv[5]);    
+    avalanche_argv[4 + file_num] = prefix;
+    printf("argv[%d]=%s\n", 4 + file_num, avalanche_argv[4 + file_num]);    
   }
   close(fd);
+  for (int i = 0; i < file_name.size(); i ++)
+  {
+    delete [](file_name.at(i));
+  }
  
   return 0;
 }

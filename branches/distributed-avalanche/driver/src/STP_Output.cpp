@@ -36,5 +36,9 @@ STP_Output::~STP_Output()
     {
         ERR(logger, "Cannot delete file " << file <<":"<< strerror(errno));
     }
+    if (file != NULL)
+    {
+      free(file);
+    }
 }
 

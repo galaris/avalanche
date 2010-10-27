@@ -37,6 +37,7 @@ private:
   std::vector<std::pair<int, int> > exploitGroups;
 public:
   Chunk(FileBuffer* trace, int exploitNum, int inputNum);
+  ~Chunk();
 
   void addGroup(int exploitNum, int inputNum);
   

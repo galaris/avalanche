@@ -30,6 +30,7 @@
 class STP_Output
 {
 public:
+    STP_Output() : file(NULL) {}
     void setFile(char *filename)
     { file = strdup(filename); }
 

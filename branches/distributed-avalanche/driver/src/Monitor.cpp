@@ -22,13 +22,11 @@
 */
 
 #include "Monitor.h"
-#include "Logger.h"
 #include <sstream>
 #include <signal.h>
 #include <algorithm>
 #include <iterator>
-
-static Logger *logger = Logger::getLogger();
+#include <iomanip>
 
 Monitor::Monitor(std::string checker_name) : is_killed(false)
 {
@@ -89,6 +87,7 @@ ParallelMonitor::ParallelMonitor(std::string checker_name, unsigned int _thread_
 {
   checker_alarm = 0;
   tracer_alarm = 0;
+  tracer_time = 0;
   thread_num = _thread_num;
   current_state = new state[thread_num + 1];
   checker_start_time = new time_t[thread_num];
@@ -195,13 +194,16 @@ std::string ParallelMonitor::getStats(time_t global_time)
   real_checker_set = getRealTimeSet(checker_time);
   real_stp_set = getRealTimeSet(stp_time);
   module_time[TRACER_OUTPUT] = tracer_time;
-  std::set_difference(real_checker_set.begin(), real_checker_set.end(), real_stp_set.begin(), real_stp_set.end(), std::inserter(tmp_set, tmp_set.begin()));
+  std::set_difference(real_checker_set.begin(), real_checker_set.end(), real_stp_set.begin(), real_stp_set.end(), 
+                      std::inserter(tmp_set, tmp_set.begin()));
   module_time[CHECKER_OUTPUT] = tmp_set.size();
   tmp_set.clear();
-  std::set_difference(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), std::inserter(tmp_set, tmp_set.begin()));
+  std::set_difference(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), 
+                      std::inserter(tmp_set, tmp_set.begin()));
   module_time[STP_OUTPUT] = tmp_set.size();
   tmp_set.clear();
-  std::set_intersection(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), std::inserter(tmp_set, tmp_set.begin()));
+  std::set_intersection(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), 
+                        std::inserter(tmp_set, tmp_set.begin()));
   module_time[CHECKER_AND_STP_OUTPUT] = tmp_set.size();
   std::string extended_module_name[EXTENDED_MODULE_COUNT];
   for (int i = 0; i < MODULE_COUNT; i ++)
@@ -209,12 +211,14 @@ std::string ParallelMonitor::getStats(time_t global_time)
     extended_module_name[i] = (i == 0) ? module_name[i] : (module_name[i] + std::string(" only"));
   }
   extended_module_name[CHECKER_AND_STP_OUTPUT] = module_name[CHECKER] + std::string(" & ") + module_name[STP];
+  result << std::setiosflags(std::ios::fixed) << std::setprecision(4);
   for (int i = 0; i < EXTENDED_MODULE_COUNT; i ++)
   {
     result << extended_module_name[i] << ": " << module_time[i];
     if (global_time != 0)
     { 
-      result << " (" << 100 * ((double) module_time[i]) / global_time << "%)";
+      double percentage = 100.0 * ((double) module_time[i]) / ((double) global_time);
+      result << " (" << percentage << "%)";
     }
     result << ((i == EXTENDED_MODULE_COUNT - 1) ? "" : ", ");
   }
