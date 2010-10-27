@@ -95,6 +95,11 @@ int main(int argc, char** argv)
   signal(SIGPIPE, SIG_IGN);
   struct sockaddr_in stSockAddr;
   int res;
+  bool requestNonZero = false;
+  if ((argc > 3) && !strcmp(argv[3], "--request-non-zero"))
+  {
+    requestNonZero = true;
+  }
  
   memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
  
@@ -244,13 +249,21 @@ int main(int argc, char** argv)
   char thrds[128];
   sprintf(thrds, "--stp-threads=%d", threads);
   avalanche_argv[6 + file_num] = thrds;
+
   for (int i = 0; i < 7 + file_num; i ++)
   {
     printf("argv[%d]=%s\n", i, avalanche_argv[i]);
   }
-  int runs = 0;
 
   int av_argc = 7 + file_num;
+  if (requestNonZero)
+  {
+    avalanche_argv[7 + file_num] = "--agent";
+    printf("argv[%d]=%s\n", 7 + file_num, avalanche_argv[7 + file_num]);
+    av_argc++;
+  }
+
+  int runs = 0;
   if (tracegrindAlarm != 0)
   {
     char alrm[128];
