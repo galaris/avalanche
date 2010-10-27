@@ -23,9 +23,6 @@
 
 #include "Thread.h"
 #include <signal.h>
-#include "Logger.h"
-
-static Logger *logger = Logger::getLogger();
 
 int Thread::createThread(void* data, bool is_joinable)
 {

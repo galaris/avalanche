@@ -43,7 +43,7 @@ class Monitor
             std::string module_name[MODULE_COUNT];
   public: 
             Monitor(std::string checker_name);
-            ~Monitor() {}
+            virtual ~Monitor() {}
             virtual void setState(state _state, time_t _start_time, unsigned int thread_index = 0) = 0;
             virtual void setPID(pid_t _pid, unsigned int thread_index = 0) = 0;
             virtual void addTime(time_t end_time, unsigned int thread_index = 0) = 0;

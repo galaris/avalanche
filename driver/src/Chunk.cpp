@@ -35,8 +35,20 @@ extern Logger* logger;
 
 Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum)
 {
-  this->trace = trace;
+  if (trace == NULL)
+  {
+    this->trace = NULL;
+  }
+  else
+  {
+    this->trace = new FileBuffer(*trace);
+  }
   exploitGroups.push_back(make_pair(exploitNum, inputNum));
+}
+
+Chunk::~Chunk()
+{
+  delete trace;
 }
 
 void Chunk::addGroup(int exploitNum, int inputNum)

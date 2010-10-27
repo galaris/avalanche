@@ -67,6 +67,7 @@ int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
+bool is_distributed = false;
 
 set <unsigned long> delta_bb_covered;
   
@@ -91,7 +92,8 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     config      = new OptionConfig(opt_config);
     exploits    = 0;
     divergences = 0;
-    if (opt_config->getDistributed())
+    is_distributed = opt_config->getDistributed();
+    if (is_distributed)
     {
       struct sockaddr_in stSockAddr;
       int res;
@@ -130,7 +132,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
         exit(EXIT_FAILURE);
       }  
 
-      printf("connected\n");
+      LOG(logger, "Connected to server");
       write(distfd, "m", 1);
    }
 }
@@ -366,7 +368,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   if (has_crashed)
   {
     FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
-    bool deleteBuffer = true;
     infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
     {
@@ -397,7 +398,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
         {
           ch = new Chunk(cv_output, exploits, input->files.size());
         }
-        deleteBuffer = false;
         report.push_back(ch);
       }
     }
@@ -412,15 +412,11 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
       {
         ch = new Chunk(NULL, exploits, input->files.size());
       }
-      deleteBuffer = false;
       report.push_back(ch);
     }
     dumpExploit(input, cv_output, infoAvailable, sameExploit, exploitGroup);
     exploits++;
-    if (deleteBuffer)
-    {
-      delete cv_output;
-    }
+    delete cv_output;
   }
   else if (config->usingMemcheck() && !addNoCoverage)
   {
@@ -672,6 +668,7 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   pthread_mutex_destroy(&add_time_mutex);
   pthread_cond_destroy(&finish_cond);
   delete []external_data;
+  delete []actual;
   return depth;
 }
 
@@ -712,9 +709,11 @@ void ExecutionManager::run()
     basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
-
+    bool delete_fi;
+    
     while (!inputs.empty()) 
     {
+      delete_fi = false;
       REPORT(logger, "Starting iteration " << runs);
       LOG(logger, "inputs.size()=" << inputs.size());
       delta_bb_covered.clear();
@@ -732,7 +731,6 @@ void ExecutionManager::run()
       {
         fi->dumpFiles();
       }
-
       ostringstream tg_depth;
       vector<string> plugin_opts;
       bool newInput = false;
@@ -754,6 +752,7 @@ void ExecutionManager::run()
         else
         {
           config->setNotAgent();
+          delete_fi = true;
           inputs.erase(it);
           if (runs > 0)
           {
@@ -764,6 +763,7 @@ void ExecutionManager::run()
       }
       else
       {
+        delete_fi = true;
         inputs.erase(it);
         if (runs > 0)
         {
@@ -916,7 +916,7 @@ void ExecutionManager::run()
           if (scr == 0) 
           {
             runs++;
-            if (config->getDistributed())
+            if (is_distributed)
             {
               talkToServer(inputs);
             }
@@ -1065,15 +1065,22 @@ void ExecutionManager::run()
           }
           delete stp_output;
         }
+        delete []actual;
       }
       if (depth == 0)
       {
         LOG(logger, "no QUERY's found");
       }
       runs++;
-
+      if (delete_fi)
+      {
+        if (initial != fi)
+        {
+          delete fi;
+        }
+      }
       basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
-      if (config->getDistributed())
+      if (is_distributed)
       {
         talkToServer(inputs);
       }
@@ -1081,9 +1088,18 @@ void ExecutionManager::run()
     initial->dumpFiles();
 }
 
+#define WRITE(var, size) \
+    do {\
+      if (write(distfd, var, size) == -1) {\
+        NET(logger, "Connection with server lost"); \
+        NET(logger, "Continuing work in local mode"); \
+        is_distributed = false; \
+        return; } \
+    } while(0)
+
 void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
 {
-  printf("talking to server\n");
+  NET(logger, "Communicating with server");
   fd_set readfds;
   FD_ZERO(&readfds);
   FD_SET(distfd, &readfds);
@@ -1093,127 +1109,156 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
   select(distfd + 1, &readfds, NULL, NULL, &timer);
   while (FD_ISSET(distfd, &readfds)) 
   {
-    printf("here 861\n");
+//    printf("here 861\n");
     char c = '\0';
-    read(distfd, &c, 1);
+    if (read(distfd, &c, 1) < 1)
+    {
+      NET(logger, "Connection with server lost");
+      is_distributed = false;
+      NET(logger, "Continuing work in local mode");
+      return;
+    }
     if ((c == 'a') && (inputs.size() > 1))
     {
-      printf("received all\n");
+      NET(logger, "Sending options and data");
+      write(distfd, "r", 1); 
+//sending "r"(responding) before data - this is to have something different from "q", so that server
+//can understand that main avalanche finished normally
       multimap<Key, Input*, cmp>::iterator it = --inputs.end();
       it--;
       Input* fi = it->second;
-      FileBuffer* fb = fi->files.at(0);
-      int namelength = config->getFile(0).length();
-      write(distfd, &namelength, sizeof(int));
-      write(distfd, config->getFile(0).c_str(), namelength);
-      write(distfd, &(fb->size), sizeof(int));
-      write(distfd, fb->buf, fb->size);
-      printf("fb->size=%d\n", fb->size);
-      /*for (int j = 0; j < fb->size; j++)
+      int filenum = fi->files.size();
+      WRITE(&filenum, sizeof(int));
+      for (int j = 0; j < fi->files.size(); j ++)
       {
-        printf("%x", fb->buf[j]);
-      }*/
+        FileBuffer* fb = fi->files.at(j);
+        int namelength = config->getFile(j).length();
+        WRITE(&namelength, sizeof(int));
+        WRITE(config->getFile(j).c_str(), namelength);
+        WRITE(&(fb->size), sizeof(int));
+        WRITE(fb->buf, fb->size);
+        /*printf("fb->size=%d\n", fb->size);
+        for (int j = 0; j < fb->size; j++)
+        {
+          printf("%x", fb->buf[j]);
+        }*/
+      }
       printf("\n");
-      write(distfd, &fi->startdepth, sizeof(int));
+      WRITE(&fi->startdepth, sizeof(int));
       int depth = config->getDepth();
-      write(distfd, &depth, sizeof(int));
+      WRITE(&depth, sizeof(int));
       unsigned int alarm = config->getAlarm();
-      write(distfd, &alarm, sizeof(int));
+      WRITE(&alarm, sizeof(int));
       unsigned int tracegrindAlarm = config->getTracegrindAlarm();
-      write(distfd, &tracegrindAlarm, sizeof(int));
+      WRITE(&tracegrindAlarm, sizeof(int));
       int threads = config->getSTPThreads();
-      write(distfd, &threads, sizeof(int));
+      WRITE(&threads, sizeof(int));
 
       int progArgsNum = config->getProgAndArg().size();
-      write(distfd, &progArgsNum, sizeof(int));
-      printf("argsnum=%d\n", progArgsNum);
+      WRITE(&progArgsNum, sizeof(int));
+      //printf("argsnum=%d\n", progArgsNum);
 
       bool useMemcheck = config->usingMemcheck();
-      write(distfd, &useMemcheck, sizeof(bool));
+      WRITE(&useMemcheck, sizeof(bool));
       bool leaks = config->checkForLeaks();
-      write(distfd, &leaks, sizeof(bool));
+      WRITE(&leaks, sizeof(bool));
       bool traceChildren = config->getTraceChildren();
-      write(distfd, &traceChildren, sizeof(bool));
+      WRITE(&traceChildren, sizeof(bool));
       bool checkDanger = config->getCheckDanger();
-      write(distfd, &checkDanger, sizeof(bool));
+      WRITE(&checkDanger, sizeof(bool));
       bool debug = config->getDebug();
-      write(distfd, &debug, sizeof(bool));
+      WRITE(&debug, sizeof(bool));
       bool verbose = config->getVerbose();
-      write(distfd, &verbose, sizeof(bool));
+      WRITE(&verbose, sizeof(bool));
       bool sockets = config->usingSockets();
-      write(distfd, &sockets, sizeof(bool));
+      WRITE(&sockets, sizeof(bool));
       bool datagrams = config->usingDatagrams();
-      write(distfd, &datagrams, sizeof(bool));
+      WRITE(&datagrams, sizeof(bool));
       bool suppressSubcalls = config->getSuppressSubcalls();
-      write(distfd, &suppressSubcalls, sizeof(bool));
+      WRITE(&suppressSubcalls, sizeof(bool));
 
       if (sockets)
       {
         string host = config->getHost();
         int length = host.length();
-        write(distfd, &length, sizeof(int));
-        write(distfd, host.c_str(), length);
+        WRITE(&length, sizeof(int));
+        WRITE(host.c_str(), length);
         unsigned int port = config->getPort();
-        write(distfd, &port, sizeof(int));
+        WRITE(&port, sizeof(int));
       }
 
       if (config->getInputFilterFile() != "")
       {
         FileBuffer mask(config->getInputFilterFile().c_str());
-        write(distfd, &mask.size, sizeof(int));
-        write(distfd, mask.buf, mask.size);
+        WRITE(&mask.size, sizeof(int));
+        WRITE(mask.buf, mask.size);
       }
       else
       {
         int z = 0;
-        write(distfd, &z, sizeof(int));
+        WRITE(&z, sizeof(int));
       }
 
       int funcFilters = config->getFuncFilterUnitsNum();
-      write(distfd, &funcFilters, sizeof(int));
+      WRITE(&funcFilters, sizeof(int));
       for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
       {
         string f = config->getFuncFilterUnit(i);
         int length = f.length();
-        write(distfd, &length, sizeof(int));
-        write(distfd, f.c_str(), length);
+        WRITE(&length, sizeof(int));
+        WRITE(f.c_str(), length);
       }
       if (config->getFuncFilterFile() != "")
       {
         FileBuffer filter(config->getFuncFilterFile().c_str());
-        write(distfd, &filter.size, sizeof(int));
-        write(distfd, filter.buf, filter.size);
+        WRITE(&filter.size, sizeof(int));
+        WRITE(filter.buf, filter.size);
       }
       else
       {
         int z = 0;
-        write(distfd, &z, sizeof(int));
+        WRITE(&z, sizeof(int));
       }
 
       for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
       {
         int argsSize = it->length();
-        write(distfd, &argsSize, sizeof(int));
-        write(distfd, it->c_str(), argsSize);
+        WRITE(&argsSize, sizeof(int));
+        WRITE(it->c_str(), argsSize);
+      }
+      if (it->second != initial)
+      {
+        delete it->second;
       }
       inputs.erase(it);
     }
     else if ((c == 'g') && (inputs.size() > 1))
     {
-      printf("received get\n");
+      //printf("received get\n");
+      write(distfd, "r", 1);
+//sending "r"(responding) before data - this is to have something different from "q", so that server
+//can understand that main avalanche finished normally
+      NET(logger, "Sending input");
       multimap<Key, Input*, cmp>::iterator it = --inputs.end();
       it--;
       Input* fi = it->second;
-      FileBuffer* fb = fi->files.at(0);
-      write(distfd, &(fb->size), sizeof(int));
-      write(distfd, fb->buf, fb->size);
-      write(distfd, &fi->startdepth, sizeof(int));
+      for (int j = 0; j < fi->files.size(); j ++)
+      {
+        FileBuffer* fb = fi->files.at(j);
+        WRITE(&(fb->size), sizeof(int));
+        WRITE(fb->buf, fb->size);
+      }
+      WRITE(&fi->startdepth, sizeof(int));
+      if (it->second != initial)
+      {
+        delete it->second;
+      }
       inputs.erase(it);
     }
     else
     {
       int tosend = 0;
-      write(distfd, &tosend, sizeof(int));
+      WRITE(&tosend, sizeof(int));
     }
     FD_ZERO(&readfds);
     FD_SET(distfd, &readfds);
@@ -1224,6 +1269,12 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
 ExecutionManager::~ExecutionManager()
 {
     DBG(logger, "Destructing plugin manager");
+
+    if (is_distributed)
+    {
+      write(distfd, "q", 1);
+      close(distfd);
+    }
 
     delete config;
 }

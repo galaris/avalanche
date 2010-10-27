@@ -52,7 +52,9 @@ STP_Executor::STP_Executor(bool debug_full_enable,
 {
     prog = strdup((install_dir + "stp").c_str());
 
-    args = (char **)calloc(4, sizeof(char *));
+    argsnum = 4;
+
+    args = (char **)calloc(argsnum, sizeof(char *));
 
     args[0] = strdup(prog);
     args[1] = strdup("-p");

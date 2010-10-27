@@ -133,6 +133,12 @@ void clean_up()
     delete []threads;
     pthread_mutex_destroy(&finish_mutex);
   }
+  for (int i = 0; i < report.size(); i ++)
+  {
+    delete (report.at(i));
+  }
+  delete opt_config;
+  delete initial;
   delete monitor;
 }
 
@@ -147,7 +153,7 @@ void sig_hndlr(int signo)
   monitor->handleSIGKILL();
   for (int i = 0; i < thread_num; i ++)
   {
-    if (!threads[i].getStatus() && in_thread_creation != i)
+    if ((!threads[i].getStatus() && in_thread_creation != i) || threads[i].getStatus() == 1)
     {
       threads[i].waitForThread();
     }
@@ -170,6 +176,7 @@ int main(int argc, char *argv[])
 {
     start = time(NULL); 
     signal(SIGINT, sig_hndlr);
+    signal(SIGPIPE, SIG_IGN);
     LOG(logger, "start time: " << std::string(ctime(&start)));    
     OptionParser opt_parser(argc, argv);
     opt_config = opt_parser.run();

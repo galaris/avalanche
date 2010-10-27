@@ -46,6 +46,11 @@ void Logger::write(Level level, const string &msg,
     case LEV_ALWAYS:
         cout << msg << endl;
         break;
+    case LEV_NET:
+        if (enable_verbose) {
+            cout << "NETWORK: "<< msg << endl;
+        }
+        break;
     case LEV_INFO:
         if (enable_verbose) {
             cout << "INFO: "<< msg << endl;

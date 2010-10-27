@@ -42,6 +42,18 @@ Input::Input()
   this->parent = NULL;
 }
 
+Input::~Input()
+{
+  if (prediction != NULL)
+  {
+    delete []prediction;
+  }
+  for (int i = 0; i < files.size(); i ++)
+  {
+    delete (files.at(i));
+  }
+}
+
 void Input::dumpExploit(const char* name, bool predict, const char* name_modifier)
 {
   std::string res_name = std::string(name) + std::string(name_modifier);

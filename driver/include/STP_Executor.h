@@ -37,7 +37,7 @@ class STP_Executor : public Executor
 {
 public:
     STP_Executor(bool debug_full_enable, const std::string &install_dir);
-
+    
     STP_Output *run(STP_Input *input, int thread_index = 0);
 
 private:

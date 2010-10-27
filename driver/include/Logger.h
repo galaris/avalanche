@@ -33,7 +33,7 @@
 class Logger
 {
 public:
-    enum Level { LEV_ALWAYS, LEV_INFO, LEV_DEBUG, LEV_ERROR };
+    enum Level { LEV_ALWAYS, LEV_INFO, LEV_DEBUG, LEV_ERROR, LEV_NET };
 
     Logger(): enable_verbose(false)
     {}
@@ -56,6 +56,13 @@ private:
         std::ostringstream log_buf; \
         log_buf << msg; \
         logger->write(Logger::LEV_ALWAYS, log_buf.str(), __FILE__, __LINE__);\
+    } while (0)
+
+#define NET(logger, msg) \
+    do { \
+        std::ostringstream log_buf; \
+        log_buf << msg; \
+        logger->write(Logger::LEV_NET, log_buf.str(), __FILE__, __LINE__);\
     } while (0)
 
 #define LOG(logger, msg) \

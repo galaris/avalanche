@@ -33,7 +33,7 @@
 class Executor
 {
 public:
-    Executor(): prog(NULL), args(NULL), file_out(-1), file_err(-1)
+    Executor(): prog(NULL), args(NULL), file_out(-1), file_err(-1), argsnum(0)
     {}
 
     int exec(bool setlimit);
@@ -44,21 +44,12 @@ public:
     
     void redirect_stderr(char *filename);
 
-    ~Executor()
-    { 
-      if (file_out != -1) 
-      {
-        close(file_out);
-      }
-      if (file_err != -1) 
-      {
-        close(file_err);
-      }
-    }
+    ~Executor();
 
 protected:
     char  *prog;
     char **args;
+    unsigned int argsnum;
     pid_t child_pid;
 
 private:

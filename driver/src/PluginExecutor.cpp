@@ -61,6 +61,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     prog = strdup((install_dir + "valgrind").c_str());
 
     // last NULL element is needed by execvp()
+    argsnum = cmd.size() + tg_args.size() + 4;
     args = (char **)calloc(cmd.size() + tg_args.size() + 4, sizeof(char *)); 
 
     args[0] = strdup(prog);

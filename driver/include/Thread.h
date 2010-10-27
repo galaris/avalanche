@@ -66,7 +66,10 @@ class Thread
 
            static void* createAndRun(void* input)
            {
-             ((Thread*) (((data_wrapper*) input)->this_pointer))->doWork(((data_wrapper*) input)->data);
+             void* data = ((data_wrapper*) input)->data;
+             Thread* this_pointer = ((data_wrapper*) input)->this_pointer;
+             delete ((data_wrapper*)input);
+             this_pointer->doWork(data);
            }
 
            int createThread(void* data, bool is_joinable = true);
