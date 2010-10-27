@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <set>
 #include <string>
+#include <stdlib.h>
 
 static Logger *logger = Logger::getLogger();
 
