@@ -96,7 +96,8 @@ int main(int argc, char** argv)
 
   bool gameBegan = false;
 
-  int filenum;
+  int filenum ;
+  bool sockets, datagrams;
  
   for(;;)
   {
@@ -127,7 +128,7 @@ int main(int argc, char** argv)
         write(mainfd, "a", 1);
         printf("sent all from %d to %d\n", *fd, mainfd);
         int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
-        bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
+        bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls;
         char buf[128];
         READ_MAIN(buf, 1);
 //first read 1 byte - either "r" or "q"
@@ -136,20 +137,28 @@ int main(int argc, char** argv)
           printf("main avalanche finished work\n");
           send_exit();
         }
+        filenum = 0;
         READ_MAIN( &filenum, sizeof(int));
         printf("filenum=%d\n", filenum);
         if (filenum > 0)
         {
           WRITE(*fd, &filenum, sizeof(int));
+          READ_MAIN( &sockets, sizeof(bool));
+          WRITE(*fd, &sockets, sizeof(bool));
+          READ_MAIN( &datagrams, sizeof(bool));
+          WRITE(*fd, &datagrams, sizeof(bool));
           for (int j = 0; j < filenum; j ++)
           {
-            READ_MAIN( &namelength, sizeof(int));
-            printf("namelength=%d\n", namelength);
-            WRITE(*fd, &namelength, sizeof(int));
-            read(mainfd, buf, namelength);
-            buf[namelength] = '\0';
-            printf("buf=%s\n", buf);
-            write(*fd, buf, namelength);
+            if (!sockets && !datagrams)
+            {
+              READ_MAIN( &namelength, sizeof(int));
+              printf("namelength=%d\n", namelength);
+              WRITE(*fd, &namelength, sizeof(int));
+              read(mainfd, buf, namelength);
+              buf[namelength] = '\0';
+              printf("buf=%s\n", buf);
+              write(*fd, buf, namelength);
+            }
             READ_MAIN( &length, sizeof(int));
             printf("length=%d\n", length);
             WRITE(*fd, &length, sizeof(int));
@@ -157,7 +166,13 @@ int main(int argc, char** argv)
             int received = 0;
             while (received < length)
             {
-              received += read(mainfd, file + received, length - received);
+              int res = read(mainfd, file + received, length - received);
+              if (res == -1)
+              {
+                printf("connection with main avalanche is down\n");
+                send_exit();
+              }
+              received += res;
             }
             for (int j = 0; j < length; j++)
             {
@@ -193,10 +208,6 @@ int main(int argc, char** argv)
           WRITE(*fd, &debug, sizeof(bool));
           READ_MAIN( &verbose, sizeof(bool));
           WRITE(*fd, &verbose, sizeof(bool));
-          READ_MAIN( &sockets, sizeof(bool));
-          WRITE(*fd, &sockets, sizeof(bool));
-          READ_MAIN( &datagrams, sizeof(bool));
-          WRITE(*fd, &datagrams, sizeof(bool));
           READ_MAIN( &suppressSubcalls, sizeof(bool));
           WRITE(*fd, &suppressSubcalls, sizeof(bool));
 
@@ -291,7 +302,13 @@ int main(int argc, char** argv)
             int received = 0;
             while (received < length)
             {
-              received += read(mainfd, file + received, length - received);
+              int res = read(mainfd, file + received, length - received);
+              if (res == -1)
+              {
+                printf("connection with main avalanche is down\n");
+                send_exit();
+              }
+              received += res;
             }
             g_successful = true;
             write(*fd, file, length);
