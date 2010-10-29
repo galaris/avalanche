@@ -244,22 +244,20 @@ int main(int argc, char** argv)
 
   avalanche_argv[4 + file_num] = "--prefix=branch0_";
 
-  avalanche_argv[5 + file_num] = "--agent";
-
   char thrds[128];
   sprintf(thrds, "--stp-threads=%d", threads);
-  avalanche_argv[6 + file_num] = thrds;
+  avalanche_argv[5 + file_num] = thrds;
 
-  for (int i = 0; i < 7 + file_num; i ++)
+  for (int i = 0; i < 6 + file_num; i ++)
   {
     printf("argv[%d]=%s\n", i, avalanche_argv[i]);
   }
 
-  int av_argc = 7 + file_num;
+  int av_argc = 6 + file_num;
   if (requestNonZero)
   {
-    avalanche_argv[7 + file_num] = "--agent";
-    printf("argv[%d]=%s\n", 7 + file_num, avalanche_argv[7 + file_num]);
+    avalanche_argv[6 + file_num] = "--agent";
+    printf("argv[%d]=%s\n", 6 + file_num, avalanche_argv[6 + file_num]);
     av_argc++;
   }
 

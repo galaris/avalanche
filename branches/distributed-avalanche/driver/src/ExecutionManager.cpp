@@ -1121,145 +1121,177 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       NET(logger, "Continuing work in local mode");
       return;
     }
-    if ((c == 'a') && (inputs.size() > 1))
+    if (c == 'a')
     {
       NET(logger, "Sending options and data");
       write(distfd, "r", 1); 
-//sending "r"(responding) before data - this is to have something different from "q", so that server
-//can understand that main avalanche finished normally
-      multimap<Key, Input*, cmp>::iterator it = --inputs.end();
-      it--;
-      Input* fi = it->second;
-      int filenum = fi->files.size();
-      WRITE(&filenum, sizeof(int));
-      bool sockets = config->usingSockets();
-      WRITE(&sockets, sizeof(bool));
-      bool datagrams = config->usingDatagrams();
-      WRITE(&datagrams, sizeof(bool));
-      for (int j = 0; j < fi->files.size(); j ++)
+      //sending "r"(responding) before data - this is to have something different from "q", so that server
+      //can understand that main avalanche finished normally
+      int size;
+      read(distfd, &size, sizeof(int));
+      while (size > 0)
       {
-        FileBuffer* fb = fi->files.at(j);
-        if (!config->usingDatagrams() && ! config->usingSockets())
+        if (inputs.size() <= 1)
         {
-          int namelength = config->getFile(j).length();
-          WRITE(&namelength, sizeof(int));
-          WRITE(config->getFile(j).c_str(), namelength);
+          break;
         }
-        WRITE(&(fb->size), sizeof(int));
-        WRITE(fb->buf, fb->size);
-        /*printf("fb->size=%d\n", fb->size);
-        for (int j = 0; j < fb->size; j++)
+        multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+        it--;
+        Input* fi = it->second;
+        int filenum = fi->files.size();
+        WRITE(&filenum, sizeof(int));
+        bool sockets = config->usingSockets();
+        WRITE(&sockets, sizeof(bool));
+        bool datagrams = config->usingDatagrams();
+        WRITE(&datagrams, sizeof(bool));
+        for (int j = 0; j < fi->files.size(); j ++)
         {
-          printf("%x", fb->buf[j]);
-        }*/
-      }
-      printf("\n");
-      WRITE(&fi->startdepth, sizeof(int));
-      int depth = config->getDepth();
-      WRITE(&depth, sizeof(int));
-      unsigned int alarm = config->getAlarm();
-      WRITE(&alarm, sizeof(int));
-      unsigned int tracegrindAlarm = config->getTracegrindAlarm();
-      WRITE(&tracegrindAlarm, sizeof(int));
-      int threads = config->getSTPThreads();
-      WRITE(&threads, sizeof(int));
+          FileBuffer* fb = fi->files.at(j);
+          if (!config->usingDatagrams() && ! config->usingSockets())
+          {
+            int namelength = config->getFile(j).length();
+            WRITE(&namelength, sizeof(int));
+            WRITE(config->getFile(j).c_str(), namelength);
+          }
+          WRITE(&(fb->size), sizeof(int));
+          WRITE(fb->buf, fb->size);
+          /*printf("fb->size=%d\n", fb->size);
+          for (int j = 0; j < fb->size; j++)
+          {
+            printf("%x", fb->buf[j]);
+          }*/
+        }
+        //printf("\n");
+        WRITE(&fi->startdepth, sizeof(int));
+        int depth = config->getDepth();
+        WRITE(&depth, sizeof(int));
+        unsigned int alarm = config->getAlarm();
+        WRITE(&alarm, sizeof(int));
+        unsigned int tracegrindAlarm = config->getTracegrindAlarm();
+        WRITE(&tracegrindAlarm, sizeof(int));
+        int threads = config->getSTPThreads();
+        WRITE(&threads, sizeof(int));
 
-      int progArgsNum = config->getProgAndArg().size();
-      WRITE(&progArgsNum, sizeof(int));
-      //printf("argsnum=%d\n", progArgsNum);
+        int progArgsNum = config->getProgAndArg().size();
+        WRITE(&progArgsNum, sizeof(int));
+        //printf("argsnum=%d\n", progArgsNum);
 
-      bool useMemcheck = config->usingMemcheck();
-      WRITE(&useMemcheck, sizeof(bool));
-      bool leaks = config->checkForLeaks();
-      WRITE(&leaks, sizeof(bool));
-      bool traceChildren = config->getTraceChildren();
-      WRITE(&traceChildren, sizeof(bool));
-      bool checkDanger = config->getCheckDanger();
-      WRITE(&checkDanger, sizeof(bool));
-      bool debug = config->getDebug();
-      WRITE(&debug, sizeof(bool));
-      bool verbose = config->getVerbose();
-      WRITE(&verbose, sizeof(bool));
-      bool suppressSubcalls = config->getSuppressSubcalls();
-      WRITE(&suppressSubcalls, sizeof(bool));
+        bool useMemcheck = config->usingMemcheck();
+        WRITE(&useMemcheck, sizeof(bool));
+        bool leaks = config->checkForLeaks();
+        WRITE(&leaks, sizeof(bool));
+        bool traceChildren = config->getTraceChildren();
+        WRITE(&traceChildren, sizeof(bool));
+        bool checkDanger = config->getCheckDanger();
+        WRITE(&checkDanger, sizeof(bool));
+        bool debug = config->getDebug();
+        WRITE(&debug, sizeof(bool));
+        bool verbose = config->getVerbose();
+        WRITE(&verbose, sizeof(bool));
+        bool suppressSubcalls = config->getSuppressSubcalls();
+        WRITE(&suppressSubcalls, sizeof(bool));
 
-      if (sockets)
-      {
-        string host = config->getHost();
-        int length = host.length();
-        WRITE(&length, sizeof(int));
-        WRITE(host.c_str(), length);
-        unsigned int port = config->getPort();
-        WRITE(&port, sizeof(int));
-      }
+        if (sockets)
+        {
+          string host = config->getHost();
+          int length = host.length();
+          WRITE(&length, sizeof(int));
+          WRITE(host.c_str(), length);
+          unsigned int port = config->getPort();
+          WRITE(&port, sizeof(int));
+        }
 
-      if (config->getInputFilterFile() != "")
-      {
-        FileBuffer mask(config->getInputFilterFile().c_str());
-        WRITE(&mask.size, sizeof(int));
-        WRITE(mask.buf, mask.size);
-      }
-      else
-      {
-        int z = 0;
-        WRITE(&z, sizeof(int));
-      }
+        if (config->getInputFilterFile() != "")
+        {
+          FileBuffer mask(config->getInputFilterFile().c_str());
+          WRITE(&mask.size, sizeof(int));
+          WRITE(mask.buf, mask.size);
+        }
+        else
+        {
+          int z = 0;
+          WRITE(&z, sizeof(int));
+        }
 
-      int funcFilters = config->getFuncFilterUnitsNum();
-      WRITE(&funcFilters, sizeof(int));
-      for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
-      {
-        string f = config->getFuncFilterUnit(i);
-        int length = f.length();
-        WRITE(&length, sizeof(int));
-        WRITE(f.c_str(), length);
-      }
-      if (config->getFuncFilterFile() != "")
-      {
-        FileBuffer filter(config->getFuncFilterFile().c_str());
-        WRITE(&filter.size, sizeof(int));
-        WRITE(filter.buf, filter.size);
-      }
-      else
-      {
-        int z = 0;
-        WRITE(&z, sizeof(int));
-      }
+        int funcFilters = config->getFuncFilterUnitsNum();
+        WRITE(&funcFilters, sizeof(int));
+        for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
+        {
+          string f = config->getFuncFilterUnit(i);
+          int length = f.length();
+          WRITE(&length, sizeof(int));
+          WRITE(f.c_str(), length);
+        }
+        if (config->getFuncFilterFile() != "")
+        {
+          FileBuffer filter(config->getFuncFilterFile().c_str());
+          WRITE(&filter.size, sizeof(int));
+          WRITE(filter.buf, filter.size);
+        }
+        else
+        {
+          int z = 0;
+          WRITE(&z, sizeof(int));
+        }
 
-      for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
-      {
-        int argsSize = it->length();
-        WRITE(&argsSize, sizeof(int));
-        WRITE(it->c_str(), argsSize);
+        for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
+        {
+          int argsSize = it->length();
+          WRITE(&argsSize, sizeof(int));
+          WRITE(it->c_str(), argsSize);
+        }
+        if (it->second != initial)
+        {
+          delete it->second;
+        }
+        inputs.erase(it);
+        size--;
       }
-      if (it->second != initial)
+      while (size > 0)
       {
-        delete it->second;
+        int tosend = 0;
+        WRITE(&tosend, sizeof(int));
+        size--;
       }
-      inputs.erase(it);
     }
-    else if ((c == 'g') && (inputs.size() > 1))
+    else if (c == 'g')
     {
       //printf("received get\n");
       write(distfd, "r", 1);
-//sending "r"(responding) before data - this is to have something different from "q", so that server
-//can understand that main avalanche finished normally
-      NET(logger, "Sending input");
-      multimap<Key, Input*, cmp>::iterator it = --inputs.end();
-      it--;
-      Input* fi = it->second;
-      for (int j = 0; j < fi->files.size(); j ++)
+      //sending "r"(responding) before data - this is to have something different from "q", so that server
+      //can understand that main avalanche finished normally
+      int size;
+      read(distfd, &size, sizeof(int));
+      while (size > 0)
       {
-        FileBuffer* fb = fi->files.at(j);
-        WRITE(&(fb->size), sizeof(int));
-        WRITE(fb->buf, fb->size);
+        if (inputs.size() <= 1)
+        { 
+          break;
+        }
+        NET(logger, "Sending input");
+        multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+        it--;
+        Input* fi = it->second;
+        for (int j = 0; j < fi->files.size(); j ++)
+        {
+          FileBuffer* fb = fi->files.at(j);
+          WRITE(&(fb->size), sizeof(int));
+          WRITE(fb->buf, fb->size);
+        }
+        WRITE(&fi->startdepth, sizeof(int));
+        if (it->second != initial)
+        {
+          delete it->second;
+        }
+        inputs.erase(it);
+        size--;
       }
-      WRITE(&fi->startdepth, sizeof(int));
-      if (it->second != initial)
+      while (size > 0)
       {
-        delete it->second;
+        int tosend = 0;
+        write(distfd, &tosend, sizeof(int));
+        size--;
       }
-      inputs.erase(it);
     }
     else
     {
