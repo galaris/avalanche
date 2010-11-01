@@ -60,6 +60,7 @@ time_t start;
 time_t end;
 
 ExecutionManager* em;
+OptionParser *op;
 
 extern PoolThread *threads;
 extern Input* initial;
@@ -137,6 +138,8 @@ void clean_up()
   {
     delete (report.at(i));
   }
+  delete em;
+  delete op;
   delete opt_config;
   delete initial;
   delete monitor;
@@ -178,8 +181,8 @@ int main(int argc, char *argv[])
     signal(SIGINT, sig_hndlr);
     signal(SIGPIPE, SIG_IGN);
     LOG(logger, "start time: " << std::string(ctime(&start)));    
-    OptionParser opt_parser(argc, argv);
-    opt_config = opt_parser.run();
+    op = new OptionParser(argc, argv);
+    opt_config = op->run();
 
     if (opt_config == NULL || opt_config->empty()) {
         printHelpBanner();
@@ -201,6 +204,7 @@ int main(int argc, char *argv[])
     {
       monitor = new SimpleMonitor(checker_name);
     }
+    checker_name.clear();
     time_t starttime;
     time(&starttime);
 
@@ -209,14 +213,16 @@ int main(int argc, char *argv[])
     string t = string(ctime(&starttime));
     LOG(logger, "Start time: " << t.substr(0, t.size() - 1));  
 
-    ExecutionManager manager(opt_config);
-    em = &manager;
-    manager.run();
+    em = new ExecutionManager(opt_config);
+    em->run();
     end = time(NULL);
     char s[256];
     sprintf(s, "total: %ld, ", end - start);
     LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
-    initial->dumpFiles();
+    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+    {
+      initial->dumpFiles();
+    }
     REPORT(logger, "\nExploits report:");
     for (int i = 0; i < report.size(); i++)
     {
