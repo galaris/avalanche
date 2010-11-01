@@ -586,21 +586,21 @@ void* exec_STP_CG(void* data)
   if (out != NULL) delete out;
 }
 
-int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned int first_depth)
+int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned long first_depth)
 {
   int actualfd = open("actual.log", O_RDWR);
   bool* actual = new bool[first_input->startdepth - 1 + config->getDepth()];
   read(actualfd, actual, (first_input->startdepth - 1 + config->getDepth()) * sizeof(bool));
   close(actualfd);
   int active_threads = thread_num;
-  int depth = 0;
+  long depth = 0;
   int thread_status[thread_num];
   pthread_mutex_init(&add_inputs_mutex, NULL);
   pthread_mutex_init(&add_exploits_mutex, NULL);
   pthread_mutex_init(&add_bb_mutex, NULL);
   pthread_mutex_init(&add_time_mutex, NULL);
   pthread_cond_init(&finish_cond, NULL);
-  FileBuffer trace((!trace_kind) ? "trace.log" : "dangertrace.log");
+  FileBuffer *trace = new FileBuffer((!trace_kind) ? "trace.log" : "dangertrace.log");
   trace_kind = _trace_kind;
   for (int j = 0; j < thread_num; j ++)
   {
@@ -612,7 +612,7 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
     threads[j].addSharedDataUnit((void*) this, string("this_pointer"));
     thread_status[j] = -1;
   }
-  char* query = trace.buf;
+  char* query = trace->buf;
   while((query = strstr(query, "QUERY(FALSE);")) != NULL)
   {
     depth ++;
@@ -642,7 +642,7 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
     external_data[i].data = &(threads[thread_counter]);
     ostringstream cur_trace;
     cur_trace << "curtrace_" << thread_counter + 1 << ".log";
-    trace.invertQueryAndDump(cur_trace.str().c_str());
+    trace->invertQueryAndDump(cur_trace.str().c_str());
     in_thread_creation = thread_counter;
     threads[thread_counter].createThread(&(external_data[i]));
     in_thread_creation = -1;
@@ -662,6 +662,7 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
       }
     }
   }
+  delete trace;
   pthread_mutex_destroy(&add_inputs_mutex);
   pthread_mutex_destroy(&add_exploits_mutex);
   pthread_mutex_destroy(&add_bb_mutex);
@@ -1089,7 +1090,10 @@ void ExecutionManager::run()
         talkToServer(inputs);
       }
     }
-    initial->dumpFiles();
+    if (!(config->usingSockets()) && !(config->usingDatagrams()))
+    {
+      initial->dumpFiles();
+    }
 }
 
 #define WRITE(var, size) \

@@ -182,7 +182,6 @@ int main(int argc, char** argv)
     {
       write(net_fd, &length, sizeof(int));
       write(net_fd, file, length);
-      close(net_fd);
     }
     else
     {
@@ -198,6 +197,10 @@ int main(int argc, char** argv)
       close(descr);
     }
     delete[] file;
+  }
+  if (sockets || datagrams)
+  {
+    close(net_fd);
   }
   READ(startdepth, int, "d", true);
   READ(invertdepth, int, "d", true);
@@ -224,48 +227,53 @@ int main(int argc, char** argv)
       avalanche_argv[0] = "avalanche";
   }
   argstr.clear();
-  for (int i = 0; i < file_num; i ++)
+  int argv_delta = 0;
+  if (!sockets && !datagrams)
   {
-    char s[128];
-    sprintf(s, "--filename=%s", file_name.at(i));
-    avalanche_argv[1 + i] = strdup(s);
+    for (int i = 0; i < file_num; i ++)
+    {
+      char s[128];
+      sprintf(s, "--filename=%s", file_name.at(i));
+      avalanche_argv[1 + i] = strdup(s);
+    }
+    argv_delta = file_num;
   }
-
+  
   char depth[128];
   sprintf(depth, "--depth=%d", invertdepth);
-  avalanche_argv[1 + file_num] = depth;
+  avalanche_argv[1 + argv_delta] = depth;
 
   char sdepth[128];
   sprintf(sdepth, "--startdepth=%d", startdepth);
-  avalanche_argv[2 + file_num] = sdepth;
+  avalanche_argv[2 + argv_delta] = sdepth;
 
   char alrm[128];
   sprintf(alrm, "--alarm=%d", alarm);
-  avalanche_argv[3 + file_num] = alrm;
+  avalanche_argv[3 + argv_delta] = alrm;
 
-  avalanche_argv[4 + file_num] = "--prefix=branch0_";
+  avalanche_argv[4 + argv_delta] = "--prefix=branch0_";
 
   if (STPThreadsAuto)
   {
-    avalanche_argv[5 + file_num] = "--stp-threads-auto";
+    avalanche_argv[5 + argv_delta] = "--stp-threads-auto";
   }
   else
   {
     char thrds[128];
     sprintf(thrds, "--stp-threads=%d", threads);
-    avalanche_argv[5 + file_num] = thrds;
+    avalanche_argv[5 + argv_delta] = strdup(thrds);
   }
 
-  for (int i = 0; i < 6 + file_num; i ++)
+  for (int i = 0; i < 6 + argv_delta; i ++)
   {
     printf("argv[%d]=%s\n", i, avalanche_argv[i]);
   }
 
-  int av_argc = 6 + file_num;
+  int av_argc = 6 + argv_delta;
   if (requestNonZero)
   {
-    avalanche_argv[6 + file_num] = "--agent";
-    printf("argv[%d]=%s\n", 6 + file_num, avalanche_argv[6 + file_num]);
+    avalanche_argv[6 + argv_delta] = "--agent";
+    printf("argv[%d]=%s\n", 6 + argv_delta, avalanche_argv[6 + argv_delta]);
     av_argc++;
   }
 
@@ -332,13 +340,13 @@ int main(int argc, char** argv)
     buf[length] = '\0';
     char host[128];
     sprintf(host, "--host=%s", buf);
-    avalanche_argv[av_argc++] = host;
+    avalanche_argv[av_argc++] = strdup(host);
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
     int port;
     READ(port, int, "d", true);
     char prt[128];
-    sprintf(prt, "--port=%d", prt);
-    avalanche_argv[av_argc++] = host;
+    sprintf(prt, "--port=%d", port);
+    avalanche_argv[av_argc++] = strdup(prt);
     printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);    
   }
 
@@ -423,60 +431,74 @@ int main(int argc, char** argv)
 
     write(fd, "g", 1);
     int length, startdepth;
+    if (sockets || datagrams)
+    {
+      net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      write(net_fd, &file_num, sizeof(int));
+    }
     for (int j = 0; j < file_num; j ++)
     {
-      res = read(fd, &length, sizeof(int));
-      if (res == -1) conn_error("connection with server is down");
-      if (res == 1)
+      char *filename;
+      if (!sockets && !datagrams)
       {
-        printf("no data from server\n");
-        close(fd);
-        for (int i = 0; i < file_name.size(); i ++)
+        READ(namelength, int, "d", true);
+        filename = new char[namelength + 1];
+        received = 0;
+        while (received < namelength)
         {
-          delete [](file_name.at(i));
+          res = read(fd, filename + received, namelength - received);
+          if (res < 1) conn_error("connection with server is down");
+          received += res;
         }
-        free(avalanche_argv[0]);
-        return 0;
+        filename[namelength] = '\0';
+        file_name.push_back(strdup(filename));
+        printf("filename=%s\n", filename);
       }
-      printf("%d\n", length);
+      READ(length, int, "d", true);
       char* file = new char[length];
       received = 0;
       while (received < length)
       {
         res = read(fd, file + received, length - received);
-        if (res < 1)
-        {
-          free(avalanche_argv[0]);
-          conn_error("connection with server is down");
-        }
+        if (res < 0) conn_error("connection with server is down");
         received += res;
       }
-      int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-      if (descr == -1)
+      printf("\n");
+      if (sockets || datagrams)
       {
-        perror("open failed");
-        close(fd);
-        for (int i = 0; i < file_name.size(); i ++)
-        {
-          delete [](file_name.at(i));
-        }
-        free(avalanche_argv[0]);
-        return 0;
+        write(net_fd, &length, sizeof(int));
+        write(net_fd, file, length);
       }
-      write(descr, file, length);
-      close(descr);
+      else
+      {
+        int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+        if (descr == -1)
+        {
+          perror("open failed");
+          close(fd);
+          exit(EXIT_FAILURE);
+        }
+        write(descr, file, length);
+        delete []filename;
+        close(descr);
+      }
       delete[] file;
     }
+    if (sockets || datagrams)
+    {
+      close(net_fd);
+    }
+    
     READ(startdepth, int, "d", true);
     char sdepth[128];
     sprintf(sdepth, "--startdepth=%d", startdepth);
-    avalanche_argv[2 + file_num] = sdepth;
-    printf("argv[%d]=%s\n", 2 + file_num, avalanche_argv[2 + file_num]);
+    avalanche_argv[2 + argv_delta] = sdepth;
+    printf("argv[%d]=%s\n", 2 + argv_delta, avalanche_argv[2 + argv_delta]);
 
     char prefix[128];
     sprintf(prefix, "--prefix=branch%d_", ++runs);
-    avalanche_argv[4 + file_num] = prefix;
-    printf("argv[%d]=%s\n", 4 + file_num, avalanche_argv[4 + file_num]);    
+    avalanche_argv[4 + argv_delta] = prefix;
+    printf("argv[%d]=%s\n", 4 + argv_delta, avalanche_argv[4 + argv_delta]);    
   }
   close(fd);
   for (int i = 0; i < file_name.size(); i ++)
