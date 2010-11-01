@@ -1190,6 +1190,8 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
         WRITE(&verbose, sizeof(bool));
         bool suppressSubcalls = config->getSuppressSubcalls();
         WRITE(&suppressSubcalls, sizeof(bool));
+        bool STPThreadsAuto = config->getSTPThreadsAuto();
+        WRITE(&STPThreadsAuto, sizeof(bool));
 
         if (sockets)
         {
