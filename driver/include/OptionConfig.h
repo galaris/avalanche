@@ -36,6 +36,7 @@ class OptionConfig
 {
 public:
     OptionConfig(): debug(false),
+                    STPThreadsAuto(false),
 		    checkDanger(false),
                     verbose(false),
 		    sockets(false),
@@ -89,6 +90,7 @@ public:
         dumpCalls       = opt_config->dumpCalls;
         inputFilterFile = opt_config->inputFilterFile;
         STPThreads	= opt_config->STPThreads;
+        STPThreadsAuto	= opt_config->STPThreadsAuto;
         prefix          = opt_config->prefix;
     }
 
@@ -118,6 +120,12 @@ public:
     
     bool getDebug() const
     { return debug; }
+
+    void setSTPThreadsAuto()
+    { STPThreadsAuto = true; }
+    
+    bool getSTPThreadsAuto() const
+    { return STPThreadsAuto; }
 
     void setTraceChildren()
     { traceChildren = true; }
@@ -288,6 +296,7 @@ private:
     bool 		     traceChildren;
     bool                     distributed;
     bool                     agent;
+    bool                     STPThreadsAuto;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;

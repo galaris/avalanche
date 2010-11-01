@@ -139,7 +139,7 @@ int main(int argc, char** argv)
         for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end();)
         {
           int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
-          bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls;
+          bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls, STPThreadsAuto;
           char buf[128];
           filenum = 0;
           READ_MAIN( &filenum, sizeof(int));
@@ -214,6 +214,8 @@ int main(int argc, char** argv)
             WRITE(*fd, &verbose, sizeof(bool));
             READ_MAIN( &suppressSubcalls, sizeof(bool));
             WRITE(*fd, &suppressSubcalls, sizeof(bool));
+            READ_MAIN( &STPThreadsAuto, sizeof(bool));
+            WRITE(*fd, &STPThreadsAuto, sizeof(bool));
 
             if (sockets)
             {

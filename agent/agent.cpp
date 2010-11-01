@@ -139,7 +139,7 @@ int main(int argc, char** argv)
 
   if (write(fd, "a", 1) < 1) conn_error("connection with server is down");
   int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
-  bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls;
+  bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls, STPThreadsAuto;
   int received, net_fd;
   
   READ(file_num, int, "d", true);
@@ -212,6 +212,7 @@ int main(int argc, char** argv)
   READ(debug, bool, "d", false);
   READ(verbose, bool, "d", false);
   READ(suppressSubcalls, bool, "d", false);
+  READ(STPThreadsAuto, bool, "d", false);
  
   char* avalanche_argv[100];
   string argstr(argv[0]);
@@ -244,9 +245,16 @@ int main(int argc, char** argv)
 
   avalanche_argv[4 + file_num] = "--prefix=branch0_";
 
-  char thrds[128];
-  sprintf(thrds, "--stp-threads=%d", threads);
-  avalanche_argv[5 + file_num] = thrds;
+  if (STPThreadsAuto)
+  {
+    avalanche_argv[5 + file_num] = "--stp-threads-auto";
+  }
+  else
+  {
+    char thrds[128];
+    sprintf(thrds, "--stp-threads=%d", threads);
+    avalanche_argv[5 + file_num] = thrds;
+  }
 
   for (int i = 0; i < 6 + file_num; i ++)
   {

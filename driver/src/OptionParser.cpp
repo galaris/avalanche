@@ -27,6 +27,7 @@
 #include "OptionParser.h"
 #include "OptionConfig.h"
 
+#include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -110,6 +111,10 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i].find("--stp-threads=") != string::npos) {
             string thread_num = arg_vec[i].substr(strlen("--stp-threads="));
             config->setSTPThreads(atoi(thread_num.c_str()));
+        }
+        else if (arg_vec[i].find("--stp-threads-auto") != string::npos) {
+            config->setSTPThreadsAuto();
+            config->setSTPThreads(sysconf(_SC_NPROCESSORS_ONLN));
         }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
