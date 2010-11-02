@@ -174,7 +174,7 @@ int main(int argc, char** argv)
     while (received < length)
     {
       res = read(fd, file + received, length - received);
-      if (res < 0) conn_error("connection with server is down");
+      if (res < 1) conn_error("connection with server is down");
       received += res;
     }
     printf("\n");
@@ -438,29 +438,13 @@ int main(int argc, char** argv)
     }
     for (int j = 0; j < file_num; j ++)
     {
-      char *filename;
-      if (!sockets && !datagrams)
-      {
-        READ(namelength, int, "d", true);
-        filename = new char[namelength + 1];
-        received = 0;
-        while (received < namelength)
-        {
-          res = read(fd, filename + received, namelength - received);
-          if (res < 1) conn_error("connection with server is down");
-          received += res;
-        }
-        filename[namelength] = '\0';
-        file_name.push_back(strdup(filename));
-        printf("filename=%s\n", filename);
-      }
       READ(length, int, "d", true);
       char* file = new char[length];
       received = 0;
       while (received < length)
       {
         res = read(fd, file + received, length - received);
-        if (res < 0) conn_error("connection with server is down");
+        if (res < 1) conn_error("connection with server is down");
         received += res;
       }
       printf("\n");
@@ -471,7 +455,7 @@ int main(int argc, char** argv)
       }
       else
       {
-        int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+        int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
         if (descr == -1)
         {
           perror("open failed");
@@ -479,7 +463,6 @@ int main(int argc, char** argv)
           exit(EXIT_FAILURE);
         }
         write(descr, file, length);
-        delete []filename;
         close(descr);
       }
       delete[] file;
