@@ -56,6 +56,11 @@ void sig_handler(int signo)
  
 int main(int argc, char** argv)
 {
+  if (argc != 2)
+  {
+    printf("invalid args\nusage: av-dist port\n");
+    return 1;
+  }
   signal(SIGINT, sig_handler);
   signal(SIGPIPE, SIG_IGN);
   struct sockaddr_in stSockAddr;
@@ -96,7 +101,7 @@ int main(int argc, char** argv)
 
   bool gameBegan = false;
 
-  int filenum ;
+  int filenum;
   bool sockets, datagrams;
  
   for(;;)
@@ -386,6 +391,7 @@ int main(int argc, char** argv)
           }
           else
           {
+            printf("connection with main avalanche is down\n");
             send_exit();
           }
         }

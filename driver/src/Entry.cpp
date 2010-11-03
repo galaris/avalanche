@@ -50,6 +50,7 @@
 #include <cstdlib>
 #include <string.h>
 #include <cerrno>
+#include <fstream>
 
 using namespace std;
 
@@ -168,7 +169,7 @@ void sig_hndlr(int signo)
   REPORT(logger, "\nExploits report:");
   for (int i = 0; i < report.size(); i++)
   {
-    report.at(i)->print(opt_config->getPrefix(), i);
+    report.at(i)->print(opt_config->getPrefix(), i, opt_config->getLoggingExploitInfo());
   }
   REPORT(logger, "");
   clean_up();
@@ -204,6 +205,11 @@ int main(int argc, char *argv[])
     {
       monitor = new SimpleMonitor(checker_name);
     }
+    if (opt_config->getLoggingExploitInfo())
+    {
+      ofstream f("exploit_info.log", ios_base::trunc);
+      f.close();
+    }
     checker_name.clear();
     time_t starttime;
     time(&starttime);
@@ -226,7 +232,7 @@ int main(int argc, char *argv[])
     REPORT(logger, "\nExploits report:");
     for (int i = 0; i < report.size(); i++)
     {
-      report.at(i)->print(opt_config->getPrefix(), i);
+      report.at(i)->print(opt_config->getPrefix(), i, opt_config->getLoggingExploitInfo());
     }
     REPORT(logger, "");
     clean_up();

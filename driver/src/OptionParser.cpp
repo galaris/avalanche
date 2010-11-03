@@ -119,6 +119,9 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
         }
+        else if (arg_vec[i] == "--log-exploit-info") {
+            config->setLoggingExploitInfo();
+        }
         else if (arg_vec[i] == "--distributed") {
             config->setDistributed();
         }
