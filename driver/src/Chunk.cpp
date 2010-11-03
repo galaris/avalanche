@@ -28,7 +28,6 @@
 
 #include <vector>
 #include <iostream>
-#include <fstream>
 
 using namespace std;
 
@@ -62,7 +61,7 @@ FileBuffer* Chunk::getTrace()
   return trace;
 }
 
-void Chunk::print(string prefix, int chunkNum, bool dumpToFile)
+void Chunk::print(string prefix, int chunkNum)
 {
   ostringstream out;
   out << "chunk " << chunkNum << ": ";
@@ -96,17 +95,5 @@ void Chunk::print(string prefix, int chunkNum, bool dumpToFile)
     out << " - No stack trace available";
   }
   REPORT(logger, out.str());
-  if (dumpToFile)
-  {
-    ostringstream tmp;
-    tmp << "chunk " << chunkNum << ": ";
-    string toFile = out.str().substr(tmp.str().size());
-    ofstream f("exploit_info.log", ios_base::ate);
-    if (f.good())
-    {
-      f << toFile.c_str() << endl;
-      f.close();
-    }
-  }
 }
 
