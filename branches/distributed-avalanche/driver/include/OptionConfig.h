@@ -58,8 +58,7 @@ public:
                     disthost(std::string("127.0.0.1")),
                     port(65536),
                     distport(10000),
-                    STPThreads(0),
-                    logExploitInfo(false)
+                    STPThreads(0)
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -93,7 +92,6 @@ public:
         STPThreads	= opt_config->STPThreads;
         STPThreadsAuto	= opt_config->STPThreadsAuto;
         prefix          = opt_config->prefix;
-        logExploitInfo = opt_config->logExploitInfo;
     }
 
     bool empty() const
@@ -119,15 +117,9 @@ public:
 
     void setDebug()
     { debug = true; }
-
+    
     bool getDebug() const
     { return debug; }
-
-    void setLoggingExploitInfo()
-    { logExploitInfo = true; }
-
-    bool getLoggingExploitInfo() const
-    { return logExploitInfo; }
 
     void setSTPThreadsAuto()
     { STPThreadsAuto = true; }
@@ -305,7 +297,6 @@ private:
     bool                     distributed;
     bool                     agent;
     bool                     STPThreadsAuto;
-    bool                     logExploitInfo;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
