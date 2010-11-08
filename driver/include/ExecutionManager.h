@@ -118,7 +118,6 @@ private:
     std::set<unsigned long> basicBlocksCovered;
     int exploits;
     int divergences;
-    int distfd;
 };
 
 

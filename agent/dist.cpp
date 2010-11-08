@@ -30,16 +30,77 @@ int mainfd = -1;
     printf("connection with %d is down\n", fd); \
     fds.erase(find(fds.begin(), fds.end(), fd)); }
 
+set<int> starvating_a;
+set<int> starvating_g;
 
 void send_exit()
 {
-  for (int i = 0; i < fds.size() && fds.at(i) != mainfd; i ++)
+  fds.erase(find(fds.begin(), fds.end(), mainfd));
+
+  for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end(); fd++)
   {
-    printf("sending exit to %d\n", fds.at(i));
-    write(fds.at(i), "e", 1);
-    close(fds.at(i));
+    int tosend = -1;
+    write(*fd, &tosend, sizeof(int));
+    read(*fd, &tosend, sizeof(int));
+    shutdown(*fd, SHUT_RDWR);
+    close(*fd);
+    fds.erase(find(fds.begin(), fds.end(), *fd));
   }
+  for (set<int>::iterator fd = starvating_g.begin(); fd != starvating_g.end(); fd++)
+  {
+    int tosend = -1;
+    write(*fd, &tosend, sizeof(int));
+    read(*fd, &tosend, sizeof(int));
+    shutdown(*fd, SHUT_RDWR);
+    close(*fd);
+    fds.erase(find(fds.begin(), fds.end(), *fd));
+  }
+  while (fds.size() > 0)
+  {
+    fd_set readfds;
+    int max_d = 0;
+    FD_ZERO(&readfds);
+
+    for (vector<int>::iterator fd = fds.begin(); fd != fds.end(); fd++)
+    {
+      FD_SET(*fd, &readfds);
+      if (*fd > max_d) 
+      {
+        max_d = *fd;
+      }
+    }
+
+    select(max_d + 1, &readfds, NULL, NULL, NULL);
+
+    for (vector<int>::iterator fd = fds.begin(); fd != fds.end();)
+    {
+      if (FD_ISSET(*fd, &readfds)) 
+      {
+        int tosend = -1;
+        write(*fd, &tosend, sizeof(int));
+        read(*fd, &tosend, sizeof(int));
+        shutdown(*fd, SHUT_RDWR);
+        close(*fd);
+        vector<int>::iterator to_erase = fd; 
+        fd++;
+        if (fd == fds.end())
+        {
+          fds.erase(to_erase);
+          break;
+        }
+        fds.erase(to_erase);
+      }
+      else
+      {
+        fd++;
+      }
+    }
+  }
+
+  shutdown(mainfd, SHUT_RDWR);
   close(mainfd);
+  shutdown(sfd, SHUT_RDWR);
+  close(sfd);
   exit(0);
 }
 
@@ -57,7 +118,6 @@ void sig_handler(int signo)
 int main(int argc, char** argv)
 {
   signal(SIGINT, sig_handler);
-  signal(SIGPIPE, SIG_IGN);
   struct sockaddr_in stSockAddr;
   sfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 
@@ -90,9 +150,6 @@ int main(int argc, char** argv)
     close(sfd);
     exit(EXIT_FAILURE);
   }
-
-  set<int> starvating_a;
-  set<int> starvating_g;
 
   bool gameBegan = false;
 
@@ -276,6 +333,11 @@ int main(int argc, char** argv)
             }
             set<int>::iterator to_erase = fd;
             fd++;
+            if (fd == starvating_a.end())
+            {
+              starvating_a.erase(to_erase);
+              break;
+            }
             starvating_a.erase(to_erase);
           }
           else
@@ -333,6 +395,11 @@ int main(int argc, char** argv)
             WRITE(*fd, &startdepth, sizeof(int));
             set<int>::iterator to_erase = fd;
             fd++;
+            if (fd == starvating_g.end())
+            {
+              starvating_g.erase(to_erase);
+              break;
+            }
             starvating_g.erase(to_erase);
           }
           else
@@ -419,6 +486,12 @@ int main(int argc, char** argv)
       starvating_g.erase(*fd);
     }
   }
+  for (int i = 0; i < fds.size() && fds.at(i) != mainfd; i ++)
+  {
+    close(fds.at(i));
+  }
+  close(mainfd);
+  close(sfd);
   return 0;
 }
 

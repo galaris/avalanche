@@ -15,84 +15,128 @@
 #include <vector>
 #include <string>
 
-#define READ(var, type, fmt, sanity_check) \
-    do \
-    { \
-      if (read(fd, &var, sizeof(type)) <= 0) conn_error("connection with server is down"); \
-      if (sanity_check && var < 0) conn_error("bad data"); \
-      printf(#var "=%" fmt "\n", var); \
-    } \
-    while(0) 
-
 using namespace std;
 
 int fd;
-pid_t pid;
+pid_t pid = 0;
 vector <char*> file_name;
 int file_num;
+bool sockets, datagrams;
 
-void conn_error(const char* msg)
+void readFromSocket(int fd, void* b, size_t count)
 {
-  printf("%s\n", msg);
-  close(fd);
-  for (int i = 0; i < file_name.size(); i ++)
+  char* buf = (char*) b;
+  size_t received = 0;
+  while (received < count)
   {
-    delete [](file_name.at(i));
+    size_t r = read(fd, buf + received, count - received);
+    if (r == 0)
+    {
+      throw "connection is down";
+    }
+    if (r == -1)
+    {
+      throw "error reading from socket";
+    }
+    received += r;
   }
-  exit(EXIT_FAILURE);
+}
+
+void recvInput(bool initial)
+{
+  int net_fd, length, namelength;
+  if (sockets || datagrams)
+  {
+    net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    write(net_fd, &file_num, sizeof(int));
+  }
+  for (int j = 0; j < file_num; j ++)
+  {
+    if (initial && !sockets && !datagrams)
+    {
+      readFromSocket(fd, &namelength, sizeof(int));
+      if (namelength == -1)
+      {
+        write(fd, &namelength, sizeof(int));
+        throw "main Avalanche agent is finished";
+      }
+      char* filename = new char[namelength + 1];
+      readFromSocket(fd, filename, namelength);
+      filename[namelength] = '\0';
+      file_name.push_back(filename);
+    }
+    readFromSocket(fd, &length, sizeof(int));
+    if (length == -1)
+    {
+      write(fd, &length, sizeof(int));
+      throw "main Avalanche agent is finished";
+    }
+    char* file = new char[length];
+    readFromSocket(fd, file, length);
+    if (sockets || datagrams)
+    {
+      write(net_fd, &length, sizeof(int));
+      write(net_fd, file, length);
+    }
+    else
+    {
+      int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      if (descr == -1)
+      {
+        perror("open failed");
+        close(fd);
+        //exit(EXIT_FAILURE);
+      }
+      write(descr, file, length);
+      close(descr);
+    }
+    delete[] file;
+  }
+  if (sockets || datagrams)
+  {
+    close(net_fd);
+  }
 }
 
 void sig_hndlr(int signo)
 {
-  write(fd, "g", 1);
-  int length, startdepth = 0;
+  int startdepth = 0;
   int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-  for (int i = 0; i < file_num; i ++)
+  write(fd, "g", 1);
+  try
   {
-    int res = read(fd, &length, sizeof(int));
-    if (res < 1)
-    {
-      write(descr, &startdepth, sizeof(int));
-      close(descr);   
-      kill(pid, SIGUSR2); 
-      return;
-    }
-    if (length <= 0)
-    {
-      write(descr, &startdepth, sizeof(int));
-      close(descr);   
-      kill(pid, SIGUSR2); 
-      conn_error("bad data");
-    }
-    char* file = new char[length];
-    int received = 0;
-    while (received < length)
-    {
-      int r = read(fd, file + received, length - received);
-      if (r < 1)
-      {
-        write(descr, &startdepth, sizeof(int));
-        close(descr);
-        kill(pid, SIGUSR2);
-        return;
-      }
-      received += r;
-    }
-    int fdescr = open(file_name.at(i), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-    write(fdescr, file, length);
-    close(fdescr);
-    delete[] file;
+    recvInput(false);
+    readFromSocket(fd, &startdepth, sizeof(int));
   }
-  read(fd, &startdepth, sizeof(int));
+  catch (const char* msg)
+  {
+    shutdown(fd, O_RDWR);
+    close(fd);
+    printf("coudln't receive non zero scored input: %s\n", msg);
+  }
   write(descr, &startdepth, sizeof(int));
   close(descr);
   
   kill(pid, SIGUSR2);
 }
+
+void int_handler(int signo)
+{
+  shutdown(fd, SHUT_RDWR);
+  close(fd);
+  if (pid != 0)
+  {
+    kill(pid, SIGINT);
+  }
+  for (int i = 0; i < file_name.size(); i ++)
+  {
+    delete [](file_name.at(i));
+  }
+  file_name.clear();
+}  
  
 int main(int argc, char** argv)
 {
-  signal(SIGPIPE, SIG_IGN);
   struct sockaddr_in stSockAddr;
   int res;
   bool requestNonZero = false;
@@ -137,358 +181,252 @@ int main(int argc, char** argv)
 
   printf("connected\n");
 
-  if (write(fd, "a", 1) < 1) conn_error("connection with server is down");
-  int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
-  bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, sockets, datagrams, suppressSubcalls, STPThreadsAuto;
-  int received, net_fd;
+  try
+  {
+    signal(SIGINT, int_handler);
+    write(fd, "a", 1);
+
+    int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm;
+    int threads, argsnum, masklength, filtersNum, flength, received, net_fd;
+    bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls, STPThreadsAuto;
   
-  READ(file_num, int, "d", true);
-  READ(sockets, bool, "d", false);
-  READ(datagrams, bool, "d", false);
-  if (sockets || datagrams)
-  {
-    net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-    write(net_fd, &file_num, sizeof(int));
-  }
-  for (int j = 0; j < file_num; j ++)
-  {
-    char *filename;
+    readFromSocket(fd, &file_num, sizeof(int));
+    if (file_num == -1)
+    {
+      write(fd, &file_num, sizeof(int));
+      throw "main Avalanche agent is finished";
+    }
+    readFromSocket(fd, &sockets, sizeof(bool));
+    readFromSocket(fd, &datagrams, sizeof(bool));
+    recvInput(true);
+
+    readFromSocket(fd, &startdepth, sizeof(int));
+    readFromSocket(fd, &invertdepth, sizeof(int));
+    readFromSocket(fd, &alarm, sizeof(int));
+    readFromSocket(fd, &tracegrindAlarm, sizeof(int));
+    readFromSocket(fd, &threads, sizeof(int));
+    readFromSocket(fd, &argsnum, sizeof(int));
+    readFromSocket(fd, &useMemcheck, sizeof(bool));
+    readFromSocket(fd, &leaks, sizeof(bool));
+    readFromSocket(fd, &traceChildren, sizeof(bool));
+    readFromSocket(fd, &checkDanger, sizeof(bool));
+    readFromSocket(fd, &debug, sizeof(bool));
+    readFromSocket(fd, &verbose, sizeof(bool));
+    readFromSocket(fd, &suppressSubcalls, sizeof(bool));
+    readFromSocket(fd, &STPThreadsAuto, sizeof(bool));
+ 
+    char* avalanche_argv[100];
+    string argstr(argv[0]);
+    size_t sl = argstr.find_last_of('/');
+    if (sl != string::npos) 
+    {
+      avalanche_argv[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("avalanche")).c_str());
+    }
+    else 
+    {
+      avalanche_argv[0] = "avalanche";
+    }
+    argstr.clear();
+    int argv_delta = 0;
+
     if (!sockets && !datagrams)
     {
-      READ(namelength, int, "d", true);
-      filename = new char[namelength + 1];
-      received = 0;
-      while (received < namelength)
+      for (int i = 0; i < file_num; i ++)
       {
-        res = read(fd, filename + received, namelength - received);
-        if (res < 1) conn_error("connection with server is down");
-        received += res;
+        char s[512];
+        sprintf(s, "--filename=%s", file_name.at(i));
+        avalanche_argv[1 + i] = strdup(s);
       }
-      filename[namelength] = '\0';
-      file_name.push_back(strdup(filename));
-      printf("filename=%s\n", filename);
+      argv_delta = file_num;
     }
-    READ(length, int, "d", true);
-    char* file = new char[length];
-    received = 0;
-    while (received < length)
+  
+    char depth[128];
+    sprintf(depth, "--depth=%d", invertdepth);
+    avalanche_argv[1 + argv_delta] = depth;
+
+    char sdepth[128];
+    sprintf(sdepth, "--startdepth=%d", startdepth);
+    avalanche_argv[2 + argv_delta] = sdepth;
+
+    char alrm[128];
+    sprintf(alrm, "--alarm=%d", alarm);
+    avalanche_argv[3 + argv_delta] = alrm;
+
+    avalanche_argv[4 + argv_delta] = "--prefix=branch0_";
+
+    if (STPThreadsAuto)
     {
-      res = read(fd, file + received, length - received);
-      if (res < 1) conn_error("connection with server is down");
-      received += res;
-    }
-    printf("\n");
-    if (sockets || datagrams)
-    {
-      write(net_fd, &length, sizeof(int));
-      write(net_fd, file, length);
+      avalanche_argv[5 + argv_delta] = "--stp-threads-auto";
     }
     else
     {
-      int descr = open(filename, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      char thrds[128];
+      sprintf(thrds, "--stp-threads=%d", threads);
+      avalanche_argv[5 + argv_delta] = strdup(thrds);
+    }
+
+    int av_argc = 6 + argv_delta;
+    if (requestNonZero)
+    {
+      avalanche_argv[6 + argv_delta] = "--agent";
+      av_argc++;
+    }
+
+    int runs = 0;
+    if (tracegrindAlarm != 0)
+    {
+      char alrm[128];
+      sprintf(alrm, "--tracegrind-alarm=%d", tracegrindAlarm);
+      avalanche_argv[av_argc++] = alrm;
+    }
+    if (useMemcheck)
+    {
+      avalanche_argv[av_argc++] = "--use-memcheck";
+    }
+    if (leaks)
+    {
+      avalanche_argv[av_argc++] = "--leaks";
+    }
+    if (traceChildren)
+    {
+      avalanche_argv[av_argc++] = "--trace-children";
+    }
+    if (checkDanger)
+    {
+      avalanche_argv[av_argc++] = "--check-danger";
+    }
+    if (debug)
+    {
+      avalanche_argv[av_argc++] = "--debug";
+    }
+    if (verbose)
+    {
+      avalanche_argv[av_argc++] = "--verbose";
+    }
+    if (sockets)
+    {
+      avalanche_argv[av_argc++] = "--sockets";
+    }
+    if (datagrams)
+    {
+      avalanche_argv[av_argc++] = "--datagrams";
+    }
+    if (suppressSubcalls)
+    {
+      avalanche_argv[av_argc++] = "--suppress-subcalls";
+    }
+
+    if (sockets)
+    {
+      int length, port;
+      char buf[128], host[128], prt[128];
+      readFromSocket(fd, &length, sizeof(int));
+      readFromSocket(fd, buf, length);
+      buf[length] = '\0';
+      sprintf(host, "--host=%s", buf);
+      avalanche_argv[av_argc++] = strdup(host);
+      readFromSocket(fd, &port, sizeof(int));
+      sprintf(prt, "--port=%d", port);
+      avalanche_argv[av_argc++] = strdup(prt);
+    }
+
+    readFromSocket(fd, &masklength, sizeof(int));
+    if (masklength != 0)
+    {
+      char* mask = new char[masklength];
+      readFromSocket(fd, mask, masklength);
+      int descr = open("mask", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
       if (descr == -1)
       {
         perror("open failed");
         close(fd);
         exit(EXIT_FAILURE);
       }
-      write(descr, file, length);
-      delete []filename;
+      write(descr, mask, masklength);
       close(descr);
+      delete[] mask;
+      avalanche_argv[av_argc++] = "--mask=mask";
     }
-    delete[] file;
-  }
-  if (sockets || datagrams)
-  {
-    close(net_fd);
-  }
-  READ(startdepth, int, "d", true);
-  READ(invertdepth, int, "d", true);
-  READ(alarm, int, "d", true);
-  READ(tracegrindAlarm, int, "d", true);
-  READ(threads, int, "d", true);
-  READ(argsnum, int, "d", true);
-  READ(useMemcheck, bool, "d", false);
-  READ(leaks, bool, "d", false);
-  READ(traceChildren, bool, "d", false);
-  READ(checkDanger, bool, "d", false);
-  READ(debug, bool, "d", false);
-  READ(verbose, bool, "d", false);
-  READ(suppressSubcalls, bool, "d", false);
-  READ(STPThreadsAuto, bool, "d", false);
- 
-  char* avalanche_argv[100];
-  string argstr(argv[0]);
-  size_t sl = argstr.find_last_of('/');
-  if (sl != string::npos) {
-      avalanche_argv[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("avalanche")).c_str());
-  }
-  else {
-      avalanche_argv[0] = "avalanche";
-  }
-  argstr.clear();
-  int argv_delta = 0;
-  if (!sockets && !datagrams)
-  {
-    for (int i = 0; i < file_num; i ++)
+
+    readFromSocket(fd, &filtersNum, sizeof(int));
+    for (int i = 0; i < filtersNum; i++)
     {
-      char s[128];
-      sprintf(s, "--filename=%s", file_name.at(i));
-      avalanche_argv[1 + i] = strdup(s);
-    }
-    argv_delta = file_num;
-  }
-  
-  char depth[128];
-  sprintf(depth, "--depth=%d", invertdepth);
-  avalanche_argv[1 + argv_delta] = depth;
+      int length;
+      char buf[128], fltr[128];
+      readFromSocket(fd, &length, sizeof(int));
+      readFromSocket(fd, buf, length);
+      buf[length] = '\0';
+      sprintf(fltr, "--func-name=%s", buf);
+      avalanche_argv[av_argc++] = fltr;
+    } 
 
-  char sdepth[128];
-  sprintf(sdepth, "--startdepth=%d", startdepth);
-  avalanche_argv[2 + argv_delta] = sdepth;
-
-  char alrm[128];
-  sprintf(alrm, "--alarm=%d", alarm);
-  avalanche_argv[3 + argv_delta] = alrm;
-
-  avalanche_argv[4 + argv_delta] = "--prefix=branch0_";
-
-  if (STPThreadsAuto)
-  {
-    avalanche_argv[5 + argv_delta] = "--stp-threads-auto";
-  }
-  else
-  {
-    char thrds[128];
-    sprintf(thrds, "--stp-threads=%d", threads);
-    avalanche_argv[5 + argv_delta] = strdup(thrds);
-  }
-
-  for (int i = 0; i < 6 + argv_delta; i ++)
-  {
-    printf("argv[%d]=%s\n", i, avalanche_argv[i]);
-  }
-
-  int av_argc = 6 + argv_delta;
-  if (requestNonZero)
-  {
-    avalanche_argv[6 + argv_delta] = "--agent";
-    printf("argv[%d]=%s\n", 6 + argv_delta, avalanche_argv[6 + argv_delta]);
-    av_argc++;
-  }
-
-  int runs = 0;
-  if (tracegrindAlarm != 0)
-  {
-    char alrm[128];
-    sprintf(alrm, "--tracegrind-alarm=%d", tracegrindAlarm);
-    avalanche_argv[av_argc++] = alrm;
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (useMemcheck)
-  {
-    avalanche_argv[av_argc++] = "--use-memcheck";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (leaks)
-  {
-    avalanche_argv[av_argc++] = "--leaks";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (traceChildren)
-  {
-    avalanche_argv[av_argc++] = "--trace-children";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (checkDanger)
-  {
-    avalanche_argv[av_argc++] = "--check-danger";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (debug)
-  {
-    avalanche_argv[av_argc++] = "--debug";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (verbose)
-  {
-    avalanche_argv[av_argc++] = "--verbose";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (sockets)
-  {
-    avalanche_argv[av_argc++] = "--sockets";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (datagrams)
-  {
-    avalanche_argv[av_argc++] = "--datagrams";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  if (suppressSubcalls)
-  {
-    avalanche_argv[av_argc++] = "--suppress-subcalls";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-
-  if (sockets)
-  {
-    int length;
-    READ(length, int, "d", true);
-    char buf[128];
-    if (read(fd, buf, length) < 0) conn_error("connection with server is down");
-    buf[length] = '\0';
-    char host[128];
-    sprintf(host, "--host=%s", buf);
-    avalanche_argv[av_argc++] = strdup(host);
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-    int port;
-    READ(port, int, "d", true);
-    char prt[128];
-    sprintf(prt, "--port=%d", port);
-    avalanche_argv[av_argc++] = strdup(prt);
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);    
-  }
-
-  int masklength;
-  READ(masklength, int, "d", true);
-  if (masklength != 0)
-  {
-    char* mask = new char[masklength];
-    if (read(fd, mask, masklength) < 0) conn_error("connection with server is down");
-    int descr = open("mask", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-    if (descr == -1)
+    readFromSocket(fd, &flength, sizeof(int));
+    if (flength != 0)
     {
-      perror("open failed");
-      close(fd);
-      exit(EXIT_FAILURE);
-    }
-    write(descr, mask, masklength);
-    close(descr);
-    delete[] mask;
-    avalanche_argv[av_argc++] = "--mask=mask";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-
-  int filtersNum;
-  READ(filtersNum, int, "d", true);
-  for (int i = 0; i < filtersNum; i++)
-  {
-    int length;
-    char buf[128];
-    READ(length, int, "d", true);
-    if (read(fd, buf, length) < 0) conn_error("connection with server is down");
-    buf[length] = '\0';
-    char* fltr = new char[128];
-    sprintf(fltr, "--func-name=%s", buf);
-    avalanche_argv[av_argc++] = fltr;
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }  
-
-  int flength;
-  read(fd, &flength, sizeof(int));
-  if (flength != 0)
-  {
-    char* filter = new char[flength];
-    if (read(fd, filter, flength) < 0) conn_error("connection with server is down");
-    int descr = open("filter", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-    if (descr == -1)
-    {
-      perror("open failed");
-      close(fd);
-      exit(EXIT_FAILURE);
-    }
-    write(descr, filter, flength);
-    close(descr);
-    delete[] filter;
-    avalanche_argv[av_argc++] = "--func-file=filter";
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-
-  for (int i = 0; i < argsnum; i++)
-  {
-    int arglength;
-    READ(arglength, int, "d", true);
-    char* arg = new char[arglength + 1];
-    if (read(fd, arg, arglength) < 0) conn_error("connection with server is down");
-    arg[arglength] = '\0';
-    avalanche_argv[av_argc++] = arg;
-    printf("argv[%d]=%s\n", av_argc - 1, avalanche_argv[av_argc - 1]);
-  }
-  avalanche_argv[av_argc] = NULL;
-  printf("argv[%d]=NULL\n", av_argc);
-
-  for (;;)
-  {
-    signal(SIGUSR1, sig_hndlr);
-    pid = fork();
-    if (pid == 0)
-    {
-      printf("starting child avalanche...\n");
-      execvp(avalanche_argv[0], avalanche_argv);
-    }
-    wait(NULL);
-
-    write(fd, "g", 1);
-    int length, startdepth;
-    if (sockets || datagrams)
-    {
-      net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-      write(net_fd, &file_num, sizeof(int));
-    }
-    for (int j = 0; j < file_num; j ++)
-    {
-      READ(length, int, "d", true);
-      char* file = new char[length];
-      received = 0;
-      while (received < length)
+      char* filter = new char[flength];
+      readFromSocket(fd, filter, flength);
+      int descr = open("filter", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      if (descr == -1)
       {
-        res = read(fd, file + received, length - received);
-        if (res < 1) conn_error("connection with server is down");
-        received += res;
+        perror("open failed");
+        close(fd);
+        exit(EXIT_FAILURE);
       }
-      printf("\n");
-      if (sockets || datagrams)
-      {
-        write(net_fd, &length, sizeof(int));
-        write(net_fd, file, length);
-      }
-      else
-      {
-        int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-        if (descr == -1)
-        {
-          perror("open failed");
-          close(fd);
-          exit(EXIT_FAILURE);
-        }
-        write(descr, file, length);
-        close(descr);
-      }
-      delete[] file;
+      write(descr, filter, flength);
+      close(descr);
+      delete[] filter;
+      avalanche_argv[av_argc++] = "--func-file=filter";
     }
-    if (sockets || datagrams)
+
+    for (int i = 0; i < argsnum; i++)
     {
-      close(net_fd);
+      int arglength;
+      readFromSocket(fd, &arglength, sizeof(int));
+      char* arg = new char[arglength + 1];
+      readFromSocket(fd, arg, arglength);
+      arg[arglength] = '\0';
+      avalanche_argv[av_argc++] = arg;
     }
+    avalanche_argv[av_argc] = NULL;
+
+    for (;;)
+    {
+      signal(SIGUSR1, sig_hndlr);
+      pid = fork();
+      if (pid == 0)
+      {
+        printf("starting child avalanche...\n");
+        execvp(avalanche_argv[0], avalanche_argv);
+      }
+      wait(NULL);
+
+      write(fd, "g", 1);
+      recvInput(false);
     
-    READ(startdepth, int, "d", true);
-    char sdepth[128];
-    sprintf(sdepth, "--startdepth=%d", startdepth);
-    avalanche_argv[2 + argv_delta] = sdepth;
-    printf("argv[%d]=%s\n", 2 + argv_delta, avalanche_argv[2 + argv_delta]);
+      int startdepth;
+      readFromSocket(fd, &startdepth, sizeof(int));
 
-    char prefix[128];
-    sprintf(prefix, "--prefix=branch%d_", ++runs);
-    avalanche_argv[4 + argv_delta] = prefix;
-    printf("argv[%d]=%s\n", 4 + argv_delta, avalanche_argv[4 + argv_delta]);    
+      char sdepth[128];
+      sprintf(sdepth, "--startdepth=%d", startdepth);
+      avalanche_argv[2 + argv_delta] = sdepth;
+
+      char prefix[128];
+      sprintf(prefix, "--prefix=branch%d_", ++runs);
+      avalanche_argv[4 + argv_delta] = prefix; 
+    }
   }
-  close(fd);
+  catch (const char* msg)
+  {
+    shutdown(fd, SHUT_RDWR);
+    close(fd);
+    printf("exiting...\n");
+  }
+
   for (int i = 0; i < file_name.size(); i ++)
   {
     delete [](file_name.at(i));
   }
- 
+  file_name.clear();
   return 0;
 }
 
