@@ -84,6 +84,8 @@ pthread_cond_t finish_cond;
 
 int in_thread_creation = -1;
 
+int distfd;
+
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
     DBG(logger, "Initializing plugin manager");
@@ -1317,6 +1319,7 @@ ExecutionManager::~ExecutionManager()
     if (is_distributed)
     {
       write(distfd, "q", 1);
+      shutdown(distfd, SHUT_RDWR);
       close(distfd);
     }
 

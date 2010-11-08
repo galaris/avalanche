@@ -72,6 +72,7 @@ extern set <int> modified_input;
 
 extern pthread_mutex_t finish_mutex;
 int thread_num;
+extern int distfd;
 
 static void printHelpBanner()
 {
@@ -147,6 +148,12 @@ void clean_up()
 
 void sig_hndlr(int signo)
 {
+  if (opt_config->getDistributed())
+  {
+    write(distfd, "q", 1);
+    shutdown(distfd, SHUT_RDWR);
+    close(distfd);
+  }
   if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
   {
     initial->dumpFiles();
