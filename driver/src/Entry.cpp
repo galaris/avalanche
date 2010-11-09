@@ -172,12 +172,24 @@ void sig_hndlr(int signo)
   char s[256];
   sprintf(s, "total: %ld, ", end - start);
   LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
-  REPORT(logger, "\nExploits report:");
-  for (int i = 0; i < report.size(); i++)
+  if (opt_config->getReportLog() == NULL)
   {
-    report.at(i)->print(opt_config->getPrefix(), i);
+    REPORT(logger, "\nExploits report:");
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i);
+    }
+    REPORT(logger, "");
   }
-  REPORT(logger, "");
+  else
+  {
+    int fd = open(opt_config->getReportLog(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i, fd);
+    }
+    close(fd);
+  }  
   clean_up();
   exit(0);
 }
@@ -230,12 +242,24 @@ int main(int argc, char *argv[])
     {
       initial->dumpFiles();
     }
-    REPORT(logger, "\nExploits report:");
-    for (int i = 0; i < report.size(); i++)
+    if (opt_config->getReportLog() == NULL)
     {
-      report.at(i)->print(opt_config->getPrefix(), i);
+      REPORT(logger, "\nExploits report:");
+      for (int i = 0; i < report.size(); i++)
+      {
+        report.at(i)->print(opt_config->getPrefix(), i);
+      }
+      REPORT(logger, "");
     }
-    REPORT(logger, "");
+    else
+    {
+      int fd = open(opt_config->getReportLog(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      for (int i = 0; i < report.size(); i++)
+      {
+        report.at(i)->print(opt_config->getPrefix(), i, fd);
+      }
+      close(fd);
+    }      
     clean_up();
     return EXIT_SUCCESS;
 }

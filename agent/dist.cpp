@@ -461,6 +461,8 @@ int main(int argc, char** argv)
           printf("received m\n");
           mainfd = *fd;
           gameBegan = true;
+          int size = fds.size();
+          write(*fd, &size, sizeof(int));
         }
         else if (command == 'q')
         {

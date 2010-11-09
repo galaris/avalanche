@@ -26,6 +26,10 @@
 #include "FileBuffer.h"
 #include "Logger.h"
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include <vector>
 #include <iostream>
 
@@ -61,7 +65,7 @@ FileBuffer* Chunk::getTrace()
   return trace;
 }
 
-void Chunk::print(string prefix, int chunkNum)
+void Chunk::print(string prefix, int chunkNum, int fd)
 {
   ostringstream out;
   out << "chunk " << chunkNum << ": ";
@@ -94,6 +98,15 @@ void Chunk::print(string prefix, int chunkNum)
   {
     out << " - No stack trace available";
   }
-  REPORT(logger, out.str());
+  if (fd == -1)
+  {
+    REPORT(logger, out.str());
+  }
+  else
+  {
+    out << "\n";
+    string output = out.str();
+    write(fd, output.c_str(), output.length());
+  }
 }
 

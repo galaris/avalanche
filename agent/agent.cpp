@@ -180,6 +180,7 @@ int main(int argc, char** argv)
   }  
 
   printf("connected\n");
+  int runs = 0;
 
   try
   {
@@ -265,14 +266,15 @@ int main(int argc, char** argv)
       avalanche_argv[5 + argv_delta] = strdup(thrds);
     }
 
-    int av_argc = 6 + argv_delta;
+    avalanche_argv[6 + argv_delta] = "--report-log=report0.log";
+    int av_argc = 7 + argv_delta;
+
     if (requestNonZero)
     {
-      avalanche_argv[6 + argv_delta] = "--agent";
+      avalanche_argv[7 + argv_delta] = "--agent";
       av_argc++;
     }
 
-    int runs = 0;
     if (tracegrindAlarm != 0)
     {
       char alrm[128];
@@ -413,6 +415,10 @@ int main(int argc, char** argv)
       char prefix[128];
       sprintf(prefix, "--prefix=branch%d_", ++runs);
       avalanche_argv[4 + argv_delta] = prefix; 
+
+      char report[128];
+      sprintf(report, "--report-log=report%d.log", runs);
+      avalanche_argv[7 + argv_delta] = report; 
     }
   }
   catch (const char* msg)
@@ -422,6 +428,27 @@ int main(int argc, char** argv)
     printf("exiting...\n");
   }
 
+  printf("Exploits report:\n");
+  for (int i = 0; i <= runs; i++)
+  {
+    char report[128];
+    sprintf(report, "report%d.log", i);
+    int fd = open(report, O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+    if (fd != -1)
+    {
+      struct stat fileInfo;
+      fstat(fd, &fileInfo);
+      int size = fileInfo.st_size;
+      char* buf = new char [size];
+      read(fd, buf, size);
+      char branch[128];
+      int s = sprintf(branch, "branch%d:\n", i);
+      write(1, branch, s);
+      write(1, buf, size);
+      close(fd);  
+      delete[] buf;
+    }
+  }
   for (int i = 0; i < file_name.size(); i ++)
   {
     delete [](file_name.at(i));

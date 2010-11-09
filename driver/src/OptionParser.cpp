@@ -64,6 +64,10 @@ OptionConfig *OptionParser::run() const
             string host = arg_vec[i].substr(strlen("--host="));
             config->setHost(host);
         }
+        else if (arg_vec[i].find("--report-log=") != string::npos) {
+            string log = arg_vec[i].substr(strlen("--report-log="));
+            config->setReportLog(strdup(log.c_str()));
+        }
         else if (arg_vec[i].find("--prefix=") != string::npos) {
             string prefix = arg_vec[i].substr(strlen("--prefix="));
             config->setPrefix(prefix);
@@ -118,6 +122,9 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
+        }
+        else if (arg_vec[i] == "--protect-main-agent") {
+            config->setProtectMainAgent();
         }
         else if (arg_vec[i] == "--distributed") {
             config->setDistributed();
