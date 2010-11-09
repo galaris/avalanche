@@ -47,6 +47,8 @@
 #include <vector>
 #include <set>
 
+#define N 5
+
 using namespace std;
 
 extern Monitor* monitor;
@@ -85,6 +87,7 @@ pthread_cond_t finish_cond;
 int in_thread_creation = -1;
 
 int distfd;
+int agents;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -136,6 +139,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 
       LOG(logger, "Connected to server");
       write(distfd, "m", 1);
+      read(distfd, &agents, sizeof(int));
    }
 }
 
@@ -1117,6 +1121,7 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
   timer.tv_sec = 0;
   timer.tv_usec = 0;
   select(distfd + 1, &readfds, NULL, NULL, &timer);
+  int limit = config->getProtectMainAgent() ? N * agents : 1;
   while (FD_ISSET(distfd, &readfds)) 
   {
     char c = '\0';
@@ -1137,7 +1142,7 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       read(distfd, &size, sizeof(int));
       while (size > 0)
       {
-        if (inputs.size() <= 1)
+        if (inputs.size() <= limit)
         {
           break;
         }
@@ -1272,7 +1277,7 @@ void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
       read(distfd, &size, sizeof(int));
       while (size > 0)
       {
-        if (inputs.size() <= 1)
+        if (inputs.size() <= limit)
         { 
           break;
         }

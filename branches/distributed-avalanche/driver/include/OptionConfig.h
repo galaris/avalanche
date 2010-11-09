@@ -35,7 +35,9 @@
 class OptionConfig
 {
 public:
-    OptionConfig(): debug(false),
+    OptionConfig(): reportLog(NULL),
+                    debug(false),
+                    protectMainAgent(false),
                     STPThreadsAuto(false),
 		    checkDanger(false),
                     verbose(false),
@@ -63,8 +65,10 @@ public:
 
     OptionConfig(const OptionConfig *opt_config)
     {
+        reportLog       = opt_config->reportLog;
         traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
+        protectMainAgent= opt_config->protectMainAgent;
         distributed     = opt_config->distributed;
         agent           = opt_config->agent;
         checkDanger     = opt_config->checkDanger;
@@ -115,6 +119,12 @@ public:
     const std::string getInputFilterFile() const
     { return inputFilterFile; }
 
+    char* getReportLog() const
+    { return reportLog; }
+
+    void setReportLog(char* reportLog)
+    { this->reportLog = reportLog; }
+
     void setDebug()
     { debug = true; }
     
@@ -132,6 +142,12 @@ public:
     
     bool getTraceChildren() const
     { return traceChildren; }
+
+    void setProtectMainAgent()
+    { protectMainAgent = true; }
+
+    bool getProtectMainAgent() const
+    { return protectMainAgent; }
 
     void setDumpCalls()
     { dumpCalls = true; }
@@ -284,7 +300,9 @@ public:
     { disthost = host; }
 
 private:
+    char*                    reportLog;
     bool                     debug;
+    bool                     protectMainAgent;
     bool                     verbose;
     bool		     sockets;
     bool                     datagrams;

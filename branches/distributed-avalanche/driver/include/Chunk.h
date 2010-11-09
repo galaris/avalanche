@@ -43,7 +43,7 @@ public:
   
   FileBuffer* getTrace();
 
-  void print(std::string prefix, int chunkNum);
+  void print(std::string prefix, int chunkNum, int fd = -1);
 };
 
 #endif
