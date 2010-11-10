@@ -15,6 +15,8 @@
 #include <vector>
 #include <string>
 
+#include "util.h"
+
 using namespace std;
 
 int fd;
@@ -22,25 +24,6 @@ pid_t pid = 0;
 vector <char*> file_name;
 int file_num;
 bool sockets, datagrams;
-
-void readFromSocket(int fd, void* b, size_t count)
-{
-  char* buf = (char*) b;
-  size_t received = 0;
-  while (received < count)
-  {
-    size_t r = read(fd, buf + received, count - received);
-    if (r == 0)
-    {
-      throw "connection is down";
-    }
-    if (r == -1)
-    {
-      throw "error reading from socket";
-    }
-    received += r;
-  }
-}
 
 void recvInput(bool initial)
 {
@@ -57,7 +40,7 @@ void recvInput(bool initial)
       readFromSocket(fd, &namelength, sizeof(int));
       if (namelength == -1)
       {
-        write(fd, &namelength, sizeof(int));
+        writeToSocket(fd, &namelength, sizeof(int));
         throw "main Avalanche agent is finished";
       }
       char* filename = new char[namelength + 1];
@@ -68,7 +51,7 @@ void recvInput(bool initial)
     readFromSocket(fd, &length, sizeof(int));
     if (length == -1)
     {
-      write(fd, &length, sizeof(int));
+      writeToSocket(fd, &length, sizeof(int));
       throw "main Avalanche agent is finished";
     }
     char* file = new char[length];
@@ -102,7 +85,7 @@ void sig_hndlr(int signo)
 {
   int startdepth = 0;
   int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-  write(fd, "g", 1);
+  writeToSocket(fd, "g", 1);
   try
   {
     recvInput(false);
@@ -137,33 +120,46 @@ void int_handler(int signo)
  
 int main(int argc, char** argv)
 {
-  struct sockaddr_in stSockAddr;
-  int res;
   bool requestNonZero = false;
-  if ((argc > 3) && !strcmp(argv[3], "--request-non-zero"))
+  if ((argc < 3) || (argc > 4))
   {
-    requestNonZero = true;
-  }
- 
-  memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
- 
-  stSockAddr.sin_family = AF_INET;
-  stSockAddr.sin_port = htons(atoi(argv[2]));
-  res = inet_pton(AF_INET, argv[1], &stSockAddr.sin_addr);
- 
-  if (res < 0)
-  {
-    perror("error: first parameter is not a valid address family");
+    printf("usage: av-agent <host address> <port number> [--request-non-zero]\n");
     exit(EXIT_FAILURE);
   }
-  else if (res == 0)
+  if (argc == 4)
   {
-    perror("char string (second parameter does not contain valid ipaddress");
+    if (!strcmp(argv[3], "--request-non-zero"))
+    {
+      requestNonZero = true;
+    }
+    else
+    {
+      printf("usage: av-agent <host address> <port number> [--request-non-zero]\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  int port = atoi(argv[2]);
+  if (port == 0)
+  {
+    printf("usage: av-agent <host address> <port number> [--request-non-zero]\n");
+    exit(EXIT_FAILURE);
+  }
+ 
+  struct sockaddr_in stSockAddr;
+  memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
+  stSockAddr.sin_family = AF_INET;
+  stSockAddr.sin_port = htons(port);
+  int res = inet_pton(AF_INET, argv[1], &stSockAddr.sin_addr);
+ 
+  if (res <= 0)
+  {
+    perror("wrong network address");
+    printf("usage: av-agent <host address> <port number> [--request-non-zero]\n");
     exit(EXIT_FAILURE);
   }
 
   fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-
   if (fd == -1)
   {
     perror("cannot create socket");
@@ -171,7 +167,6 @@ int main(int argc, char** argv)
   }
     
   res = connect(fd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in));
- 
   if (res < 0)
   {
     perror("error connect failed");
@@ -185,7 +180,7 @@ int main(int argc, char** argv)
   try
   {
     signal(SIGINT, int_handler);
-    write(fd, "a", 1);
+    writeToSocket(fd, "a", 1);
 
     int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm;
     int threads, argsnum, masklength, filtersNum, flength, received, net_fd;
@@ -194,7 +189,7 @@ int main(int argc, char** argv)
     readFromSocket(fd, &file_num, sizeof(int));
     if (file_num == -1)
     {
-      write(fd, &file_num, sizeof(int));
+      writeToSocket(fd, &file_num, sizeof(int));
       throw "main Avalanche agent is finished";
     }
     readFromSocket(fd, &sockets, sizeof(bool));
@@ -402,7 +397,7 @@ int main(int argc, char** argv)
       }
       wait(NULL);
 
-      write(fd, "g", 1);
+      writeToSocket(fd, "g", 1);
       recvInput(false);
     
       int startdepth;
