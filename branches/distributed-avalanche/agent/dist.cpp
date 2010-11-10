@@ -14,34 +14,34 @@
 #include <vector>
 #include <set>
 
+#include "util.h"
+
 using namespace std;
 
 vector<int> fds;
 int sfd;
 int mainfd = -1;
 
-#define READ_MAIN(var, size) \
-  if (read(mainfd, var, size) == -1) { \
-    printf("connection with main avalanche is down\n"); \
-    send_exit(); }
-
-#define WRITE(fd, var, size) \
-  if (write(fd, var, size) == -1) { \
-    printf("connection with %d is down\n", fd); \
-    fds.erase(find(fds.begin(), fds.end(), fd)); }
-
 set<int> starvating_a;
 set<int> starvating_g;
 
-void send_exit()
+void finalize_and_exit()
 {
   fds.erase(find(fds.begin(), fds.end(), mainfd));
 
   for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end(); fd++)
   {
     int tosend = -1;
-    write(*fd, &tosend, sizeof(int));
-    read(*fd, &tosend, sizeof(int));
+    try
+    {
+      writeToSocket(*fd, &tosend, sizeof(int));
+      readFromSocket(*fd, &tosend, sizeof(int));
+    }
+    catch (...)
+    { 
+      printf("connection with %d is down\n", *fd); 
+      fds.erase(find(fds.begin(), fds.end(), *fd));
+    }    
     shutdown(*fd, SHUT_RDWR);
     close(*fd);
     fds.erase(find(fds.begin(), fds.end(), *fd));
@@ -49,8 +49,16 @@ void send_exit()
   for (set<int>::iterator fd = starvating_g.begin(); fd != starvating_g.end(); fd++)
   {
     int tosend = -1;
-    write(*fd, &tosend, sizeof(int));
-    read(*fd, &tosend, sizeof(int));
+    try
+    {
+      writeToSocket(*fd, &tosend, sizeof(int));
+      readFromSocket(*fd, &tosend, sizeof(int));
+    }
+    catch (...)
+    { 
+      printf("connection with %d is down\n", *fd); 
+      fds.erase(find(fds.begin(), fds.end(), *fd));
+    }  
     shutdown(*fd, SHUT_RDWR);
     close(*fd);
     fds.erase(find(fds.begin(), fds.end(), *fd));
@@ -76,9 +84,16 @@ void send_exit()
     {
       if (FD_ISSET(*fd, &readfds)) 
       {
-        int tosend = -1;
-        write(*fd, &tosend, sizeof(int));
-        read(*fd, &tosend, sizeof(int));
+        try
+        {
+          int tosend = -1;
+          writeToSocket(*fd, &tosend, sizeof(int));
+          readFromSocket(*fd, &tosend, sizeof(int));
+        }
+        catch (...) 
+        { 
+     
+        }
         shutdown(*fd, SHUT_RDWR);
         close(*fd);
         vector<int>::iterator to_erase = fd; 
@@ -104,6 +119,52 @@ void send_exit()
   exit(0);
 }
 
+void pass(int fd, void* valaddr, size_t size)
+{
+  try
+  {
+    readFromSocket(mainfd, valaddr, size);
+  }
+  catch (const char* msg) 
+  { 
+    printf("connection with main avalanche is down\n"); 
+    finalize_and_exit(); 
+  } 
+  try
+  { 
+    writeToSocket(fd, valaddr, size);
+  }
+  catch (const char* msg) 
+  { 
+    printf("connection with %d is down\n", fd); 
+    fds.erase(find(fds.begin(), fds.end(), fd)); 
+  }
+}
+
+void pass(int fd, int length)
+{
+  char* buf = new char[length];
+  try
+  {
+    readFromSocket(mainfd, buf, length);
+  }
+  catch (const char* msg) 
+  { 
+    printf("connection with main avalanche is down\n"); 
+    finalize_and_exit(); 
+  } 
+  try
+  { 
+    writeToSocket(fd, buf, length);
+  }
+  catch (const char* msg) 
+  { 
+    printf("connection with %d is down\n", fd); 
+    fds.erase(find(fds.begin(), fds.end(), fd)); 
+  }
+  delete[] buf;
+}
+
 void sig_handler(int signo)
 {
   shutdown(sfd, SHUT_RDWR);
@@ -117,24 +178,36 @@ void sig_handler(int signo)
  
 int main(int argc, char** argv)
 {
-  signal(SIGINT, sig_handler);
+  if (argc != 2)
+  {
+    printf("usage: av-dist <port number>\n");
+    exit(EXIT_FAILURE);
+  }    
+  int port = atoi(argv[1]);
+  if (port == 0)
+  {
+    printf("usage: av-dist <port number>\n");
+    exit(EXIT_FAILURE);
+  }
+
   struct sockaddr_in stSockAddr;
   sfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-
   if(sfd == -1)
   {
     perror("can not create socket");
     exit(EXIT_FAILURE);
   }
+
+  int on = 1;
+  setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+  signal(SIGINT, sig_handler);
  
   memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
- 
-  stSockAddr.sin_family = AF_INET;
-  stSockAddr.sin_port = htons(atoi(argv[1]));
+  stSockAddr.sin_family = AF_INET;  
+  stSockAddr.sin_port = htons(port);
   stSockAddr.sin_addr.s_addr = INADDR_ANY;
 
   int bindRes = bind(sfd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in));
- 
   if(bindRes == -1)
   {
     perror("error bind failed");
@@ -143,7 +216,6 @@ int main(int argc, char** argv)
   }
 
   int listenRes = listen(sfd, 10);
- 
   if(listenRes == -1)
   {
     perror("error listen failed");
@@ -152,13 +224,11 @@ int main(int argc, char** argv)
   }
 
   bool gameBegan = false;
-
-  int filenum ;
+  int filenum;
   bool sockets, datagrams;
  
   for(;;)
   {
-
     fd_set readfds;
     int max_d = sfd;
     FD_ZERO(&readfds);
@@ -173,163 +243,117 @@ int main(int argc, char** argv)
       }
     }
 
-    //struct timeval timer;
-    //timer.tv_sec = 0;
-    //timer.tv_usec = 0;
-
     if (gameBegan)
     {
       printf("iterating through starvated\n");
       int size = starvating_a.size();
       if (size > 0)
       {
-        write(mainfd, "a", 1);
-        write(mainfd, &size, sizeof(int));
-        char c;
-        READ_MAIN(&c, 1);
+        char c = 'q';
+        try
+        {
+          writeToSocket(mainfd, "a", 1);
+          writeToSocket(mainfd, &size, sizeof(int));
+          readFromSocket(mainfd, &c, 1);
+        }
+        catch (...)
+        { 
+          printf("connection with main avalanche is down\n"); 
+          finalize_and_exit();
+        }          
         //first read 1 byte - either "r" or "q"
         if (c == 'q')
         {
           printf("main avalanche finished work\n");
-          send_exit();
+          finalize_and_exit();
         }
         for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end();)
         {
-          int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, argsnum;
+          int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads;
+          int argsnum, filtersNum, filterlength, masklength;
           bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls, STPThreadsAuto;
-          char buf[128];
           filenum = 0;
-          READ_MAIN( &filenum, sizeof(int));
+          try 
+          { 
+            readFromSocket(mainfd, &filenum, sizeof(int)); 
+          } 
+          catch (const char* msg) 
+          { 
+            printf("connection with main avalanche is down\n"); 
+            finalize_and_exit(); 
+          }
           printf("filenum=%d\n", filenum);
           if (filenum > 0)
           {
-            WRITE(*fd, &filenum, sizeof(int));
-            READ_MAIN( &sockets, sizeof(bool));
-            WRITE(*fd, &sockets, sizeof(bool));
-            READ_MAIN( &datagrams, sizeof(bool));
-            WRITE(*fd, &datagrams, sizeof(bool));
+            try
+            {
+              writeToSocket(*fd, &filenum, sizeof(int));
+            }
+            catch (...)
+            {
+              printf("connection with %d is down\n", *fd);
+              fds.erase(find(fds.begin(), fds.end(), *fd));
+            }  
+            pass(*fd, &sockets, sizeof(bool));
+            pass(*fd, &datagrams, sizeof(bool));
             for (int j = 0; j < filenum; j ++)
             {
               if (!sockets && !datagrams)
               {
-                READ_MAIN( &namelength, sizeof(int));
-                printf("namelength=%d\n", namelength);
-                WRITE(*fd, &namelength, sizeof(int));
-                read(mainfd, buf, namelength);
-                buf[namelength] = '\0';
-                printf("buf=%s\n", buf);
-                write(*fd, buf, namelength);
+                pass(*fd, &namelength, sizeof(int));
+                pass(*fd, namelength);
               }
-              READ_MAIN( &length, sizeof(int));
-              printf("length=%d\n", length);
-              WRITE(*fd, &length, sizeof(int));
-              char* file = new char[length];
-              int received = 0;
-              while (received < length)
-              {
-                int res = read(mainfd, file + received, length - received);
-                if (res == -1)
-                {
-                  printf("connection with main avalanche is down\n");
-                  send_exit();
-                }
-                received += res;
-              }
-              /*for (int j = 0; j < length; j++)
-              {
-                printf("%x", file[j]);
-              }*/
-              write(*fd, file, length);
-              delete []file;
+              pass(*fd, &length, sizeof(int));
+              pass(*fd, length);
             }
-            READ_MAIN( &startdepth, sizeof(int));
-            WRITE(*fd, &startdepth, sizeof(int));
-            READ_MAIN( &invertdepth, sizeof(int));
-            WRITE(*fd, &invertdepth, sizeof(int));
-            READ_MAIN( &alarm, sizeof(int));
-            WRITE(*fd, &alarm, sizeof(int));
-            READ_MAIN( &tracegrindAlarm, sizeof(int));
-            printf("tracegrindAlarm=%d\n", tracegrindAlarm);
-            WRITE(*fd, &tracegrindAlarm, sizeof(int));
-            READ_MAIN( &threads, sizeof(int));
-            WRITE(*fd, &threads, sizeof(int));
-            READ_MAIN( &argsnum, sizeof(int));
-            printf("argsnum=%d\n", argsnum);
-            WRITE(*fd, &argsnum, sizeof(int));
-
-            READ_MAIN( &useMemcheck, sizeof(bool));
-            WRITE(*fd, &useMemcheck, sizeof(bool));
-            READ_MAIN( &leaks, sizeof(bool));
-            WRITE(*fd, &leaks, sizeof(bool));
-            READ_MAIN( &traceChildren, sizeof(bool));
-            WRITE(*fd, &traceChildren, sizeof(bool));
-            READ_MAIN( &checkDanger, sizeof(bool));
-            WRITE(*fd, &checkDanger, sizeof(bool));
-            READ_MAIN( &debug, sizeof(bool));
-            WRITE(*fd, &debug, sizeof(bool));
-            READ_MAIN( &verbose, sizeof(bool));
-            WRITE(*fd, &verbose, sizeof(bool));
-            READ_MAIN( &suppressSubcalls, sizeof(bool));
-            WRITE(*fd, &suppressSubcalls, sizeof(bool));
-            READ_MAIN( &STPThreadsAuto, sizeof(bool));
-            WRITE(*fd, &STPThreadsAuto, sizeof(bool));
+            pass(*fd, &startdepth, sizeof(int));
+            pass(*fd, &invertdepth, sizeof(int));
+            pass(*fd, &alarm, sizeof(int));
+            pass(*fd, &tracegrindAlarm, sizeof(int));
+            pass(*fd, &threads, sizeof(int));
+            pass(*fd, &argsnum, sizeof(int));
+            pass(*fd, &useMemcheck, sizeof(bool));
+            pass(*fd, &leaks, sizeof(bool));
+            pass(*fd, &traceChildren, sizeof(bool));
+            pass(*fd, &checkDanger, sizeof(bool));
+            pass(*fd, &debug, sizeof(bool));
+            pass(*fd, &verbose, sizeof(bool));
+            pass(*fd, &suppressSubcalls, sizeof(bool));
+            pass(*fd, &STPThreadsAuto, sizeof(bool));
 
             if (sockets)
             {
-              int length;
-              READ_MAIN( &length, sizeof(int));
-              WRITE(*fd, &length, sizeof(int));
-              read(mainfd, buf, length);
-              write(*fd, buf, length);
-              int port;
-              READ_MAIN( &port, sizeof(int));
-              WRITE(*fd, &port, sizeof(int));
+              int length, port;
+              pass(*fd, &length, sizeof(int));
+              pass(*fd, length);
+              pass(*fd, &port, sizeof(int));
             }
 
-            int masklength;
-            READ_MAIN( &masklength, sizeof(int));
-            WRITE(*fd, &masklength, sizeof(int));
+            pass(*fd, &masklength, sizeof(int));
             if (masklength != 0)
             {
-              char* mask = new char[masklength];
-              read(mainfd, mask, masklength);
-              write(*fd, mask, masklength);
-              delete[] mask;
+              pass(*fd, masklength);
             }
 
-            int filtersNum;
-            READ_MAIN( &filtersNum, sizeof(int));
-            WRITE(*fd, &filtersNum, sizeof(int));
+            pass(*fd, &filtersNum, sizeof(int));
             for (int i = 0; i < filtersNum; i++)
             {
               int length; 
-              READ_MAIN( &length, sizeof(int));
-              WRITE(*fd, &length, sizeof(int));
-              read(mainfd, buf, length);
-              write(*fd, buf, length);
+              pass(*fd, &length, sizeof(int));
+              pass(*fd, length);
             }
 
-            int filterlength;
-            READ_MAIN( &filterlength, sizeof(int));
-            WRITE(*fd, &filterlength, sizeof(int));
+            pass(*fd, &filterlength, sizeof(int));
             if (filterlength != 0)
             {
-              char* filter = new char[filterlength];
-              read(mainfd, filter, filterlength);
-              write(*fd, filter, filterlength);
-              delete[] filter;
+              pass(*fd, filterlength);
             }
 
             for (int i = 0; i < argsnum; i++)
             {
               int arglength;
-              READ_MAIN( &arglength, sizeof(int));
-              printf("arglength=%d\n", arglength);
-              WRITE(*fd, &arglength, sizeof(int));
-              read(mainfd, buf, arglength);
-              buf[arglength] = '\0';
-              printf("buf=%s\n", buf);
-              write(*fd, buf, arglength);
+              pass(*fd, &arglength, sizeof(int));
+              pass(*fd, arglength);
             }
             set<int>::iterator to_erase = fd;
             fd++;
@@ -351,38 +375,49 @@ int main(int argc, char** argv)
       if (size > 0)
       {
         int length, startdepth;
-        write(mainfd, "g", 1);
-        write(mainfd, &size, sizeof(int));
-        char c;
-        READ_MAIN(&c, 1);
+        char c = 'q';
+        try
+        {
+          writeToSocket(mainfd, "g", 1);
+          writeToSocket(mainfd, &size, sizeof(int));
+          readFromSocket(mainfd, &c, 1);
+        }
+        catch (...)
+        { 
+          printf("connection with main avalanche is down\n"); 
+          finalize_and_exit();
+        } 
         //first read 1 byte - either "r" or "q"
         if (c == 'q')
         {
           printf("main avalanche finished work\n");
-          send_exit();
+          finalize_and_exit();
         }
         for (set<int>::iterator fd = starvating_g.begin(); fd != starvating_g.end();)
         {
           for (int j = 0; j < filenum; j ++)
           {
-            READ_MAIN(&length, sizeof(int));
+            try 
+            { 
+              readFromSocket(mainfd, &length, sizeof(int)); 
+            } 
+            catch (const char* msg) 
+            { 
+              printf("connection with main avalanche is down\n"); 
+              finalize_and_exit(); 
+            }
             if (length > 0)
             {
-              WRITE(*fd, &length, sizeof(int));
-              char* file = new char[length];
-              int received = 0;
-              while (received < length)
+              try
               {
-                int res = read(mainfd, file + received, length - received);
-                if (res == -1)
-                {
-                  printf("connection with main avalanche is down\n");
-                  send_exit();
-                }
-                received += res;
+                writeToSocket(*fd, &length, sizeof(int));
               }
-              write(*fd, file, length);
-              delete []file;
+              catch (...)
+              {
+                printf("connection with %d is down\n", *fd);
+                fds.erase(find(fds.begin(), fds.end(), *fd));
+              }                
+              pass(*fd, length);
             }
             else 
             {
@@ -391,8 +426,7 @@ int main(int argc, char** argv)
           }
           if (length > 0)
           {
-            READ_MAIN(&startdepth, sizeof(int));
-            WRITE(*fd, &startdepth, sizeof(int));
+            pass(*fd, &startdepth, sizeof(int));
             set<int>::iterator to_erase = fd;
             fd++;
             if (fd == starvating_g.end())
@@ -443,17 +477,22 @@ int main(int argc, char** argv)
       {
         //printf("106\n");
         char command;
-        if (read(*fd, &command, 1) < 1)
-        {
-          if (*fd != mainfd)
+        try 
+        { 
+          readFromSocket(*fd, &command, 1); 
+        } 
+        catch (const char* msg) 
+        { 
+          if (*fd == mainfd)
+          {
+            printf("connection with main avalanche is down\n"); 
+            finalize_and_exit(); 
+          }
+          else
           {
             printf("connection with %d is down\n", *fd);
             to_erase.push_back(*fd);
             continue;
-          }
-          else
-          {
-            send_exit();
           }
         }
         if (command == 'm') 
@@ -462,12 +501,20 @@ int main(int argc, char** argv)
           mainfd = *fd;
           gameBegan = true;
           int size = fds.size();
-          write(*fd, &size, sizeof(int));
+          try 
+          { 
+            writeToSocket(mainfd, &size, sizeof(int)); 
+          } 
+          catch (const char* msg) 
+          { 
+            printf("connection with main avalanche is down\n"); 
+            finalize_and_exit(); 
+          }
         }
         else if (command == 'q')
         {
           printf("main avalanche finished work\n");
-          send_exit();
+          finalize_and_exit();
         }
         else if (command == 'g')
         {

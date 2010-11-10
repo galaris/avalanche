@@ -5,7 +5,9 @@ av_agent_CFLAGS = -Wno-deprecated
 av_dist_CFLAGS = -Wno-deprecated
 
 av_agent_SOURCES = \
-       agent.cpp 
+       agent.cpp \
+       util.cpp 
 
 av_dist_SOURCES = \
-       dist.cpp 
+       dist.cpp \
+       util.cpp
