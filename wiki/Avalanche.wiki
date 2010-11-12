@@ -9,19 +9,22 @@
 
 Avalanche was tested on a number of open-source tools and has found the following bugs:
 
- * [http://www.mplayerhq.hu/design7/news.html mencoder] (NPD)
- * [http://www.gnu.org/software/wget/ wget] (NPD)
- * [http://libquicktime.sourceforge.net/ libquicktime] (3xNPD, infinite loop)
- * [http://www.swftools.org/ swftools] (2xNPD)
- * [http://avifile.sourceforge.net/ avifile] (NPD)
+ * [http://llvm.org/ llvm] ([http://llvm.org/bugs/show_bug.cgi?id=8494 segmentation fault])
+ * [http://www.mono-project.com/Main_Page mono] ([https://bugzilla.novell.com/show_bug.cgi?id=636794 segmentation fault])
+ * [http://www.parrot.org/ parrot vm] ([http://trac.parrot.org/parrot/ticket/1740 a bunch of segmentation faults])
+ * [http://www.mplayerhq.hu/design7/news.html mencoder] (segmentation fault)
+ * [http://www.gnu.org/software/wget/ wget] (segmentation fault)
+ * [http://libquicktime.sourceforge.net/ libquicktime] (3 segmentation faults, infinite loop)
+ * [http://www.swftools.org/ swftools] (2 segmentation faults)
+ * [http://avifile.sourceforge.net/ avifile] (segmentation fault)
  * [http://libmpeg2.sourceforge.net/ libmpeg2] (division by zero)
  * [http://www.gnu.org/software/gnash/ gnash] (uncaught exception)
  * [http://www.68k.org/~michael/audiofile/ audiofile] (infinite loop)
  * [http://www.mega-nerd.com/libsndfile/ libsndfile] (division by zero)
  * [http://xiph.org/downloads/ vorbis-tools] (infinite loop)
  * [http://www.ijg.org/ libjpeg] (division by zero)
- * [http://freshmeat.net/projects/libmpeg3/ libmpeg3] (2xNPD)
- * [http://wvware.sourceforge.net/libwmf.html libwmf] (NPD)
+ * [http://freshmeat.net/projects/libmpeg3/ libmpeg3] (2 segmentation faults)
+ * [http://wvware.sourceforge.net/libwmf.html libwmf] (segmentation fault)
 
 etc...
 
