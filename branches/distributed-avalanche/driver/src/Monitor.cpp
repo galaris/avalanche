@@ -28,14 +28,16 @@
 #include <iterator>
 #include <iomanip>
 
-Monitor::Monitor(std::string checker_name) : is_killed(false)
+using namespace std;
+
+Monitor::Monitor(string checker_name, time_t _global_start_time) : is_killed(false), global_start_time(_global_start_time)
 {
   module_name[CHECKER] = checker_name;
   module_name[TRACER] = "tracegrind";
   module_name[STP] = "stp";
 }
 
-SimpleMonitor::SimpleMonitor(std::string checker_name) : Monitor(checker_name), 
+SimpleMonitor::SimpleMonitor(string checker_name, time_t _global_start_time) : Monitor(checker_name, _global_start_time), 
                                                          current_state(OUT)
 {
   for (int i = 0; i < MODULE_COUNT; i ++)
@@ -53,9 +55,9 @@ void SimpleMonitor::addTime(time_t end_time, unsigned int thread_index)
   }
 }
             
-std::string SimpleMonitor::getStats(time_t global_time)
+string SimpleMonitor::getStats(time_t global_time)
 {
-  std::ostringstream result;
+  ostringstream result;
   for (int i = 0; i < MODULE_COUNT; i ++)
   {
     result << module_name[i] << ": " << module_time[i];
@@ -82,9 +84,10 @@ void SimpleMonitor::handleSIGALARM()
   kill(current_pid, SIGKILL); 
 }
 
-ParallelMonitor::ParallelMonitor(std::string checker_name, unsigned int _thread_num, time_t _time_shift) : Monitor(checker_name),
-                                                                                                           time_shift(_time_shift)
+ParallelMonitor::ParallelMonitor(string checker_name, time_t _global_start_time, unsigned int _thread_num)
+                                                                                 : Monitor(checker_name, _global_start_time)
 {
+  pthread_mutex_init(&add_time_mutex, NULL);
   checker_alarm = 0;
   tracer_alarm = 0;
   tracer_time = 0;
@@ -109,6 +112,7 @@ ParallelMonitor::~ParallelMonitor()
   delete []stp_start_time;
   delete []current_pid;
   delete []alarm_killed;
+  pthread_mutex_destroy(&add_time_mutex);
 }
 
 void ParallelMonitor::setState(state _state, time_t _start_time, unsigned int thread_index)
@@ -135,6 +139,7 @@ void ParallelMonitor::setState(state _state, time_t _start_time, unsigned int th
 
 void ParallelMonitor::addTime(time_t end_time, unsigned int thread_index)
 {
+  pthread_mutex_lock(&add_time_mutex);
   if (current_state[thread_index] == TRACER)
   {
     if (tracer_start_time != 0)
@@ -146,17 +151,21 @@ void ParallelMonitor::addTime(time_t end_time, unsigned int thread_index)
   }
   else if (current_state[thread_index] != OUT)
   {
-    time_t st_time = (current_state[thread_index] == CHECKER) ? checker_start_time[((thread_index == 0) ? 1 : thread_index) - 1] 
-                                                              : stp_start_time[thread_index - 1];
+    time_t st_time;
     if (!thread_index)
     {
+      st_time = checker_start_time[thread_index];
       thread_index = 1;
     }
-    if (end_time > st_time && st_time != 0)
+    else
+    {
+      st_time = (current_state[thread_index] == CHECKER) ? checker_start_time[thread_index - 1] : stp_start_time[thread_index - 1];
+    }
+    if ((end_time > st_time) && (st_time != 0))
     {
       interval new_interval;
-      new_interval.first = st_time - time_shift;
-      new_interval.second = end_time - time_shift;
+      new_interval.first = st_time - global_start_time;
+      new_interval.second = end_time - global_start_time;
       if (current_state[thread_index] == CHECKER)
       {
         checker_time.insert(new_interval);
@@ -170,12 +179,13 @@ void ParallelMonitor::addTime(time_t end_time, unsigned int thread_index)
       current_state[thread_index] = OUT;
     }
   }
+  pthread_mutex_unlock(&add_time_mutex);
 }
 
-static std::set <time_t> getRealTimeSet(const std::set <interval> &time_set)
+static set <time_t> getRealTimeSet(const set <interval> &time_set)
 {
-  std::set <time_t> unique_set;
-  for (std::set <interval>::iterator i = time_set.begin(); i != time_set.end(); i ++)
+  set <time_t> unique_set;
+  for (set <interval>::iterator i = time_set.begin(); i != time_set.end(); i ++)
   {
     for (time_t j = (*i).first; j != (*i).second; j ++)
     {
@@ -185,33 +195,33 @@ static std::set <time_t> getRealTimeSet(const std::set <interval> &time_set)
   return unique_set;
 }
 
-std::string ParallelMonitor::getStats(time_t global_time)
+string ParallelMonitor::getStats(time_t global_time)
 {
-  std::ostringstream result;
-  std::set <time_t> tmp_set, real_stp_set, real_checker_set;
+  ostringstream result;
+  set <time_t> tmp_set, real_stp_set, real_checker_set;
 #define EXTENDED_MODULE_COUNT 4
   time_t module_time[EXTENDED_MODULE_COUNT];
   real_checker_set = getRealTimeSet(checker_time);
   real_stp_set = getRealTimeSet(stp_time);
   module_time[TRACER_OUTPUT] = tracer_time;
-  std::set_difference(real_checker_set.begin(), real_checker_set.end(), real_stp_set.begin(), real_stp_set.end(), 
-                      std::inserter(tmp_set, tmp_set.begin()));
+  set_difference(real_checker_set.begin(), real_checker_set.end(), real_stp_set.begin(), real_stp_set.end(), 
+                      inserter(tmp_set, tmp_set.begin()));
   module_time[CHECKER_OUTPUT] = tmp_set.size();
   tmp_set.clear();
-  std::set_difference(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), 
-                      std::inserter(tmp_set, tmp_set.begin()));
+  set_difference(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), 
+                      inserter(tmp_set, tmp_set.begin()));
   module_time[STP_OUTPUT] = tmp_set.size();
   tmp_set.clear();
-  std::set_intersection(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), 
-                        std::inserter(tmp_set, tmp_set.begin()));
+  set_intersection(real_stp_set.begin(), real_stp_set.end(), real_checker_set.begin(), real_checker_set.end(), 
+                        inserter(tmp_set, tmp_set.begin()));
   module_time[CHECKER_AND_STP_OUTPUT] = tmp_set.size();
-  std::string extended_module_name[EXTENDED_MODULE_COUNT];
+  string extended_module_name[EXTENDED_MODULE_COUNT];
   for (int i = 0; i < MODULE_COUNT; i ++)
   {
-    extended_module_name[i] = (i == 0) ? module_name[i] : (module_name[i] + std::string(" only"));
+    extended_module_name[i] = (i == 0) ? module_name[i] : (module_name[i] + string(" only"));
   }
-  extended_module_name[CHECKER_AND_STP_OUTPUT] = module_name[CHECKER] + std::string(" & ") + module_name[STP];
-  result << std::setiosflags(std::ios::fixed) << std::setprecision(4);
+  extended_module_name[CHECKER_AND_STP_OUTPUT] = module_name[CHECKER] + string(" & ") + module_name[STP];
+  result << setiosflags(ios::fixed) << setprecision(4);
   for (int i = 0; i < EXTENDED_MODULE_COUNT; i ++)
   {
     result << extended_module_name[i] << ": " << module_time[i];
@@ -230,7 +240,7 @@ void ParallelMonitor::handleSIGKILL()
 {
   for (int i = 0; i < thread_num + 1; i ++)
   {
-    if (current_state[i] != OUT && current_pid[i] != 0)
+    if ((current_state[i] != OUT) && (current_pid[i] != 0))
     {
       addTime(time(NULL), i);
       kill(current_pid[i], SIGKILL);
@@ -243,7 +253,7 @@ void ParallelMonitor::handleSIGALARM()
   time_t cur_time = time(NULL);
   if (current_state[0] = TRACER)
   {
-    if (tracer_alarm > 0 && cur_time - tracer_start_time >= tracer_alarm)
+    if ((tracer_alarm > 0) && (cur_time - tracer_start_time >= tracer_alarm))
     {
       kill(current_pid[0], SIGALRM);
     }
@@ -252,7 +262,7 @@ void ParallelMonitor::handleSIGALARM()
   {
     for (int i = 0; i < thread_num; i ++)
     {
-      if (cur_time - checker_start_time[i] >= checker_alarm)
+      if ((current_state[i + 1] == CHECKER) && (cur_time - checker_start_time[i] >= checker_alarm))
       {
         alarm_killed[i] = true;
         kill(current_pid[i + 1], SIGALRM);

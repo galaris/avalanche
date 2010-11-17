@@ -35,7 +35,7 @@
 class OptionConfig
 {
 public:
-    OptionConfig(): reportLog(NULL),
+    OptionConfig(): reportLog(std::string("")),
                     debug(false),
                     protectMainAgent(false),
                     STPThreadsAuto(false),
@@ -119,10 +119,10 @@ public:
     const std::string getInputFilterFile() const
     { return inputFilterFile; }
 
-    char* getReportLog() const
+    const std::string getReportLog() const
     { return reportLog; }
 
-    void setReportLog(char* reportLog)
+    void setReportLog(std::string reportLog)
     { this->reportLog = reportLog; }
 
     void setDebug()
@@ -300,7 +300,6 @@ public:
     { disthost = host; }
 
 private:
-    char*                    reportLog;
     bool                     debug;
     bool                     protectMainAgent;
     bool                     verbose;
@@ -315,6 +314,7 @@ private:
     bool                     distributed;
     bool                     agent;
     bool                     STPThreadsAuto;
+    std::string              reportLog;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
@@ -329,8 +329,8 @@ private:
     std::vector<std::string> funcFilterUnits;
     std::string              inputFilterFile;
     std::string              prefix;
-    int                      startdepth;
-    int                      STPThreads;
+    unsigned int             startdepth;
+    unsigned int             STPThreads;
 };
 
 

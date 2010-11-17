@@ -39,10 +39,11 @@ typedef std::pair<time_t, time_t> interval;
 class Monitor
 {
   protected:
+            time_t global_start_time;
             bool is_killed;
             std::string module_name[MODULE_COUNT];
   public: 
-            Monitor(std::string checker_name);
+            Monitor(std::string checker_name, time_t _global_start_time);
             virtual ~Monitor() {}
             virtual void setState(state _state, time_t _start_time, unsigned int thread_index = 0) = 0;
             virtual void setPID(pid_t _pid, unsigned int thread_index = 0) = 0;
@@ -51,8 +52,18 @@ class Monitor
             virtual state getCurrentState(unsigned int thread_index = 0) = 0;
             virtual void handleSIGKILL() = 0;
             virtual void handleSIGALARM() = 0;
-            bool getKilledStatus() { return is_killed; }
-            void setKilledStatus(bool _is_killed) { is_killed = _is_killed; }
+            bool getKilledStatus() 
+            { 
+              return is_killed; 
+            }
+            void setKilledStatus(bool _is_killed) 
+            { 
+              is_killed = _is_killed; 
+            }
+            time_t getGlobalStartTime()
+            {
+              return global_start_time;
+            }
 };
 
 class SimpleMonitor : public Monitor
@@ -63,7 +74,7 @@ class SimpleMonitor : public Monitor
             pid_t current_pid;
             time_t module_time[MODULE_COUNT];
   public:
-            SimpleMonitor(std::string checker_name);
+            SimpleMonitor(std::string checker_name, time_t _global_start_time);
             ~SimpleMonitor() {}
             void setState(state _state, time_t _start_time, unsigned int thread_index = 0)
             {
@@ -79,7 +90,10 @@ class SimpleMonitor : public Monitor
           
             std::string getStats(time_t global_time = 0);
             
-            state getCurrentState(unsigned int thread_index = 0) { return current_state; }
+            state getCurrentState(unsigned int thread_index = 0) 
+            { 
+              return current_state; 
+            }
             void handleSIGKILL();
             void handleSIGALARM();
 };
@@ -88,8 +102,7 @@ class ParallelMonitor : public Monitor
 {
   private:
             unsigned int thread_num;
-            time_t time_shift;
-
+            
             state* current_state;
             pid_t* current_pid;
             bool* alarm_killed;
@@ -103,8 +116,10 @@ class ParallelMonitor : public Monitor
             time_t tracer_time;
             time_t checker_alarm;
             time_t tracer_alarm;
+
+            pthread_mutex_t add_time_mutex;
   public:
-            ParallelMonitor(std::string checker_name, unsigned int _thread_num, time_t _time_shift); 
+            ParallelMonitor(std::string checker_name, time_t _global_start_time, unsigned int _thread_num); 
             ~ParallelMonitor();
 
             void setAlarm(time_t _checker_alarm, time_t _tracer_alarm)
@@ -113,7 +128,10 @@ class ParallelMonitor : public Monitor
               tracer_alarm = _tracer_alarm;
             }
 
-            bool getAlarmKilled(unsigned int thread_index = 0) { return alarm_killed[thread_index - 1]; }
+            bool getAlarmKilled(unsigned int thread_index = 0) 
+            { 
+              return alarm_killed[thread_index - 1]; 
+            }
 
             void setState(state _state, time_t _start_time, unsigned int thread_index = 0);
 
@@ -126,8 +144,11 @@ class ParallelMonitor : public Monitor
            
             std::string getStats(time_t global_time = 0);
              
-            state getCurrentState(unsigned int thread_index = 0) { return current_state[thread_index]; }
-            
+            state getCurrentState(unsigned int thread_index = 0) 
+            { 
+              return current_state[thread_index]; 
+            }
+
             void handleSIGALARM();
 
             void handleSIGKILL();

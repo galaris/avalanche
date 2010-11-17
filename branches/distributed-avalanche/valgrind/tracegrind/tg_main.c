@@ -185,6 +185,7 @@ extern UChar ip1, ip2, ip3, ip4;
 
 Int depth = 0;
 Int invertdepth = 0;
+Bool noInvertLimit = False;
 Int curdepth;
 
 Int memory = 0;
@@ -3841,7 +3842,7 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
       my_write(fdtrace, s, l);
     }
     curdepth++;
-    if ((curdepth > depth + invertdepth) && (fdfuncFilter == -1))
+    if (!noInvertLimit && (curdepth > depth + invertdepth) && (fdfuncFilter == -1))
     {
       dump(fdtrace);
       dump(fddanger);
@@ -4258,6 +4259,11 @@ static void tg_fini(Int exitcode)
   if (dumpPrediction)
   {
     SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+    if (noInvertLimit)
+    {
+      curdepth --;
+      VG_(write) (fd.res, &curdepth, sizeof(Int));
+    }
     VG_(write)(fd.res, actual, (depth + invertdepth) * sizeof(Bool));
     VG_(close)(fd.res);
   }
@@ -4308,6 +4314,10 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_INT_CLO(arg, "--invertdepth", invertdepth))
   {
+    if (invertdepth == 0)
+    {
+      noInvertLimit = True;
+    }
     return True;
   }
   else if (VG_STR_CLO(arg, "--port", addr))

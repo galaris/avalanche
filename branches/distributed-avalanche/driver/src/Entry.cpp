@@ -56,9 +56,6 @@ using namespace std;
 static Logger *logger = Logger::getLogger();
 Monitor* monitor;
 
-time_t start;
-time_t end;
-
 ExecutionManager* em;
 OptionParser *op;
 
@@ -68,9 +65,6 @@ extern vector<Chunk*> report;
 
 extern int in_thread_creation;
 
-extern set <int> modified_input;
-
-extern pthread_mutex_t finish_mutex;
 int thread_num;
 extern int distfd;
 
@@ -108,12 +102,12 @@ static void printHelpBanner()
         "                                 or memcheck (not set by default)\n" 
         "    --tracegrind-alarm=<number>  timer for breaking infinite waitings in tracegrind (not set by default)\n"; 
 
-    std::cout << banner << std::endl;
+    cout << banner << endl;
 }
 
 OptionConfig* opt_config;
 
-void clean_up()
+void cleanUp()
 {
   if (thread_num > 0)
   {
@@ -126,14 +120,12 @@ void clean_up()
       remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
       remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
       remove(string("replace_data").append(file_modifier.str()).c_str());
-      for (set <int>::iterator j = modified_input.begin(); j != modified_input.end(); j ++)
+      for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
       {
-        string f_name = string((opt_config->getProgAndArg())[*j]);
-        remove(f_name.append(file_modifier.str()).c_str());
+        remove(opt_config->getFile(j).append(file_modifier.str()).c_str());
       }
     }
     delete []threads;
-    pthread_mutex_destroy(&finish_mutex);
   }
   for (int i = 0; i < report.size(); i ++)
   {
@@ -144,6 +136,32 @@ void clean_up()
   delete opt_config;
   delete initial;
   delete monitor;
+  delete logger;
+}
+
+void reportResults()
+{
+  time_t end_time = time(NULL);
+  LOG(logger, "Time statistics:\ntotal: " << end_time - monitor->getGlobalStartTime() << ", "
+                                          << monitor->getStats(end_time - monitor->getGlobalStartTime()));
+  if (opt_config->getReportLog() == string(""))
+  {
+    REPORT(logger, "\nExploits report:");
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i);
+    }
+    REPORT(logger, "");
+  }
+  else
+  {
+    int fd = open(opt_config->getReportLog().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i, fd);
+    }
+    close(fd);
+  }  
 }
 
 void sig_hndlr(int signo)
@@ -158,51 +176,28 @@ void sig_hndlr(int signo)
   {
     initial->dumpFiles();
   }
-  pthread_mutex_unlock(&finish_mutex);
   monitor->setKilledStatus(true);
   monitor->handleSIGKILL();
   for (int i = 0; i < thread_num; i ++)
   {
-    if ((!threads[i].getStatus() && in_thread_creation != i) || threads[i].getStatus() == 1)
+    if (in_thread_creation != i)
     {
       threads[i].waitForThread();
     }
   }
-  end = time(NULL);
-  char s[256];
-  sprintf(s, "total: %ld, ", end - start);
-  LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
-  if (opt_config->getReportLog() == NULL)
-  {
-    REPORT(logger, "\nExploits report:");
-    for (int i = 0; i < report.size(); i++)
-    {
-      report.at(i)->print(opt_config->getPrefix(), i);
-    }
-    REPORT(logger, "");
-  }
-  else
-  {
-    int fd = open(opt_config->getReportLog(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-    for (int i = 0; i < report.size(); i++)
-    {
-      report.at(i)->print(opt_config->getPrefix(), i, fd);
-    }
-    close(fd);
-  }  
-  clean_up();
+  reportResults();
+  cleanUp();
   exit(0);
 }
 
 int main(int argc, char *argv[])
 {
-    start = time(NULL); 
+    time_t start_time = time(NULL); 
     signal(SIGINT, sig_hndlr);
     signal(SIGPIPE, SIG_IGN);
-    LOG(logger, "start time: " << std::string(ctime(&start)));    
     op = new OptionParser(argc, argv);
     opt_config = op->run();
-
+    
     if (opt_config == NULL || opt_config->empty()) {
         printHelpBanner();
         return EXIT_FAILURE;
@@ -214,53 +209,28 @@ int main(int argc, char *argv[])
     string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") : string("covgrind"));
     if (thread_num > 0)
     {
-      monitor = new ParallelMonitor(checker_name, thread_num, start);
+      monitor = new ParallelMonitor(checker_name, start_time, thread_num);
       ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
       threads = new PoolThread[thread_num];
-      pthread_mutex_init(&finish_mutex, NULL);
     }
     else
     {
-      monitor = new SimpleMonitor(checker_name);
+      monitor = new SimpleMonitor(checker_name, start_time);
     }
     checker_name.clear();
-    time_t starttime;
-    time(&starttime);
+    time_t work_start_time = time(NULL);
 
     LOG(logger, "Avalanche, a dynamic analysis tool.");
+    LOG(logger, "Start time: " << ctime(&work_start_time));
   
-    string t = string(ctime(&starttime));
-    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));  
-
     em = new ExecutionManager(opt_config);
     em->run();
-    end = time(NULL);
-    char s[256];
-    sprintf(s, "total: %ld, ", end - start);
-    LOG(logger, "Time statistics:\n" << s << monitor->getStats(end - start));
     if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
     {
       initial->dumpFiles();
     }
-    if (opt_config->getReportLog() == NULL)
-    {
-      REPORT(logger, "\nExploits report:");
-      for (int i = 0; i < report.size(); i++)
-      {
-        report.at(i)->print(opt_config->getPrefix(), i);
-      }
-      REPORT(logger, "");
-    }
-    else
-    {
-      int fd = open(opt_config->getReportLog(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-      for (int i = 0; i < report.size(); i++)
-      {
-        report.at(i)->print(opt_config->getPrefix(), i, fd);
-      }
-      close(fd);
-    }      
-    clean_up();
+    reportResults();
+    cleanUp();
     return EXIT_SUCCESS;
 }
 

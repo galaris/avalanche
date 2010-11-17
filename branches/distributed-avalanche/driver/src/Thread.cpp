@@ -24,6 +24,10 @@
 #include "Thread.h"
 #include <signal.h>
 
+using namespace std;
+
+map <string, void*> Thread::shared_data;
+
 int Thread::createThread(void* data, bool is_joinable)
 {
   int ret_code;
@@ -47,27 +51,12 @@ int Thread::createThread(void* data, bool is_joinable)
 
 void Thread::printMessage(const char* message, bool show_real_tid)
 {
-  std::cout << "thread #" << user_tid;
+  cout << "thread #" << user_tid;
   if (show_real_tid)
   {
-    std::cout << "(" << tid << ")";
+    cout << "(" << tid << ")";
   }
-  std::cout << ": " << message << std::endl; 
-}
-
-void Thread::addSharedDataUnit(void* _data_unit, std::string name, pthread_mutex_t* _mutex)
-{
-  if(_mutex != NULL)
-  {
-    shared_data_unit new_data_unit;
-    new_data_unit.mutex = _mutex;
-    new_data_unit.data_unit = _data_unit;
-    shared_data[name] = new_data_unit;
-  }
-  else
-  {
-    readonly_data[name] = _data_unit;
-  }
+  cout << ": " << message << endl; 
 }
 
 void PoolThread::doWork(void* data)
@@ -78,7 +67,7 @@ void PoolThread::doWork(void* data)
   pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
   (((pool_data*) data)->work_func) (((pool_data*) data)->data);
   pthread_mutex_lock(work_finish_mutex);
-  (*thread_status) = 1;
+  thread_status = FREE;
   (*active_threads) ++;
   pthread_cond_signal(work_finish_cond);
   pthread_mutex_unlock(work_finish_mutex);
