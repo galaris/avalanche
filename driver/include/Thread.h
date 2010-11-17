@@ -43,18 +43,11 @@ struct pool_data
   void* data;
 };
 
-struct shared_data_unit
-{
-  pthread_mutex_t* mutex;
-  void* data_unit;
-};
-
 class Thread
 {
   protected:
            std::map <std::string, void*> private_data;
-           std::map <std::string, void*> readonly_data;
-           std::map <std::string, shared_data_unit> shared_data;
+           static std::map <std::string, void*> shared_data;
            pthread_t tid;
            int user_tid;
   public:
@@ -62,8 +55,9 @@ class Thread
            Thread(pthread_t _tid, int _user_tid) : tid(_tid), user_tid(_user_tid) {}
            ~Thread() {}
 
-           void setCustomTID(int _tid) { user_tid = _tid; }
-
+           int createThread(void* data, bool is_joinable = true);
+           virtual int waitForThread() { return pthread_join(tid, NULL); }
+           
            static void* createAndRun(void* input)
            {
              void* data = ((data_wrapper*) input)->data;
@@ -72,49 +66,89 @@ class Thread
              this_pointer->doWork(data);
            }
 
-           int createThread(void* data, bool is_joinable = true);
-
-           void addPrivateDataUnit(void* _data_unit, std::string name) { private_data[name] = _data_unit; }
-           void clearPrivateData() { private_data.clear(); }
-           void addSharedDataUnit(void* _data_unit, std::string name, pthread_mutex_t* _mutex = NULL);
-           void clearSharedData() { readonly_data.clear(); shared_data.clear(); }
-
-           void* getPrivateDataUnit(std::string name) { return private_data[name]; }
-           void* getReadonlyDataUnit(std::string name) { return readonly_data[name]; }
-           shared_data_unit getSharedDataUnit(std::string name) { return shared_data[name]; }
-
            virtual void doWork(void* data) {}
-           int waitForThread() { return pthread_join(tid, NULL); }
-           void printMessage(const char* message, bool show_real_tid = false);
-           int getCustomTID() { return user_tid; }
-           pthread_t getTID() { return tid; }
+           
+           void addPrivateData(void* _data_unit, std::string name) 
+           { 
+             private_data[name] = _data_unit; 
+           }
+           void clearPrivateData() 
+           { 
+             private_data.clear(); 
+           }
+           void* getPrivateData(std::string name) 
+           { 
+             return private_data[name]; 
+           }
+              
+           static void addSharedData(void* _data_unit, std::string name)
+           { 
+             shared_data[name] = _data_unit;
+           }
+           static void clearSharedData() 
+           { 
+             shared_data.clear(); 
+           }
+           static void* getSharedData(std::string name) 
+           { 
+             return shared_data[name];
+           }
 
+           void printMessage(const char* message, bool show_real_tid = false);
+
+           void setCustomTID(int _tid) 
+           { 
+             user_tid = _tid;  
+           }
+
+           int getCustomTID() 
+           { 
+             return user_tid; 
+           }
+
+           pthread_t getTID() 
+           { 
+             return tid; 
+           }
 };
 
 class PoolThread : public Thread
 {
+  public:
+           enum Status {UNINIT = -1, BUSY = 0, FREE = 1};
   private:
            pthread_mutex_t* work_finish_mutex;
            pthread_cond_t* work_finish_cond;
-           int* thread_status;
+           int thread_status;
            int* active_threads;
   public:
-           PoolThread() : work_finish_mutex(NULL), work_finish_cond(NULL), thread_status(NULL), active_threads(NULL) {}
+           PoolThread() : work_finish_mutex(NULL), work_finish_cond(NULL), thread_status(-1), active_threads(NULL) {}
            ~PoolThread() {}
+
+           int waitForThread()
+           {
+             if (thread_status != UNINIT)
+             {
+               Thread::waitForThread();
+               thread_status = UNINIT;
+             }
+           }
            
-           void setPoolSync(pthread_mutex_t* _mutex, pthread_cond_t* _cond, int* _status, int* _active_threads)
+           void setPoolSync(pthread_mutex_t* _mutex, pthread_cond_t* _cond, int* _active_threads)
            {
              work_finish_mutex = _mutex;
              work_finish_cond = _cond;
-             thread_status = _status;
              active_threads = _active_threads;
+           }
+ 
+           int setStatus(int _status)
+           {
+             thread_status = _status;
            }
            
            int getStatus() 
            { 
-             if (thread_status != NULL) 
-               return *thread_status;
-             return -1;
+             return thread_status;
            }
            void doWork(void* data);
 };

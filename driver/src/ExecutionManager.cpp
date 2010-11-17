@@ -61,7 +61,7 @@ bool nokill = false;
 
 bool trace_kind;
 
-Logger *logger = Logger::getLogger();
+static Logger *logger = Logger::getLogger();
 Input* initial;
 int allSockets = 0;
 int curSockets;
@@ -75,12 +75,9 @@ set <unsigned long> delta_bb_covered;
   
 vector<Chunk*> report;
 
-set <int> modified_input;
-
 pthread_mutex_t add_inputs_mutex;
 pthread_mutex_t add_exploits_mutex;
 pthread_mutex_t add_bb_mutex;
-pthread_mutex_t add_time_mutex;
 pthread_mutex_t finish_mutex;
 pthread_cond_t finish_cond;
 
@@ -98,6 +95,15 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     exploits    = 0;
     divergences = 0;
     is_distributed = opt_config->getDistributed();
+    if (thread_num > 0)
+    {
+      pthread_mutex_init(&add_inputs_mutex, NULL);
+      pthread_mutex_init(&add_exploits_mutex, NULL);
+      pthread_mutex_init(&add_bb_mutex, NULL);
+      pthread_mutex_init(&finish_mutex, NULL);
+      pthread_cond_init(&finish_cond, NULL);
+    }
+  
     if (is_distributed)
     {
       struct sockaddr_in stSockAddr;
@@ -143,7 +149,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
    }
 }
 
-void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploitGroup)
+void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group)
 {
   time_t exploittime;
   time(&exploittime);
@@ -168,7 +174,7 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
       else
       {
         stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
+        ss << config->getPrefix() << "stacktrace_" << exploit_group << ".log";
         REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
       }
     }
@@ -191,7 +197,7 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
       else
       {
         stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "stacktrace_" << exploitGroup << ".log";
+        ss << config->getPrefix() << "stacktrace_" << exploit_group << ".log";
         REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
       }
     }
@@ -338,12 +344,13 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
         if (!strcmp(new_prog_and_args[i].c_str(), input->files.at(j)->name))
         {
           new_prog_and_args[i].append(string(fileNameModifier));
-          modified_input.insert(i);
         }
       }
     }
   }
   PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
+  new_prog_and_args.clear();
+  plugin_opts.clear();
   curSockets = 0;
   bool enable_mutexes = (config->getSTPThreads() != 0) && !first_run;
   int thread_index = 0;
@@ -354,13 +361,11 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   time_t start_time = time(NULL);
   monitor->setState(CHECKER, start_time, thread_index);
   int exitCode = plugin_exe.run(thread_index);
-  if (enable_mutexes) pthread_mutex_lock(&add_time_mutex);
   monitor->addTime(time(NULL), thread_index);
-  if (enable_mutexes) pthread_mutex_unlock(&add_time_mutex);
   FileBuffer* mc_output;
   bool infoAvailable = false;
   bool sameExploit = false;
-  int exploitGroup = 0;
+  int exploit_group = 0;
   if (enable_mutexes) pthread_mutex_lock(&add_exploits_mutex);
   bool has_crashed = (exitCode == -1);
   if (!thread_num)
@@ -377,7 +382,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
     infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
     {
-      for (vector<Chunk*>::iterator it = report.begin(); it != report.end(); it++, exploitGroup++)
+      for (vector<Chunk*>::iterator it = report.begin(); it != report.end(); it++, exploit_group++)
       {
         if (((*it)->getTrace() != NULL) && (*(*it)->getTrace() == *cv_output))
         {
@@ -420,7 +425,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
       }
       report.push_back(ch);
     }
-    dumpExploit(input, cv_output, infoAvailable, sameExploit, exploitGroup);
+    dumpExploit(input, cv_output, infoAvailable, sameExploit, exploit_group);
     exploits++;
     delete cv_output;
   }
@@ -514,36 +519,29 @@ void alarmHandler(int signo)
 void* exec_STP_CG(void* data)
 {
   PoolThread* actor = (PoolThread*) data;
-  ExecutionManager* this_pointer = (ExecutionManager*) (actor->getReadonlyDataUnit("this_pointer"));
-  shared_data_unit inp = actor->getSharedDataUnit("inputs");
-  multimap<Key, Input*, cmp>* inputs = (multimap <Key, Input*, cmp> *) (inp.data_unit);
-  pthread_mutex_t* inputs_mutex = inp.mutex;
-  Input* first_input = (Input*) (actor->getReadonlyDataUnit("first_input"));
-  bool* actual = (bool*) (actor->getReadonlyDataUnit("actual"));
-  long depth = (long) (actor->getPrivateDataUnit("depth"));
-  long first_depth = (long) (actor->getPrivateDataUnit("first_depth"));
+  ExecutionManager* this_pointer = (ExecutionManager*) (Thread::getSharedData("this_pointer"));
+  multimap<Key, Input*, cmp>* inputs = (multimap <Key, Input*, cmp> *) (Thread::getSharedData("inputs"));
+  Input* first_input = (Input*) (Thread::getSharedData("first_input"));
+  bool* actual = (bool*) (Thread::getSharedData("actual"));
+  long first_depth = (long) (Thread::getSharedData("first_depth"));
+  long depth = (long) (actor->getPrivateData("depth"));
   int cur_tid = actor->getCustomTID();
-  ostringstream cur_trace_log, input_modifier;
+  ostringstream input_modifier;
   input_modifier << "_" << actor->getCustomTID();
-  cur_trace_log << "curtrace_" << actor->getCustomTID() << ".log";
+  string cur_trace_log = string("curtrace") + input_modifier.str() + string(".log");
   STP_Input si;
-  si.setFile(cur_trace_log.str().c_str());
+  si.setFile(cur_trace_log.c_str());
   STP_Executor stp_exe(this_pointer->getConfig()->getDebug(), this_pointer->getConfig()->getValgrind());        
-  nokill = true;
-  time_t start_time = time(NULL);
-  monitor->setState(STP, start_time, cur_tid);
+  monitor->setState(STP, time(NULL), cur_tid);
   STP_Output *out = stp_exe.run(&si, cur_tid);
-  pthread_mutex_lock(&add_time_mutex);
   monitor->addTime(time(NULL), cur_tid);
-  pthread_mutex_unlock(&add_time_mutex);
-  nokill = false;
   if (out == NULL)
   {
     if (!monitor->getKilledStatus())
     {
       ERR(logger, "STP has encountered an error");
-      FileBuffer f(cur_trace_log.str().c_str());
-      ERR(logger, cur_trace_log.str().c_str() << ":\n" << string(f.buf));
+      FileBuffer f(cur_trace_log.c_str());
+      ERR(logger, cur_trace_log.c_str() << ":\n" << string(f.buf));
     }
   }
   else if (out->getFile() != NULL)
@@ -570,22 +568,21 @@ void* exec_STP_CG(void* data)
     if (next != NULL)
     {
       next->startdepth = st_depth + depth + 1;
-      bool* prediction = new bool[st_depth + depth];
+      next->prediction = new bool[st_depth + depth];
       for (int j = 0; j < st_depth + depth - 1; j++)
       {
-        prediction[j] = actual[j];
+        next->prediction[j] = actual[j];
       }
-      prediction[st_depth + depth - 1] = !actual[st_depth + depth - 1];
-      next->prediction = prediction;
+      next->prediction[st_depth + depth - 1] = !actual[st_depth + depth - 1];
       next->predictionSize = st_depth + depth;
       next->parent = first_input;
       int score = this_pointer->checkAndScore(next, trace_kind, input_modifier.str().c_str());
       if (!trace_kind)
       {
         LOG(logger, "Thread #" << cur_tid << ": score=" << score << "\n");
-        pthread_mutex_lock(inputs_mutex);
+        pthread_mutex_lock(&add_inputs_mutex);
         inputs->insert(make_pair(Key(score, first_depth + depth + 1), next));
-        pthread_mutex_unlock(inputs_mutex);
+        pthread_mutex_unlock(&add_inputs_mutex);
       }
     }
   }
@@ -595,38 +592,42 @@ void* exec_STP_CG(void* data)
 int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned long first_depth)
 {
   int actualfd = open("actual.log", O_RDWR);
-  bool* actual = new bool[first_input->startdepth - 1 + config->getDepth()];
-  read(actualfd, actual, (first_input->startdepth - 1 + config->getDepth()) * sizeof(bool));
+  int actual_length;
+  if (config->getDepth() == 0)
+  {
+    read(actualfd, &actual_length, sizeof(int));
+  }
+  else
+  {
+    actual_length = first_input->startdepth - 1 + config->getDepth();
+  }
+  bool actual[actual_length];
+  read(actualfd, actual, actual_length * sizeof(bool));
   close(actualfd);
   int active_threads = thread_num;
   long depth = 0;
-  int thread_status[thread_num];
-  pthread_mutex_init(&add_inputs_mutex, NULL);
-  pthread_mutex_init(&add_exploits_mutex, NULL);
-  pthread_mutex_init(&add_bb_mutex, NULL);
-  pthread_mutex_init(&add_time_mutex, NULL);
-  pthread_cond_init(&finish_cond, NULL);
-  FileBuffer *trace = new FileBuffer((!trace_kind) ? "trace.log" : "dangertrace.log");
+  FileBuffer *trace = new FileBuffer((!_trace_kind) ? "trace.log" : "dangertrace.log");
   trace_kind = _trace_kind;
-  for (int j = 0; j < thread_num; j ++)
-  {
-    threads[j].setCustomTID(j + 1);
-    threads[j].setPoolSync(&finish_mutex, &finish_cond, &(thread_status[j]), &active_threads);
-    threads[j].addSharedDataUnit((void*) inputs, string("inputs"),  &add_inputs_mutex);
-    threads[j].addSharedDataUnit((void*) first_input, string("first_input"));
-    threads[j].addSharedDataUnit((void*) actual, string("actual"));
-    threads[j].addSharedDataUnit((void*) this, string("this_pointer"));
-    thread_status[j] = -1;
-  }
+  Thread::clearSharedData();
+  Thread::addSharedData((void*) inputs, string("inputs"));
+  Thread::addSharedData((void*) first_input, string("first_input"));
+  Thread::addSharedData((void*) first_depth, string("first_depth"));
+  Thread::addSharedData((void*) actual, string("actual"));
+  Thread::addSharedData((void*) this, string("this_pointer"));
   char* query = trace->buf;
   while((query = strstr(query, "QUERY(FALSE);")) != NULL)
   {
     depth ++;
     query ++;
   }
+  for (int j = 0; j < ((depth < thread_num) ? depth : thread_num); j ++)
+  {
+    threads[j].setCustomTID(j + 1);
+    threads[j].setPoolSync(&finish_mutex, &finish_cond, &active_threads);
+  }
   STP_Output* outputs[depth];
   int thread_counter;
-  pool_data* external_data = new pool_data[depth];
+  pool_data external_data[depth];
   for (int i = 0; i < depth; i ++)
   {
     pthread_mutex_lock(&finish_mutex);
@@ -634,48 +635,35 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
     {
       pthread_cond_wait(&finish_cond, &finish_mutex);
     }
-    for (thread_counter = 0; (thread_counter < thread_num) && (thread_status[thread_counter] == 0); thread_counter ++) {}
-    if (thread_status[thread_counter] == 1)
+    for (thread_counter = 0; thread_counter < thread_num; thread_counter ++) 
+    {
+      if (threads[thread_counter].getStatus())
+      {
+        break;
+      }
+    }
+    if (threads[thread_counter].getStatus() == PoolThread::FREE)
     {
       threads[thread_counter].waitForThread();
     }
     active_threads --;
-    thread_status[thread_counter] = 0;
-    threads[thread_counter].clearPrivateData();
-    threads[thread_counter].addPrivateDataUnit((void*) i, string("depth"));
-    threads[thread_counter].addPrivateDataUnit((void*) first_depth, string("first_depth"));
+    threads[thread_counter].addPrivateData((void*) i, string("depth"));
     external_data[i].work_func = exec_STP_CG;
     external_data[i].data = &(threads[thread_counter]);
     ostringstream cur_trace;
     cur_trace << "curtrace_" << thread_counter + 1 << ".log";
     trace->invertQueryAndDump(cur_trace.str().c_str());
     in_thread_creation = thread_counter;
+    threads[thread_counter].setStatus(PoolThread::BUSY);
     threads[thread_counter].createThread(&(external_data[i]));
     in_thread_creation = -1;
     pthread_mutex_unlock(&finish_mutex);
   }
-  bool do_wait = false;
-  if (depth)
+  for (int i = 0; i < ((depth < thread_num) ? depth : thread_num); i ++)
   {
-    for (int i = 0; i < thread_num; i ++)
-    {
-      pthread_mutex_lock(&finish_mutex);
-      do_wait = (thread_status[i] == 0);
-      pthread_mutex_unlock(&finish_mutex);
-      if (do_wait)
-      {
-        threads[i].waitForThread();
-      }
-    }
+    threads[i].waitForThread();
   }
   delete trace;
-  pthread_mutex_destroy(&add_inputs_mutex);
-  pthread_mutex_destroy(&add_exploits_mutex);
-  pthread_mutex_destroy(&add_bb_mutex);
-  pthread_mutex_destroy(&add_time_mutex);
-  pthread_cond_destroy(&finish_cond);
-  delete []external_data;
-  delete []actual;
   return depth;
 }
 
@@ -728,7 +716,7 @@ void ExecutionManager::run()
       REPORT(logger, "Starting iteration " << runs);
       LOG(logger, "inputs.size()=" << inputs.size());
       delta_bb_covered.clear();
-      multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+      multimap<Key, Input*, cmp>::iterator it = --(inputs.end());
       Input* fi = it->second;
       unsigned int scr = it->first.score;
       unsigned int dpth = it->first.depth;
@@ -782,12 +770,13 @@ void ExecutionManager::run()
         }
         tg_depth << "--startdepth=" << fi->startdepth;
       }
+
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
-   
+         
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
-
+    
       if (config->getDumpCalls())
       {
         plugin_opts.push_back("--dump-file=calldump.log");
@@ -871,6 +860,7 @@ void ExecutionManager::run()
       }
       
       PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
+      plugin_opts.clear();
       if (config->getTracegrindAlarm() == 0)
       {
         nokill = true;
@@ -890,7 +880,7 @@ void ExecutionManager::run()
 
       if (exitCode == -1)
       {
-        LOG(logger, "failure in tracegrind\n");
+        LOG(logger, "failure in tracegrind");
       }
 
       int divfd = open("divergence.log", O_RDWR);
@@ -956,8 +946,17 @@ void ExecutionManager::run()
       else
       {
         int actualfd = open("actual.log", O_RDWR);
-        bool* actual = new bool[fi->startdepth - 1 + config->getDepth()];
-        read(actualfd, actual, (fi->startdepth - 1 + config->getDepth()) * sizeof(bool));
+        int actual_length;
+        if (config->getDepth() == 0)
+        {
+          read(actualfd, &actual_length, sizeof(int));
+        }
+        else
+        {
+          actual_length = fi->startdepth - 1 + config->getDepth();
+        }
+        bool* actual = new bool[actual_length];
+        read(actualfd, actual, actual_length * sizeof(bool));
         close(actualfd);
 
         if (config->getCheckDanger())
@@ -980,10 +979,10 @@ void ExecutionManager::run()
             nokill = false;
             if (stp_output == NULL)
             {
-            ERR(logger, "STP has encountered an error");
-            FileBuffer f("curdtrace.log");
-            ERR(logger, "curdtrace.log:\n" << string(f.buf));
-            continue;
+              ERR(logger, "STP has encountered an error");
+              FileBuffer f("curdtrace.log");
+              ERR(logger, "curdtrace.log:\n" << string(f.buf));
+              continue;
             }
             if (stp_output->getFile() != NULL)
             {
@@ -1059,13 +1058,12 @@ void ExecutionManager::run()
             if (next != NULL)
             {
               next->startdepth = fi->startdepth + depth;
-              bool* prediction = new bool[fi->startdepth - 1 + depth];
+              next->prediction = new bool[fi->startdepth - 1 + depth];
               for (int j = 0; j < fi->startdepth + depth - 2; j++)
               {
-                prediction[j] = actual[j];
+                next->prediction[j] = actual[j];
               }
-              prediction[fi->startdepth + depth - 2] = !actual[fi->startdepth + depth - 2];
-              next->prediction = prediction;
+              next->prediction[fi->startdepth + depth - 2] = !actual[fi->startdepth + depth - 2];
               next->predictionSize = fi->startdepth - 1 + depth;
               next->parent = fi;
               int score;
@@ -1080,7 +1078,7 @@ void ExecutionManager::run()
       }
       if (depth == 0)
       {
-        LOG(logger, "no QUERY's found");
+        LOG(logger, "no QUERY's found\n");
       }
       runs++;
       if (delete_fi)
@@ -1326,6 +1324,14 @@ ExecutionManager::~ExecutionManager()
       write(distfd, "q", 1);
       shutdown(distfd, SHUT_RDWR);
       close(distfd);
+    }
+
+    if (thread_num > 0)
+    {
+      pthread_mutex_destroy(&add_inputs_mutex);
+      pthread_mutex_destroy(&add_exploits_mutex);
+      pthread_mutex_destroy(&add_bb_mutex);
+      pthread_mutex_destroy(&finish_mutex);
     }
 
     delete config;

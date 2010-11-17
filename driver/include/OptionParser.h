@@ -37,6 +37,7 @@ public:
     OptionParser(int argc, char *argv[]);
 
     OptionConfig *run() const;
+    void reportDummyOptions(OptionConfig* config) const;
 
 private:
     std::vector<std::string> arg_vec;

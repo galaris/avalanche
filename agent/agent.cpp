@@ -362,7 +362,7 @@ int main(int argc, char** argv)
     {
       char* filter = new char[flength];
       readFromSocket(fd, filter, flength);
-      int descr = open("filter", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open("filter", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
       if (descr == -1)
       {
         perror("open failed");

@@ -35,7 +35,7 @@
 
 using namespace std;
 
-extern Logger* logger;
+static Logger* logger = Logger::getLogger();
 
 Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum)
 {

@@ -62,7 +62,14 @@ STP_Executor::STP_Executor(bool debug_full_enable,
 
 STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
 {
-    LOG(logger, "Thread #" << thread_index << ": Running STP");
+    if (!thread_num)
+    {
+      LOG(logger, "Running STP");
+    }
+    else
+    {
+      LOG(logger, "Thread #" << thread_index << ": Running STP");
+    }
     
     if (input == NULL) {
         DBG(logger, "No input");
@@ -92,7 +99,14 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
         }
         return NULL;
     }
-    LOG(logger, "Thread #" << thread_index << ": STP is finished.");
+    if (!thread_num)
+    {
+      LOG(logger, "STP is finished");
+    }
+    else
+    {
+      LOG(logger, "Thread #" << thread_index << ": STP is finished");
+    }
 
     if (ret != 0) {
         LOG(logger, "STP exits with code " << ret);

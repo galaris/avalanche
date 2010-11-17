@@ -96,8 +96,15 @@ int PluginExecutor::run(int thread_index)
 {
     if (prog == NULL)
         return NULL;
-
-    LOG(logger, "Thread #" << thread_index << ": Running plugin kind=" << kind);
+    
+    if (!thread_num)
+    {
+      LOG(logger, "Running plugin kind=" << kind);
+    }
+    else
+    {
+      LOG(logger, "Thread #" << thread_index << ": Running plugin kind=" << kind);
+    }
 
     TmpFile file_out;
     TmpFile file_err;
@@ -135,15 +142,20 @@ int PluginExecutor::run(int thread_index)
         return 0;
       }
     }
-
+    ostringstream msg;
+    if (thread_num)
+    {
+      msg << "Thread #" << thread_index << ": ";
+    }
+      
     switch (kind)
     {
-      case TRACEGRIND: LOG(logger, "Thread #" << thread_index << ": Tracegrind is finished");
+      case TRACEGRIND: LOG(logger, msg.str().append("Tracegrind is finished"));
 		       break;
-      case MEMCHECK:   LOG(logger, "Thread #" << thread_index << ": Memcheck is finished");
+      case MEMCHECK:   LOG(logger, msg.str().append("Memcheck is finished"));
                        output = new FileBuffer(file_err.exportFile());
                        break;
-      case COVGRIND:   LOG(logger, "Thread #" << thread_index << ": Covgrind is finished");
+      case COVGRIND:   LOG(logger, msg.str().append("Covgrind is finished"));
     }
 
     return 0;
