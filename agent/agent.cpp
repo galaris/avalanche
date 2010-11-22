@@ -440,7 +440,8 @@ int main(int argc, char** argv)
       int s = sprintf(branch, "branch%d:\n", i);
       write(1, branch, s);
       write(1, buf, size);
-      close(fd);  
+      close(fd);
+      unlink(report);
       delete[] buf;
     }
   }
