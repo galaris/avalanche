@@ -1,6 +1,8 @@
-*This page describes features under development (a custom [http://code.google.com/p/avalanche/source/browse/#svn/branches/distributed-avalanche branch] is used for that). They are very far from being stable*
+*This page describes features under development (a custom [http://code.google.com/p/avalanche/source/browse/#svn/branches/distributed-avalanche branch] is used for that). They are very far from being stable.*
 
-To run Avalanche with multiple STP threads, use --stp-threads=number option
+To run Avalanche with multiple STP threads, use --stp-threads=number option. You may also
+use --stp-threads-auto instead and avalanche will automatically determine the number of
+threads to run (equal to the number of available processors).
 
 To run distributed analysis, first start the dist server:
 
@@ -11,16 +13,26 @@ user@machine1:$ ./inst/bin/av-dist <port number>
 Then start a number of agents on different machines:
 
 {{{
-user@machine2:$ ./inst/bin/av-agent <machine1 IP address> <port number>
+user@machine2:$ ./inst/bin/av-agent <machine1 IP address> <port number> [--request-non-zero]
 }}}
+
+--request-non-zero option will force instance of avalanche run by agent to request inputs
+from the server at the start of iteration if all its' inputs have zero score.
 
 Finally, start Avalanche, adding --distributed, --dist-host and --dist-port options:
 
 {{{
-user@machinei:$ inst/bin/avalanche --stp-threads=4 --dist-host=<machine1 IP address> --dist-port=<port number> --distributed --mask=mask_pbc_dump --debug --verbose --filename=PGE.pbc parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
+user@machinei:$ inst/bin/avalanche --stp-threads=4 --dist-host=<machine1 IP address> --dist-port=<port number> --distributed [--protect-main-agent] --mask=mask_pbc_dump --debug --verbose --filename=PGE.pbc parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
 }}}
+
+--protect-main-agent forces main avalanche to reject input requests if it has less than N
+inputs, where N is determined according to the number of active agents.
 
 Some exploits found in pbc_dump by distributed Avalanche (not found in a usual, non-distributed mode without STP threads):
 
 [http://avalanche.googlecode.com/files/branch0_exploit_324_0 one_exploit]<br>
 [http://avalanche.googlecode.com/files/branch0_exploit_859_0 another_exploit]
+
+*Distributed analysis requires several rules to be followed:*
+  * Binary executables are not copied through the network - each machine running av-agent should have the analyzed program installed. Path to executable should match the path specified in command line for main avalanche.
+  * Only files specified in main avalanche command line (as --filename=name) are copied through the network and are multiplied locally when threads for STP and Covgrind execution  are used (to avoid potential conflicts) - specify all necessary files in main avalanche command line (as --filename=name).
