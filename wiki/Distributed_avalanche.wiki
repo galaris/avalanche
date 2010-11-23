@@ -11,13 +11,11 @@ Avalanche distributed analysis is based on the concept of using several agents t
 
 http://avalanche.googlecode.com/files/distributed-scheme.jpg
 
-# Distributed avalanche server (av-dist). The server accepts connection from agents and main avalanche, passes requests from agents and responses from main avalanche. There are two types of requests:
+ # Distributed avalanche server (av-dist). The server accepts connection from agents and main avalanche, passes requests from agents and responses from main avalanche. There are two types of requests:
   * input+options - agent requests starting options and initial input for avalanche.
   * input - agent requests initial input for avalanche.
-
-# Main avalanche agent (main avalanche). An instance of avalanche that starts distributed analysis using initial input provided by user. Additional options specified when starting main avalanche ([http://code.google.com/p/avalanche/wiki/Using_avalanche list of avalanche options]) are used by all worker agents. After the end of each analysis iteration main avalanche processes pending requests from server. It keeps the best input (input with the highest score) or several best inputs (if --protect-main-agent is used) and passes other inputs in response to worker agent requests'. When main avalanche runs out of inputs the analysis is over.
-
-# Avalanche worker agent (av-agent). Upon connection to the server worker agent sends request for starting options and an input. After the request has been satisfied it runs an instance of avalanche with received options and using input as initial. When avalanche finishes work worker agent saves exploit info and requests another input. Worker agent starts an instance of avalanche with the same starting options and using newly received input. This process continues until main avalanche runs out of inputs.
+ # Main avalanche agent (main avalanche). An instance of avalanche that starts distributed analysis using initial input provided by user. Additional options specified when starting main avalanche ([http://code.google.com/p/avalanche/wiki/Using_Avalanche list of avalanche options]) are used by all worker agents. After the end of each analysis iteration main avalanche processes pending requests from server. It keeps the best input (input with the highest score) or several best inputs (if --protect-main-agent is used) and passes other inputs in response to worker agent requests'. When main avalanche runs out of inputs the analysis is over.
+ # Avalanche worker agent (av-agent). Upon connection to the server worker agent sends request for starting options and an input. After the request has been satisfied it runs an instance of avalanche with received options and using input as initial. When avalanche finishes work worker agent saves exploit info and requests another input. Worker agent starts an instance of avalanche with the same starting options and using newly received input. This process continues until main avalanche runs out of inputs.
 
 ===Running distributed analysis===
 
