@@ -46,9 +46,6 @@ using namespace std;
 
 static Logger *logger = Logger::getLogger();
 
-pid_t child_pid;
-
-
 int Executor::exec(bool setlimit)
 {
     child_pid = fork();
@@ -119,5 +116,23 @@ void Executor::do_redirect(int file_to_redirect, int new_file)
 
     dup2(new_file, file_to_redirect);
     close(new_file);
+}
+
+Executor::~Executor()
+{ 
+    if (file_out != -1) 
+    {
+      close(file_out);
+    }
+    if (file_err != -1) 
+    {
+      close(file_err);
+    }
+    if (prog != NULL) free(prog);
+    for(int i = 0; i < argsnum; i ++)
+    {
+      free(args[i]);
+    }
+    free(args);
 }
 

@@ -40,6 +40,8 @@
 #include "OptionParser.h"
 #include "Input.h"
 #include "Chunk.h"
+#include "Thread.h"
+#include "Monitor.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -52,31 +54,19 @@
 using namespace std;
 
 static Logger *logger = Logger::getLogger();
-
-time_t start;
-time_t end;
+Monitor* monitor;
 
 ExecutionManager* em;
+OptionParser *op;
 
-extern time_t tg_time;
-extern time_t tg_start;
-extern time_t tg_end;
-extern time_t cv_time;
-extern time_t cv_start;
-extern time_t cv_end;
-extern time_t stp_time;
-extern time_t stp_start;
-extern time_t stp_end;
-extern time_t pure_time;
-extern time_t pure_start;
-extern time_t pure_end;
-extern bool intg;
-extern bool incv;
-extern bool instp;
-extern bool inpure;
-extern pid_t tg_pid, cv_pid, stp_pid;
+extern PoolThread *threads;
 extern Input* initial;
 extern vector<Chunk*> report;
+
+extern int in_thread_creation;
+
+int thread_num;
+extern int distfd;
 
 static void printHelpBanner()
 {
@@ -112,87 +102,135 @@ static void printHelpBanner()
         "                                 or memcheck (not set by default)\n" 
         "    --tracegrind-alarm=<number>  timer for breaking infinite waitings in tracegrind (not set by default)\n"; 
 
-    std::cout << banner << std::endl;
+    cout << banner << endl;
 }
 
+OptionConfig* opt_config;
+
+void cleanUp()
+{
+  if (thread_num > 0)
+  {
+    for (int i = 1; i < thread_num + 1; i ++)
+    {
+      ostringstream file_modifier;
+      file_modifier << "_" << i;
+      remove(string("basic_blocks").append(file_modifier.str()).append(".log").c_str());
+      remove(string("execution").append(file_modifier.str()).append(".log").c_str());
+      remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
+      remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
+      remove(string("replace_data").append(file_modifier.str()).c_str());
+      for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
+      {
+        remove(opt_config->getFile(j).append(file_modifier.str()).c_str());
+      }
+    }
+    delete []threads;
+  }
+  for (int i = 0; i < report.size(); i ++)
+  {
+    delete (report.at(i));
+  }
+  delete em;
+  delete op;
+  delete opt_config;
+  delete initial;
+  delete monitor;
+  delete logger;
+}
+
+void reportResults()
+{
+  time_t end_time = time(NULL);
+  LOG(logger, "Time statistics:\ntotal: " << end_time - monitor->getGlobalStartTime() << ", "
+                                          << monitor->getStats(end_time - monitor->getGlobalStartTime()));
+  if (opt_config->getReportLog() == string(""))
+  {
+    REPORT(logger, "\nExploits report:");
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i);
+    }
+    REPORT(logger, "");
+  }
+  else
+  {
+    int fd = open(opt_config->getReportLog().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    for (int i = 0; i < report.size(); i++)
+    {
+      report.at(i)->print(opt_config->getPrefix(), i, fd);
+    }
+    close(fd);
+  }  
+}
 
 void sig_hndlr(int signo)
 {
-  if (instp)
+  if (opt_config->getDistributed())
   {
-    kill(stp_pid, SIGKILL);
-    stp_end = time(NULL);
-    stp_time += stp_end - stp_start;
+    write(distfd, "q", 1);
+    shutdown(distfd, SHUT_RDWR);
+    close(distfd);
   }
-  else if (intg)
+  if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
   {
-    kill(tg_pid, SIGKILL);
-    tg_end = time(NULL);
-    tg_time += tg_end - tg_start;
+    initial->dumpFiles();
   }
-  else if (incv)
+  monitor->setKilledStatus(true);
+  monitor->handleSIGKILL();
+  for (int i = 0; i < thread_num; i ++)
   {
-    kill(cv_pid, SIGKILL);
-    cv_end = time(NULL);
-    cv_time += cv_end - cv_start;
+    if (in_thread_creation != i)
+    {
+      threads[i].waitForThread();
+    }
   }
-  end = time(NULL);
-  char s[256];
-  sprintf(s, "totally: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld, pure exec: %ld", end - start, tg_time, stp_time, cv_time, pure_time);
-  LOG(logger, "\nTime statistics:\n" << s);
-  sprintf(s, "tg_per: %f stp_per: %f cv_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start));
-  LOG(logger, s);
-  initial->dumpFiles();
-  REPORT(logger, "\nExploits report:");
-  for (int i = 0; i < report.size(); i++)
-  {
-    report.at(i)->print(i);
-  }
-  REPORT(logger, "");
+  reportResults();
+  cleanUp();
   exit(0);
 }
 
 int main(int argc, char *argv[])
 {
-    start = time(NULL); 
+    time_t start_time = time(NULL); 
     signal(SIGINT, sig_hndlr);
-    LOG(logger, "start time: " << std::string(ctime(&start)));    
-    OptionParser  opt_parser(argc, argv);
-    OptionConfig *opt_config = opt_parser.run();
-
+    signal(SIGPIPE, SIG_IGN);
+    op = new OptionParser(argc, argv);
+    opt_config = op->run();
+    
     if (opt_config == NULL || opt_config->empty()) {
         printHelpBanner();
         return EXIT_FAILURE;
     }
 
     if (opt_config->getVerbose()) logger->enableVerbose();
-    
-    time_t starttime;
-    time(&starttime);
+
+    thread_num = opt_config->getSTPThreads();
+    string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") : string("covgrind"));
+    if (thread_num > 0)
+    {
+      monitor = new ParallelMonitor(checker_name, start_time, thread_num);
+      ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
+      threads = new PoolThread[thread_num];
+    }
+    else
+    {
+      monitor = new SimpleMonitor(checker_name, start_time);
+    }
+    checker_name.clear();
+    time_t work_start_time = time(NULL);
 
     LOG(logger, "Avalanche, a dynamic analysis tool.");
+    LOG(logger, "Start time: " << ctime(&work_start_time));
   
-    string t = string(ctime(&starttime));
-    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));  
-
-    ExecutionManager manager(opt_config);
-    em = &manager;
-    delete(opt_config);
-    
-    manager.run();
-    end = time(NULL);
-    char s[256];
-    sprintf(s, "totally: %ld, tracegrind: %ld, STP: %ld, covgrind: %ld, pure exec: %ld", end - start, tg_time, stp_time, cv_time, pure_time);
-    LOG(logger, "\nTime statistics:\n" << s);
-    sprintf(s, "tg_per: %f stp_per: %f cv_per: %f pure_per: %f", ((double) tg_time) / (end - start), ((double) stp_time) / (end - start), ((double) cv_time) / (end - start), ((double) pure_time) / (end - start));
-    LOG(logger, s);
-    initial->dumpFiles();
-    REPORT(logger, "\nExploits report:");
-    for (int i = 0; i < report.size(); i++)
+    em = new ExecutionManager(opt_config);
+    em->run();
+    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
     {
-      report.at(i)->print(i);
+      initial->dumpFiles();
     }
-    REPORT(logger, "");
+    reportResults();
+    cleanUp();
     return EXIT_SUCCESS;
 }
 

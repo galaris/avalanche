@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <set>
 #include <string>
+#include <stdlib.h>
 
 static Logger *logger = Logger::getLogger();
 
@@ -35,6 +36,10 @@ STP_Output::~STP_Output()
     if (unlink(file) == -1)
     {
         ERR(logger, "Cannot delete file " << file <<":"<< strerror(errno));
+    }
+    if (file != NULL)
+    {
+      free(file);
     }
 }
 

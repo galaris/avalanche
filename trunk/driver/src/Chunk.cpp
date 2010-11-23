@@ -26,17 +26,33 @@
 #include "FileBuffer.h"
 #include "Logger.h"
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include <vector>
 #include <iostream>
 
 using namespace std;
 
-extern Logger* logger;
+static Logger* logger = Logger::getLogger();
 
 Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum)
 {
-  this->trace = trace;
+  if (trace == NULL)
+  {
+    this->trace = NULL;
+  }
+  else
+  {
+    this->trace = new FileBuffer(*trace);
+  }
   exploitGroups.push_back(make_pair(exploitNum, inputNum));
+}
+
+Chunk::~Chunk()
+{
+  delete trace;
 }
 
 void Chunk::addGroup(int exploitNum, int inputNum)
@@ -49,7 +65,7 @@ FileBuffer* Chunk::getTrace()
   return trace;
 }
 
-void Chunk::print(int chunkNum)
+void Chunk::print(string prefix, int chunkNum, int fd)
 {
   ostringstream out;
   out << "chunk " << chunkNum << ": ";
@@ -65,23 +81,32 @@ void Chunk::print(int chunkNum)
     {
       for (int i = 0; i < inputNum - 1; i++)
       {
-        out << "exploit_" << exploitNum << "_" << i << " + ";
+        out << prefix << "exploit_" << exploitNum << "_" << i << " + ";
       }
-      out << "exploit_" << exploitNum << "_" << inputNum - 1;
+      out << prefix << "exploit_" << exploitNum << "_" << inputNum - 1;
     }
     else
     {
-      out << "exploit_" << exploitNum;
+      out << prefix << "exploit_" << exploitNum;
     }
   }
   if (trace != NULL)
   {
-    out << " - stacktrace_" << chunkNum << ".log";
+    out << " - " << prefix << "stacktrace_" << chunkNum << ".log";
   }
   else
   {
     out << " - No stack trace available";
   }
-  REPORT(logger, out.str());
+  if (fd == -1)
+  {
+    REPORT(logger, out.str());
+  }
+  else
+  {
+    out << "\n";
+    string output = out.str();
+    write(fd, output.c_str(), output.length());
+  }
 }
 

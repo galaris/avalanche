@@ -1,11 +1,12 @@
+
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*-------------------------------------- Input.h -----------------------------------------*/
+/*-------------------------------- Distributed Avalanche.  -------------------------------*/
+/*-------------------------------------- util.h ------------------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Ildar Isaev
+   Copyright (C) 2010 Ildar Isaev
       iisaev@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,26 +22,13 @@
    limitations under the License.
 */
 
-#ifndef __INPUT__H__
-#define __INPUT__H__
+#ifndef __AGENT_UTIL__H__
+#define __AGENT_UTIL__H__
 
-#include <vector>
+#include <sys/types.h>
 
-class FileBuffer;
+void readFromSocket(int fd, const void* b, size_t count);
 
-class Input
-{
-public:
-  Input();
-  ~Input();
-  void dumpFiles(char* name = NULL, const char* name_modifier = "");
-  void dumpExploit(const char* name, bool predict, const char* name_modifier = "");
-
-  std::vector<FileBuffer*> files;
-  int startdepth;
-  Input* parent;
-  bool* prediction;
-  int predictionSize;
-};
+void writeToSocket(int fd, const void* b, size_t count);
 
 #endif

@@ -28,19 +28,20 @@
 #include "FileBuffer.h"
 #include "STP_Input.h"
 #include "TmpFile.h"
+#include "Monitor.h"
 
 #include <cstring>
 #include <cerrno>
 #include <cstdlib>
 #include <vector>
 #include <string>
+#include <pthread.h>
 
-extern pid_t child_pid;
-pid_t tg_pid;
-pid_t cv_pid;
+
+extern int thread_num;
+extern Monitor* monitor;
 
 using namespace std;
-
 
 static Logger *logger = Logger::getLogger();
 
@@ -60,6 +61,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     prog = strdup((install_dir + "valgrind").c_str());
 
     // last NULL element is needed by execvp()
+    argsnum = cmd.size() + tg_args.size() + 4;
     args = (char **)calloc(cmd.size() + tg_args.size() + 4, sizeof(char *)); 
 
     args[0] = strdup(prog);
@@ -90,12 +92,19 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     output = NULL;
 }
 
-int PluginExecutor::run()
+int PluginExecutor::run(int thread_index)
 {
     if (prog == NULL)
         return NULL;
-
-    LOG(logger, "Running plugin kind=" << kind);
+    
+    if (!thread_num)
+    {
+      LOG(logger, "Running plugin kind=" << kind);
+    }
+    else
+    {
+      LOG(logger, "Thread #" << thread_index << ": Running plugin kind=" << kind);
+    }
 
     TmpFile file_out;
     TmpFile file_err;
@@ -104,14 +113,7 @@ int PluginExecutor::run()
     redirect_stderr(file_err.getName());
 
     int ret = exec(false);
-    if (kind == TRACEGRIND)
-    {
-      tg_pid = child_pid;
-    }
-    else
-    {
-      cv_pid = child_pid;
-    }
+    monitor->setPID(child_pid, thread_index);
     if (ret == -1) 
     {
       ERR(logger, "Problem in execution: " << strerror(errno));
@@ -126,22 +128,34 @@ int PluginExecutor::run()
 
     if (ret == -1) 
     {
-      LOG(logger, "exited on signal");
-      if (kind == MEMCHECK)
+      if (!monitor->getKilledStatus())
       {
-        output = new FileBuffer(file_err.exportFile());
-      }
+        LOG(logger, "exited on signal");
+        if (kind == MEMCHECK)
+        {
+          output = new FileBuffer(file_err.exportFile());
+        }
       return -1;
+      }
+      else
+      {
+        return 0;
+      }
     }
-
+    ostringstream msg;
+    if (thread_num)
+    {
+      msg << "Thread #" << thread_index << ": ";
+    }
+      
     switch (kind)
     {
-      case TRACEGRIND: DBG(logger, "Tracegrind is finished");
+      case TRACEGRIND: LOG(logger, msg.str().append("Tracegrind is finished"));
 		       break;
-      case MEMCHECK:   DBG(logger, "Memcheck is finished");
+      case MEMCHECK:   LOG(logger, msg.str().append("Memcheck is finished"));
                        output = new FileBuffer(file_err.exportFile());
                        break;
-      case COVGRIND:   DBG(logger, "Covgrind is finished");
+      case COVGRIND:   LOG(logger, msg.str().append("Covgrind is finished"));
     }
 
     return 0;

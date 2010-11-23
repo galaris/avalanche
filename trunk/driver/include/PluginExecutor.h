@@ -55,7 +55,7 @@ public:
                    const std::vector<std::string> &tg_args,
                    Kind kind);
 
-    int run();
+    int run(int thread_index = 0);
     FileBuffer* getOutput();
     ~PluginExecutor();
 
