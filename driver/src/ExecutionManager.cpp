@@ -35,6 +35,8 @@
 #include "FileBuffer.h"
 #include "SocketBuffer.h"
 #include "Input.h"
+#include "Thread.h"
+#include "Monitor.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -43,35 +45,23 @@
 #include <signal.h>
 #include <string>
 #include <vector>
-#include <deque>
 #include <set>
-#include <map>
-#include <functional>
+
+#define N 5
 
 using namespace std;
 
-time_t tg_time = 0;
-bool intg = false;
-time_t tg_start;
-time_t tg_end;
-time_t cv_time = 0;
-bool incv = false;
-time_t cv_start;
-time_t cv_end;
-time_t stp_time = 0;
-bool instp = false;
-time_t stp_start;
-time_t stp_end;
-time_t pure_time = 0;
-bool inpure = false;
-time_t pure_start;
-time_t pure_end;
+extern Monitor* monitor;
 
-extern pid_t child_pid;
+PoolThread *threads;
+extern int thread_num;
+
 bool killed = false;
 bool nokill = false;
 
-Logger *logger = Logger::getLogger();
+bool trace_kind;
+
+static Logger *logger = Logger::getLogger();
 Input* initial;
 int allSockets = 0;
 int curSockets;
@@ -79,8 +69,22 @@ int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
+bool is_distributed = false;
+
+set <unsigned long> delta_bb_covered;
   
 vector<Chunk*> report;
+
+pthread_mutex_t add_inputs_mutex;
+pthread_mutex_t add_exploits_mutex;
+pthread_mutex_t add_bb_mutex;
+pthread_mutex_t finish_mutex;
+pthread_cond_t finish_cond;
+
+int in_thread_creation = -1;
+
+int distfd;
+int agents;
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
@@ -90,21 +94,196 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     config      = new OptionConfig(opt_config);
     exploits    = 0;
     divergences = 0;
+    is_distributed = opt_config->getDistributed();
+    if (thread_num > 0)
+    {
+      pthread_mutex_init(&add_inputs_mutex, NULL);
+      pthread_mutex_init(&add_exploits_mutex, NULL);
+      pthread_mutex_init(&add_bb_mutex, NULL);
+      pthread_mutex_init(&finish_mutex, NULL);
+      pthread_cond_init(&finish_cond, NULL);
+    }
+  
+    if (is_distributed)
+    {
+      struct sockaddr_in stSockAddr;
+      int res;
+ 
+      memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
+ 
+      stSockAddr.sin_family = AF_INET;
+      stSockAddr.sin_port = htons(opt_config->getDistPort());
+      res = inet_pton(AF_INET, opt_config->getDistHost().c_str(), &stSockAddr.sin_addr);
+ 
+      if (res < 0)
+      {
+        perror("error: first parameter is not a valid address family");
+        exit(EXIT_FAILURE);
+      }
+      else if (res == 0)
+      {
+        perror("char string (second parameter does not contain valid ipaddress");
+        exit(EXIT_FAILURE);
+      }
+
+      distfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+      if (distfd == -1)
+      {
+        perror("cannot create socket");
+        exit(EXIT_FAILURE);
+      }
+    
+      res = connect(distfd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in));
+ 
+      if (res < 0)
+      {
+        perror("error connect failed");
+        close(distfd);
+        exit(EXIT_FAILURE);
+      }  
+
+      LOG(logger, "Connected to server");
+      write(distfd, "m", 1);
+      read(distfd, &agents, sizeof(int));
+   }
 }
 
-int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
+void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group)
 {
-
+  time_t exploittime;
+  time(&exploittime);
+  string t = string(ctime(&exploittime));
+  REPORT(logger, "Crash detected.");
+  LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
   if (config->usingSockets() || config->usingDatagrams())
   {
-    input->dumpExploit("replace_data", false);
+    stringstream ss(stringstream::in | stringstream::out);
+    ss << config->getPrefix() << "exploit_" << exploits;
+    REPORT(logger, "Dumping an exploit to file " << ss.str());
+    input->dumpExploit((char*) ss.str().c_str(), false);
+    if (info_available)
+    {
+      if (!same_exploit)
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
+        stack_trace->dumpFile((char*) ss.str().c_str());
+        REPORT(logger, "Dumping stack trace to file " << ss.str());
+      }
+      else
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << exploit_group << ".log";
+        REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
+      }
+    }
+    else
+    {
+      REPORT(logger, "No stack trace is available.");
+    }
   }
   else
   {
-    input->dumpFiles();
+    if (info_available)
+    {
+      if (!same_exploit)
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
+        stack_trace->dumpFile((char*) ss.str().c_str());
+        REPORT(logger, "Dumping stack trace to file " << ss.str());
+      }
+      else
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "stacktrace_" << exploit_group << ".log";
+        REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
+      }
+    }
+    else
+    {
+      REPORT(logger, "No stack trace is available.");
+    }
+    for (int i = 0; i < input->files.size(); i++)
+    {
+      stringstream ss(stringstream::in | stringstream::out);
+      ss << config->getPrefix() << "exploit_" << exploits << "_" << i;
+      REPORT(logger, "Dumping an exploit to file " << ss.str());
+      input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+    }
   }
+}
 
+bool ExecutionManager::dumpMCExploit(Input* input, const char *exec_log)
+{
+  FileBuffer* mc_output = new FileBuffer(exec_log);
+  char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
+  long errors = -1;
+  long definitely_lost = -1;
+  long possibly_lost = -1;
+  bool res = false;
+  if (error != NULL)
+  {
+    errors = strtol(error + 15, NULL, 10);
+  }
+  char* leak = NULL;
+  if (config->checkForLeaks())
+  {
+    leak = strstr(mc_output->buf, "definitely lost: ");
+    if (leak != NULL)
+    {
+      definitely_lost = strtol(leak + 17, NULL, 10);
+    }
+    leak = strstr(mc_output->buf, "possibly lost: ");
+    if (leak != NULL)
+    {
+      possibly_lost = strtol(leak + 15, NULL, 10);
+    }
+  }
+  if ((errors > 0) || (((definitely_lost != -1) || (possibly_lost != -1)) && !killed))
+  {
+    time_t memchecktime;
+    time(&memchecktime);
+    string t = string(ctime(&memchecktime));
+    REPORT(logger, "Error detected.");
+    LOG(logger, "memcheck error time: " << t.substr(0, t.size() - 1));   
+    if (config->usingSockets() || config->usingDatagrams())
+    {
+      stringstream ss(stringstream::in | stringstream::out);
+      ss << config->getPrefix() << "memcheck_" << memchecks;
+      REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
+      input->dumpExploit((char*) ss.str().c_str(), false);
+    }
+    else
+    {
+      for (int i = 0; i < input->files.size(); i++)
+      {
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "memcheck_" << memchecks << "_" << i;
+        REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
+        input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+      }
+    }
+    res = true; 
+  }
+  delete mc_output;
+  return res;
+}
+
+int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier, bool first_run)
+{
+  if (config->usingSockets() || config->usingDatagrams())
+  {
+    input->dumpExploit("replace_data", false, fileNameModifier);
+  }
+  else
+  {
+    input->dumpFiles(NULL, fileNameModifier);
+  }
   vector<string> plugin_opts;
+  ostringstream rp_data;
+  rp_data << "--replace=replace_data" << fileNameModifier;
   if (config->usingSockets())
   {
     ostringstream cv_host;
@@ -115,7 +294,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
     cv_port << "--port=" << config->getPort();
     plugin_opts.push_back(cv_port.str());
     
-    plugin_opts.push_back("--replace=replace_data");
+    plugin_opts.push_back(rp_data.str().c_str());
     plugin_opts.push_back("--sockets=yes");
 
     LOG(logger, "setting alarm " << config->getAlarm());
@@ -124,7 +303,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
   }
   else if (config->usingDatagrams())
   { 
-    plugin_opts.push_back("--replace=replace_data");
+    plugin_opts.push_back(rp_data.str().c_str());
     plugin_opts.push_back("--datagrams=yes");
 
     LOG(logger, "setting alarm " << config->getAlarm());
@@ -138,32 +317,72 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
     plugin_opts.push_back(cv_alarm.str());
   }
 
-  plugin_opts.push_back("--log-file=execution.log");
+  string cv_exec_file = string("execution") + string(fileNameModifier) + string(".log");
+  ostringstream cv_exec_log;
+  cv_exec_log << "--log-file=" << cv_exec_file;
+  plugin_opts.push_back(cv_exec_log.str());
+
   if (addNoCoverage)
   {
     plugin_opts.push_back("--no-coverage=yes");
   }
+  if (strcmp(fileNameModifier, ""))
+  {
+    ostringstream cv_bb_log;
+    cv_bb_log << "--filename=basic_blocks" << fileNameModifier << ".log";
+    plugin_opts.push_back(cv_bb_log.str());
+  }
 
-  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, addNoCoverage ? COVGRIND : kind);
+  vector <string> new_prog_and_args = config->getProgAndArg();
+  
+  if (strcmp(fileNameModifier, "") && !(config->usingSockets()) && !(config->usingDatagrams()))
+  {
+    for (int i = 0; i < new_prog_and_args.size(); i ++)
+    {
+      for (int j = 0; j < input->files.size(); j ++)
+      {
+        if (!strcmp(new_prog_and_args[i].c_str(), input->files.at(j)->name))
+        {
+          new_prog_and_args[i].append(string(fileNameModifier));
+        }
+      }
+    }
+  }
+  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
+  new_prog_and_args.clear();
+  plugin_opts.clear();
   curSockets = 0;
-  cv_start = time(NULL);
-  incv = true;
-  int exitCode = plugin_exe.run();
-  incv = false;
-  cv_end = time(NULL);
-  cv_time += cv_end - cv_start;
+  bool enable_mutexes = (config->getSTPThreads() != 0) && !first_run;
+  int thread_index = 0;
+  if (strcmp(fileNameModifier, ""))
+  {
+    thread_index = atoi(string(fileNameModifier).substr(1).c_str());
+  }
+  time_t start_time = time(NULL);
+  monitor->setState(CHECKER, start_time, thread_index);
+  int exitCode = plugin_exe.run(thread_index);
+  monitor->addTime(time(NULL), thread_index);
   FileBuffer* mc_output;
   bool infoAvailable = false;
   bool sameExploit = false;
-  int exploitGroup = 0;
-  if ((exitCode == -1) && !killed)
+  int exploit_group = 0;
+  if (enable_mutexes) pthread_mutex_lock(&add_exploits_mutex);
+  bool has_crashed = (exitCode == -1);
+  if (!thread_num)
   {
-    FileBuffer* cv_output = new FileBuffer("execution.log");
-    bool deleteBuffer = true;
+    has_crashed = has_crashed && !killed;
+  }
+  else
+  {
+    has_crashed = has_crashed && !(((ParallelMonitor*) monitor)->getAlarmKilled(thread_index));
+  }
+  if (has_crashed)
+  {
+    FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
     infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
     {
-      for (vector<Chunk*>::iterator it = report.begin(); it != report.end(); it++, exploitGroup++)
+      for (vector<Chunk*>::iterator it = report.begin(); it != report.end(); it++, exploit_group++)
       {
         if (((*it)->getTrace() != NULL) && (*(*it)->getTrace() == *cv_output))
         {
@@ -190,7 +409,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
         {
           ch = new Chunk(cv_output, exploits, input->files.size());
         }
-        deleteBuffer = false;
         report.push_back(ch);
       }
     }
@@ -205,149 +423,55 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
       {
         ch = new Chunk(NULL, exploits, input->files.size());
       }
-      deleteBuffer = false;
-      report.push_back(ch); 
+      report.push_back(ch);
     }
-    time_t exploittime;
-    time(&exploittime);
-    string t = string(ctime(&exploittime));
-    REPORT(logger, "Crash detected.");
-    LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
-    if (config->usingSockets() || config->usingDatagrams())
-    {
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << "exploit_" << exploits;
-      REPORT(logger, "Dumping an exploit to file " << ss.str());
-      input->dumpExploit((char*) ss.str().c_str(), false);
-      if (infoAvailable)
-      {
-        if (!sameExploit)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << report.size() - 1 << ".log";
-          cv_output->dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping stack trace to file " << ss.str());
-        }
-        else
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << exploitGroup << ".log";
-          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
-        }
-      }
-      else
-      {
-        REPORT(logger, "No stack trace is available.");
-      }
-    }
-    else
-    {
-      if (infoAvailable)
-      {
-        if (!sameExploit)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << report.size() - 1 << ".log";
-          cv_output->dumpFile((char*) ss.str().c_str());
-          REPORT(logger, "Dumping stack trace to file " << ss.str());
-        }
-        else
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << "stacktrace_" << exploitGroup << ".log";
-          REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
-        }
-      }
-      else
-      {
-        REPORT(logger, "No stack trace is available.");
-      }
-      for (int i = 0; i < input->files.size(); i++)
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << "exploit_" << exploits << "_" << i;
-        REPORT(logger, "Dumping an exploit to file " << ss.str());
-        input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
-      }
-    }
+    dumpExploit(input, cv_output, infoAvailable, sameExploit, exploit_group);
     exploits++;
-    if (deleteBuffer)
-    {
-      delete cv_output;
-    }
+    delete cv_output;
   }
   else if (config->usingMemcheck() && !addNoCoverage)
   {
-    //FileBuffer* mc_output = plugin_exe.getOutput();
-    FileBuffer* mc_output = new FileBuffer("execution.log");
-    char* error = strstr(mc_output->buf, "ERROR SUMMARY: ");
-    long errors = -1;
-    long definitely_lost = -1;
-    long possibly_lost = -1;
-    if (error != NULL)
+    if (dumpMCExploit(input, cv_exec_file.c_str()))
     {
-      errors = strtol(error + 15, NULL, 10);
+      memchecks ++;
     }
-    char* leak = NULL;
-    if (config->checkForLeaks())
-    {
-      leak = strstr(mc_output->buf, "definitely lost: ");
-      if (leak != NULL)
-      {
-        definitely_lost = strtol(leak + 17, NULL, 10);
-      }
-      leak = strstr(mc_output->buf, "possibly lost: ");
-      if (leak != NULL)
-      {
-        possibly_lost = strtol(leak + 15, NULL, 10);
-      }
-    }
-    if ((errors > 0) || (definitely_lost != -1) && !killed || (possibly_lost != -1) && !killed)
-    {
-      time_t memchecktime;
-      time(&memchecktime);
-      string t = string(ctime(&memchecktime));
-      REPORT(logger, "Error detected.");
-      LOG(logger, "memcheck error time: " << t.substr(0, t.size() - 1));   
-      if (config->usingSockets() || config->usingDatagrams())
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << "memcheck_" << memchecks;
-        REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
-        input->dumpExploit((char*) ss.str().c_str(), false);
-      }
-      else
-      {
-        for (int i = 0; i < input->files.size(); i++)
-        {
-          stringstream ss(stringstream::in | stringstream::out);
-          ss << "memcheck_" << memchecks << "_" << i;
-          REPORT(logger, "Dumping input for memcheck error to file " << ss.str());
-          input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
-        }
-      }
-      memchecks++;  
-    }
-    delete mc_output;
   }
+  if (enable_mutexes) pthread_mutex_unlock(&add_exploits_mutex);
   if (!addNoCoverage)
   {
     int res = 0;
-    int fd = open("basic_blocks.log", O_RDWR);
-    struct stat fileInfo;
-    fstat(fd, &fileInfo);
-    int size = fileInfo.st_size / sizeof(long);
-    unsigned long* basicBlockAddrs = new unsigned long[size];
-    read(fd, basicBlockAddrs, fileInfo.st_size);
-    for (int i = 0; i < size; i++)
+    string bb_name = string("basic_blocks") + string(fileNameModifier) + string(".log");
+    int fd = open(bb_name.c_str(), O_RDWR);
+    if (fd != -1)
     {
-      if (basicBlocksCovered.insert(basicBlockAddrs[i]).second)
+      struct stat fileInfo;
+      fstat(fd, &fileInfo);
+      int size = fileInfo.st_size / sizeof(long);
+      if (size > 0)
       {
-        res++;
+        unsigned long* basicBlockAddrs = new unsigned long[size];
+        read(fd, basicBlockAddrs, fileInfo.st_size);
+        close(fd);
+        if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
+        for (int i = 0; i < size; i++)
+        {
+          if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+          {
+            res++;
+          }
+          if(thread_num < 1)
+          {
+            basicBlocksCovered.insert(basicBlockAddrs[i]);
+          }
+          else
+          {
+            delta_bb_covered.insert(basicBlockAddrs[i]);
+          }
+        }
+        if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);
+        delete[] basicBlockAddrs;
       }
     }
-    delete[] basicBlockAddrs;
-    close(fd);
     return res;
   }
   else
@@ -355,46 +479,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage)
     return 0;
   }
 }
-
-class Key
-{
-public:
-  unsigned int score;
-  unsigned int depth;
-  
-  Key(unsigned int score, unsigned int depth)
-  {
-    this->score = score;
-    this->depth = depth;
-  }
-};
-
-class cmp: public binary_function<Key, Key, bool>
-{
-public:
-  result_type operator()(first_argument_type k1, second_argument_type k2)
-  {
-    if (k1.score < k2.score)
-    {
-      return true;
-    }
-    else if (k1.score > k2.score)
-    {
-      return false;
-    }
-    else
-    {
-      if (k1.depth > k2.depth)
-      {
-        return true;
-      }
-      else
-      {
-        return false;
-      }
-    }
-  }
-};
 
 void ExecutionManager::updateInput(Input* input)
 {
@@ -425,11 +509,167 @@ void alarmHandler(int signo)
   LOG(logger, "time is out");
   if (!nokill)
   {
-    kill(child_pid, SIGALRM);
+    monitor->handleSIGALARM();
     killed = true;
     DBG(logger, "Time out. Valgrind is going to be killed");
   }
   signal(SIGALRM, alarmHandler);
+}
+
+void* exec_STP_CG(void* data)
+{
+  PoolThread* actor = (PoolThread*) data;
+  ExecutionManager* this_pointer = (ExecutionManager*) (Thread::getSharedData("this_pointer"));
+  multimap<Key, Input*, cmp>* inputs = (multimap <Key, Input*, cmp> *) (Thread::getSharedData("inputs"));
+  Input* first_input = (Input*) (Thread::getSharedData("first_input"));
+  bool* actual = (bool*) (Thread::getSharedData("actual"));
+  long first_depth = (long) (Thread::getSharedData("first_depth"));
+  long depth = (long) (actor->getPrivateData("depth"));
+  int cur_tid = actor->getCustomTID();
+  ostringstream input_modifier;
+  input_modifier << "_" << actor->getCustomTID();
+  string cur_trace_log = string("curtrace") + input_modifier.str() + string(".log");
+  STP_Input si;
+  si.setFile(cur_trace_log.c_str());
+  STP_Executor stp_exe(this_pointer->getConfig()->getDebug(), this_pointer->getConfig()->getValgrind());        
+  monitor->setState(STP, time(NULL), cur_tid);
+  STP_Output *out = stp_exe.run(&si, cur_tid);
+  monitor->addTime(time(NULL), cur_tid);
+  if (out == NULL)
+  {
+    if (!monitor->getKilledStatus())
+    {
+      ERR(logger, "STP has encountered an error");
+      FileBuffer f(cur_trace_log.c_str());
+      ERR(logger, cur_trace_log.c_str() << ":\n" << string(f.buf));
+    }
+  }
+  else if (out->getFile() != NULL)
+  {
+    FileBuffer f(out->getFile());
+    DBG(logger, "Thread #" << cur_tid << ": stp output:\n" << string(f.buf));
+    Input* next = new Input();
+    int st_depth = first_input->startdepth;
+    for (int k = 0; k < first_input->files.size(); k++)
+    { 
+      FileBuffer* fb = first_input->files.at(k);
+      fb = fb->forkInput(out->getFile());
+      if (fb == NULL)
+      {
+        delete next;
+        next = NULL;
+        break;
+      }
+      else
+      {
+        next->files.push_back(fb);
+      }
+    }
+    if (next != NULL)
+    {
+      next->startdepth = st_depth + depth + 1;
+      next->prediction = new bool[st_depth + depth];
+      for (int j = 0; j < st_depth + depth - 1; j++)
+      {
+        next->prediction[j] = actual[j];
+      }
+      next->prediction[st_depth + depth - 1] = !actual[st_depth + depth - 1];
+      next->predictionSize = st_depth + depth;
+      next->parent = first_input;
+      int score = this_pointer->checkAndScore(next, trace_kind, input_modifier.str().c_str());
+      if (!trace_kind)
+      {
+        LOG(logger, "Thread #" << cur_tid << ": score=" << score << "\n");
+        pthread_mutex_lock(&add_inputs_mutex);
+        inputs->insert(make_pair(Key(score, first_depth + depth + 1), next));
+        pthread_mutex_unlock(&add_inputs_mutex);
+      }
+    }
+  }
+  if (out != NULL) delete out;
+}
+
+int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned long first_depth)
+{
+  int actualfd = open("actual.log", O_RDWR);
+  int actual_length;
+  if (config->getDepth() == 0)
+  {
+    read(actualfd, &actual_length, sizeof(int));
+  }
+  else
+  {
+    actual_length = first_input->startdepth - 1 + config->getDepth();
+  }
+  bool actual[actual_length];
+  read(actualfd, actual, actual_length * sizeof(bool));
+  close(actualfd);
+  int active_threads = thread_num;
+  long depth = 0;
+  FileBuffer *trace = new FileBuffer((!_trace_kind) ? "trace.log" : "dangertrace.log");
+  trace_kind = _trace_kind;
+  Thread::clearSharedData();
+  Thread::addSharedData((void*) inputs, string("inputs"));
+  Thread::addSharedData((void*) first_input, string("first_input"));
+  Thread::addSharedData((void*) first_depth, string("first_depth"));
+  Thread::addSharedData((void*) actual, string("actual"));
+  Thread::addSharedData((void*) this, string("this_pointer"));
+  char* query = trace->buf;
+  while((query = strstr(query, "QUERY(FALSE);")) != NULL)
+  {
+    depth ++;
+    query ++;
+  }
+  for (int j = 0; j < ((depth < thread_num) ? depth : thread_num); j ++)
+  {
+    threads[j].setCustomTID(j + 1);
+    threads[j].setPoolSync(&finish_mutex, &finish_cond, &active_threads);
+  }
+  STP_Output* outputs[depth];
+  int thread_counter;
+  pool_data external_data[depth];
+  for (int i = 0; i < depth; i ++)
+  {
+    pthread_mutex_lock(&finish_mutex);
+    if (active_threads == 0) 
+    {
+      pthread_cond_wait(&finish_cond, &finish_mutex);
+    }
+    for (thread_counter = 0; thread_counter < thread_num; thread_counter ++) 
+    {
+      if (threads[thread_counter].getStatus())
+      {
+        break;
+      }
+    }
+    if (threads[thread_counter].getStatus() == PoolThread::FREE)
+    {
+      threads[thread_counter].waitForThread();
+    }
+    active_threads --;
+    threads[thread_counter].addPrivateData((void*) i, string("depth"));
+    external_data[i].work_func = exec_STP_CG;
+    external_data[i].data = &(threads[thread_counter]);
+    ostringstream cur_trace;
+    cur_trace << "curtrace_" << thread_counter + 1 << ".log";
+    trace->invertQueryAndDump(cur_trace.str().c_str());
+    in_thread_creation = thread_counter;
+    threads[thread_counter].setStatus(PoolThread::BUSY);
+    threads[thread_counter].createThread(&(external_data[i]));
+    in_thread_creation = -1;
+    pthread_mutex_unlock(&finish_mutex);
+  }
+  for (int i = 0; i < ((depth < thread_num) ? depth : thread_num); i ++)
+  {
+    threads[i].waitForThread();
+  }
+  delete trace;
+  return depth;
+}
+
+void dummy_handler(int signo)
+{
+
 }
 
 void ExecutionManager::run()
@@ -454,26 +694,33 @@ void ExecutionManager::run()
         initial->files.push_back(new FileBuffer((char*) config->getFile(i).c_str()));
       }
     }
-    else
+    else 
     {
+      if (config->getAgent())
+      {
+        updateInput(initial);
+      }
       signal(SIGALRM, alarmHandler);
     }
-    initial->startdepth = 1;
+    initial->startdepth = config->getStartdepth();
     int score;
-    score = checkAndScore(initial, false);
+    score = checkAndScore(initial, false, "", true);
+    basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
-
+    bool delete_fi;
+    
     while (!inputs.empty()) 
     {
+      delete_fi = false;
       REPORT(logger, "Starting iteration " << runs);
       LOG(logger, "inputs.size()=" << inputs.size());
-      multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+      delta_bb_covered.clear();
+      multimap<Key, Input*, cmp>::iterator it = --(inputs.end());
       Input* fi = it->second;
       unsigned int scr = it->first.score;
       unsigned int dpth = it->first.depth;
       LOG(logger, "selected next input with score " << scr);
-      inputs.erase(it);
 
       if (config->usingSockets() || config->usingDatagrams())
       {
@@ -484,14 +731,52 @@ void ExecutionManager::run()
         fi->dumpFiles();
       }
       ostringstream tg_depth;
-      tg_depth << "--startdepth=" << fi->startdepth;
+      vector<string> plugin_opts;
+      bool newInput = false;
+      if ((scr == 0) && config->getAgent())
+      {
+        LOG(logger, "All inputs have zero score: requesting new input");
+        signal(SIGUSR2, dummy_handler);
+        kill(getppid(), SIGUSR1);
+        pause();
+        int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+        int startdepth;
+        read(descr, &startdepth, sizeof(int));
+        close(descr);
+        if (startdepth > 0)
+        {
+          tg_depth << "--startdepth=" << startdepth;
+          newInput = true;
+        }
+        else
+        {
+          config->setNotAgent();
+          delete_fi = true;
+          inputs.erase(it);
+          if (runs > 0)
+          {
+            plugin_opts.push_back("--check-prediction=yes");
+          }
+          tg_depth << "--startdepth=" << fi->startdepth;
+        }
+      }
+      else
+      {
+        delete_fi = true;
+        inputs.erase(it);
+        if (runs > 0)
+        {
+          plugin_opts.push_back("--check-prediction=yes");
+        }
+        tg_depth << "--startdepth=" << fi->startdepth;
+      }
+
       ostringstream tg_invert_depth;
       tg_invert_depth << "--invertdepth=" << config->getDepth();
-   
-      vector<string> plugin_opts;
+         
       plugin_opts.push_back(tg_depth.str());
       plugin_opts.push_back(tg_invert_depth.str());
-
+    
       if (config->getDumpCalls())
       {
         plugin_opts.push_back("--dump-file=calldump.log");
@@ -573,27 +858,21 @@ void ExecutionManager::run()
           plugin_opts.push_back(tg_inputfile.str());
         }
       }
-
-      if (runs > 0)
-      {
-        plugin_opts.push_back("--check-prediction=yes");
-      }
       
       PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
-      tg_start = time(NULL);
-      intg = true;
+      plugin_opts.clear();
       if (config->getTracegrindAlarm() == 0)
       {
         nokill = true;
       }
+      time_t start_time = time(NULL);
+      monitor->setState(TRACER, start_time);
       int exitCode = plugin_exe.run();
+      monitor->addTime(time(NULL));
       if (config->getTracegrindAlarm() == 0)
       {      
         nokill = false;
       }
-      intg = false;
-      tg_end = time(NULL);
-      tg_time += tg_end - tg_start;
       if (config->usingSockets() || config->usingDatagrams())
       {
         updateInput(fi);
@@ -601,11 +880,11 @@ void ExecutionManager::run()
 
       if (exitCode == -1)
       {
-        LOG(logger, "failure in tracegrind\n");
+        LOG(logger, "failure in tracegrind");
       }
 
       int divfd = open("divergence.log", O_RDWR);
-      if ((divfd != -1) && config->getDebug() && (runs > 0))
+      if ((divfd != -1) && config->getDebug() && (runs > 0) && !newInput)
       {
         bool divergence;
         read(divfd, &divergence, sizeof(bool));
@@ -618,7 +897,7 @@ void ExecutionManager::run()
           if (config->usingSockets() || config->usingDatagrams())
           {
             stringstream ss(stringstream::in | stringstream::out);
-            ss << "divergence_" << divergences;
+            ss << config->getPrefix() << "divergence_" << divergences;
             LOG(logger, "dumping divergent input to file " << ss.str());
             fi->parent->dumpExploit((char*) ss.str().c_str(), false);
           }
@@ -627,7 +906,7 @@ void ExecutionManager::run()
             for (int i = 0; i < fi->parent->files.size(); i++)
             {
               stringstream ss(stringstream::in | stringstream::out);
-              ss << "divergence_" << divergences << "_" << i;
+              ss << config->getPrefix() << "divergence_" << divergences << "_" << i;
               LOG(logger, "dumping divergent input to file " << ss.str());
               fi->parent->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
             }
@@ -638,6 +917,10 @@ void ExecutionManager::run()
           if (scr == 0) 
           {
             runs++;
+            if (is_distributed)
+            {
+              talkToServer(inputs);
+            }
             continue;
           }
         }
@@ -651,56 +934,106 @@ void ExecutionManager::run()
       {
         break;
       }
-
-      int actualfd = open("actual.log", O_RDWR);
-      bool* actual = new bool[fi->startdepth - 1 + config->getDepth()];
-      read(actualfd, actual, (fi->startdepth - 1 + config->getDepth()) * sizeof(bool));
-      close(actualfd);
-
-      if (config->getCheckDanger())
+      int depth = 0;
+      if (thread_num)
       {
-        FileBuffer dtrace("dangertrace.log");
-        char* dquery;
-        while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
+        if (config->getCheckDanger())
         {
-          //dump to the separate file
-          unsigned int oldsize = dtrace.size;
-          dtrace.size = (dquery - dtrace.buf) + 13;
-          //dtrace.dumpFile(".avalanche/curdtrace.log");
-          dtrace.dumpFile("curdtrace.log");
-          //replace QUERY(FALSE); with newlines
-          int k = 0;
-          for (; k < 13; k++)
+          depth = runSTPAndCGParallel(true, &inputs, fi, dpth);
+        }
+        depth = runSTPAndCGParallel(false, &inputs, fi, dpth);
+      }
+      else
+      {
+        int actualfd = open("actual.log", O_RDWR);
+        int actual_length;
+        if (config->getDepth() == 0)
+        {
+          read(actualfd, &actual_length, sizeof(int));
+        }
+        else
+        {
+          actual_length = fi->startdepth - 1 + config->getDepth();
+        }
+        bool* actual = new bool[actual_length];
+        read(actualfd, actual, actual_length * sizeof(bool));
+        close(actualfd);
+
+        if (config->getCheckDanger())
+        {
+          FileBuffer dtrace("dangertrace.log");
+          char* dquery;
+          while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
           {
-            dquery[k] = '\n';
+            dtrace.invertQueryAndDump("curdtrace.log");
+            STP_Input si;
+            //si.setFile(".avalanche/curdtrace.log");
+            si.setFile("curdtrace.log");
+            //the rest stuff
+            STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
+            nokill = true;
+            time_t start_time = time(NULL);
+            monitor->setState(STP, start_time);
+            STP_Output *stp_output = stp_exe.run(&si);
+            monitor->addTime(time(NULL));
+            nokill = false;
+            if (stp_output == NULL)
+            {
+              ERR(logger, "STP has encountered an error");
+              FileBuffer f("curdtrace.log");
+              ERR(logger, "curdtrace.log:\n" << string(f.buf));
+              continue;
+            }
+            if (stp_output->getFile() != NULL)
+            {
+              FileBuffer f(stp_output->getFile());
+              DBG(logger, "stp output:\n" << string(f.buf));
+              Input* next = new Input();
+              for (int i = 0; i < fi->files.size(); i++)
+              { 
+                FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
+                if (fb == NULL)
+                {
+                  delete next;
+                  next = NULL;
+                  break;
+                }
+                else
+                {
+                  next->files.push_back(fb);
+                }
+              }
+              if (next != NULL)
+              {
+                checkAndScore(next, true);
+                delete next;
+              }
+            }
+            delete stp_output;
           }
-          k = -1;
-          while (dquery[k] != '\n')
-          {
-            dquery[k] = '\n';
-            k--;
-          }
-          //restore the FileBuffer size
-          dtrace.size = oldsize;
-          //set up the STP_Input to the newly dumped trace
+        }
+        FileBuffer trace("trace.log");
+        char* query;
+        while ((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
+        {
+          depth++;
+          trace.invertQueryAndDump("curtrace.log");
           STP_Input si;
-          //si.setFile(".avalanche/curdtrace.log");
-          si.setFile("curdtrace.log");
+          //si.setFile(".avalanche/curtrace.log");
+          si.setFile("curtrace.log");
           //the rest stuff
           STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-          stp_start = time(NULL);
-          instp = true;
           nokill = true;
+          time_t start_time = time(NULL);
+          monitor->setState(STP, start_time);
           STP_Output *stp_output = stp_exe.run(&si);
+          monitor->addTime(time(NULL));
           nokill = false;
-          instp = false;
-          stp_end = time(NULL);
-          stp_time += stp_end - stp_start;
           if (stp_output == NULL)
           {
             ERR(logger, "STP has encountered an error");
-            FileBuffer f("curdtrace.log");
-            ERR(logger, "curdtrace.log:\n" << string(f.buf));
+            FileBuffer f("curtrace.log");
+            ERR(logger, "curtrace.log:\n" << string(f.buf));
             continue;
           }
           if (stp_output->getFile() != NULL)
@@ -724,124 +1057,282 @@ void ExecutionManager::run()
             }
             if (next != NULL)
             {
-              checkAndScore(next, true);
-              delete next;
+              next->startdepth = fi->startdepth + depth;
+              next->prediction = new bool[fi->startdepth - 1 + depth];
+              for (int j = 0; j < fi->startdepth + depth - 2; j++)
+              {
+                next->prediction[j] = actual[j];
+              }
+              next->prediction[fi->startdepth + depth - 2] = !actual[fi->startdepth + depth - 2];
+              next->predictionSize = fi->startdepth - 1 + depth;
+              next->parent = fi;
+              int score;
+              score = checkAndScore(next, false);
+              LOG(logger, "score=" << score << "\n");
+              inputs.insert(make_pair(Key(score, dpth + depth), next));
             }
           }
           delete stp_output;
         }
-      }
-
-      FileBuffer trace("trace.log");
-      char* query;
-      int depth = 0;
-      //int rejects = 0;
-      while ((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
-      {
-        depth++;
-        //invert the last condition
-        if (query[-4] == '0')
-        {
-          query[-4] = '1';
-        } 
-        else if (query[-4] == '1')
-        {
-          query[-4] = '0';
-        }
-        //dump to the separate file
-        unsigned int oldsize = trace.size;
-        trace.size = (query - trace.buf) + 13;
-        //trace.dumpFile(".avalanche/curtrace.log");
-        trace.dumpFile("curtrace.log");
-        //replace QUERY(FALSE); with newlines
-        for (int k = 0; k < 13; k++)
-        {
-          query[k] = '\n';
-        }
-        //restore the previously inverted condition
-        if (query[-4] == '0')
-        {
-          query[-4] = '1';
-        } 
-        else if (query[-4] == '1')
-        {
-          query[-4] = '0';
-        }
-        //restore the FileBuffer size
-        trace.size = oldsize;
-        //set up the STP_Input to the newly dumped trace
-        STP_Input si;
-        //si.setFile(".avalanche/curtrace.log");
-        si.setFile("curtrace.log");
-        //the rest stuff
-        STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-        stp_start = time(NULL);
-        instp = true;
-        nokill = true;
-        STP_Output *stp_output = stp_exe.run(&si);
-        nokill = false;
-        instp = false;
-        stp_end = time(NULL);
-        stp_time += stp_end - stp_start;
-
-        if (stp_output == NULL)
-        {
-          ERR(logger, "STP has encountered an error");
-          FileBuffer f("curtrace.log");
-          ERR(logger, "curtrace.log:\n" << string(f.buf));
-          continue;
-        }
-        if (stp_output->getFile() != NULL)
-        {
-          FileBuffer f(stp_output->getFile());
-          DBG(logger, "stp output:\n" << string(f.buf));
-          Input* next = new Input();
-          for (int i = 0; i < fi->files.size(); i++)
-          { 
-            FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
-            if (fb == NULL)
-            {
-              delete next;
-              next = NULL;
-              break;
-            }
-            else
-            {
-              next->files.push_back(fb);
-            }
-          }
-          if (next != NULL)
-          {
-            next->startdepth = fi->startdepth + depth;
-            bool* prediction = new bool[fi->startdepth - 1 + depth];
-            for (int j = 0; j < fi->startdepth + depth - 2; j++)
-            {
-              prediction[j] = actual[j];
-            }
-            prediction[fi->startdepth + depth - 2] = !actual[fi->startdepth + depth - 2];
-            next->prediction = prediction;
-            next->predictionSize = fi->startdepth - 1 + depth;
-            next->parent = fi;
-            int score;
-            score = checkAndScore(next, false);
-            LOG(logger, "score=" << score << "\n");
-            inputs.insert(make_pair(Key(score, dpth + depth), next));
-          }
-        }
-        delete stp_output;
+        delete []actual;
       }
       if (depth == 0)
       {
-        LOG(logger, "no QUERY's found");
+        LOG(logger, "no QUERY's found\n");
       }
       runs++;
+      if (delete_fi)
+      {
+        if (initial != fi)
+        {
+          delete fi;
+        }
+      }
+      basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
+      if (is_distributed)
+      {
+        talkToServer(inputs);
+      }
     }
-    initial->dumpFiles();
+    if (!(config->usingSockets()) && !(config->usingDatagrams()))
+    {
+      initial->dumpFiles();
+    }
+}
+
+#define WRITE(var, size) \
+    do {\
+      if (write(distfd, var, size) == -1) {\
+        NET(logger, "Connection with server lost"); \
+        NET(logger, "Continuing work in local mode"); \
+        is_distributed = false; \
+        return; } \
+    } while(0)
+
+void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
+{
+  NET(logger, "Communicating with server");
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  FD_SET(distfd, &readfds);
+  struct timeval timer;
+  timer.tv_sec = 0;
+  timer.tv_usec = 0;
+  select(distfd + 1, &readfds, NULL, NULL, &timer);
+  int limit = config->getProtectMainAgent() ? N * agents : 1;
+  while (FD_ISSET(distfd, &readfds)) 
+  {
+    char c = '\0';
+    if (read(distfd, &c, 1) < 1)
+    {
+      NET(logger, "Connection with server lost");
+      is_distributed = false;
+      NET(logger, "Continuing work in local mode");
+      return;
+    }
+    if (c == 'a')
+    {
+      NET(logger, "Sending options and data");
+      write(distfd, "r", 1); 
+      //sending "r"(responding) before data - this is to have something different from "q", so that server
+      //can understand that main avalanche finished normally
+      int size;
+      read(distfd, &size, sizeof(int));
+      while (size > 0)
+      {
+        if (inputs.size() <= limit)
+        {
+          break;
+        }
+        multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+        it--;
+        Input* fi = it->second;
+        int filenum = fi->files.size();
+        WRITE(&filenum, sizeof(int));
+        bool sockets = config->usingSockets();
+        WRITE(&sockets, sizeof(bool));
+        bool datagrams = config->usingDatagrams();
+        WRITE(&datagrams, sizeof(bool));
+        for (int j = 0; j < fi->files.size(); j ++)
+        {
+          FileBuffer* fb = fi->files.at(j);
+          if (!config->usingDatagrams() && ! config->usingSockets())
+          {
+            int namelength = config->getFile(j).length();
+            WRITE(&namelength, sizeof(int));
+            WRITE(config->getFile(j).c_str(), namelength);
+          }
+          WRITE(&(fb->size), sizeof(int));
+          WRITE(fb->buf, fb->size);
+          /*printf("fb->size=%d\n", fb->size);
+          for (int j = 0; j < fb->size; j++)
+          {
+            printf("%x", fb->buf[j]);
+          }*/
+        }
+        //printf("\n");
+        WRITE(&fi->startdepth, sizeof(int));
+        int depth = config->getDepth();
+        WRITE(&depth, sizeof(int));
+        unsigned int alarm = config->getAlarm();
+        WRITE(&alarm, sizeof(int));
+        unsigned int tracegrindAlarm = config->getTracegrindAlarm();
+        WRITE(&tracegrindAlarm, sizeof(int));
+        int threads = config->getSTPThreads();
+        WRITE(&threads, sizeof(int));
+
+        int progArgsNum = config->getProgAndArg().size();
+        WRITE(&progArgsNum, sizeof(int));
+        //printf("argsnum=%d\n", progArgsNum);
+
+        bool useMemcheck = config->usingMemcheck();
+        WRITE(&useMemcheck, sizeof(bool));
+        bool leaks = config->checkForLeaks();
+        WRITE(&leaks, sizeof(bool));
+        bool traceChildren = config->getTraceChildren();
+        WRITE(&traceChildren, sizeof(bool));
+        bool checkDanger = config->getCheckDanger();
+        WRITE(&checkDanger, sizeof(bool));
+        bool debug = config->getDebug();
+        WRITE(&debug, sizeof(bool));
+        bool verbose = config->getVerbose();
+        WRITE(&verbose, sizeof(bool));
+        bool suppressSubcalls = config->getSuppressSubcalls();
+        WRITE(&suppressSubcalls, sizeof(bool));
+        bool STPThreadsAuto = config->getSTPThreadsAuto();
+        WRITE(&STPThreadsAuto, sizeof(bool));
+
+        if (sockets)
+        {
+          string host = config->getHost();
+          int length = host.length();
+          WRITE(&length, sizeof(int));
+          WRITE(host.c_str(), length);
+          unsigned int port = config->getPort();
+          WRITE(&port, sizeof(int));
+        }
+
+        if (config->getInputFilterFile() != "")
+        {
+          FileBuffer mask(config->getInputFilterFile().c_str());
+          WRITE(&mask.size, sizeof(int));
+          WRITE(mask.buf, mask.size);
+        }
+        else
+        {
+          int z = 0;
+          WRITE(&z, sizeof(int));
+        }
+
+        int funcFilters = config->getFuncFilterUnitsNum();
+        WRITE(&funcFilters, sizeof(int));
+        for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
+        {
+          string f = config->getFuncFilterUnit(i);
+          int length = f.length();
+          WRITE(&length, sizeof(int));
+          WRITE(f.c_str(), length);
+        }
+        if (config->getFuncFilterFile() != "")
+        {
+          FileBuffer filter(config->getFuncFilterFile().c_str());
+          WRITE(&filter.size, sizeof(int));
+          WRITE(filter.buf, filter.size);
+        }
+        else
+        {
+          int z = 0;
+          WRITE(&z, sizeof(int));
+        }
+
+        for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
+        {
+          int argsSize = it->length();
+          WRITE(&argsSize, sizeof(int));
+          WRITE(it->c_str(), argsSize);
+        }
+        if (it->second != initial)
+        {
+          delete it->second;
+        }
+        inputs.erase(it);
+        size--;
+      }
+      while (size > 0)
+      {
+        int tosend = 0;
+        WRITE(&tosend, sizeof(int));
+        size--;
+      }
+    }
+    else if (c == 'g')
+    {
+      //printf("received get\n");
+      write(distfd, "r", 1);
+      //sending "r"(responding) before data - this is to have something different from "q", so that server
+      //can understand that main avalanche finished normally
+      int size;
+      read(distfd, &size, sizeof(int));
+      while (size > 0)
+      {
+        if (inputs.size() <= limit)
+        { 
+          break;
+        }
+        NET(logger, "Sending input");
+        multimap<Key, Input*, cmp>::iterator it = --inputs.end();
+        it--;
+        Input* fi = it->second;
+        for (int j = 0; j < fi->files.size(); j ++)
+        {
+          FileBuffer* fb = fi->files.at(j);
+          WRITE(&(fb->size), sizeof(int));
+          WRITE(fb->buf, fb->size);
+        }
+        WRITE(&fi->startdepth, sizeof(int));
+        if (it->second != initial)
+        {
+          delete it->second;
+        }
+        inputs.erase(it);
+        size--;
+      }
+      while (size > 0)
+      {
+        int tosend = 0;
+        write(distfd, &tosend, sizeof(int));
+        size--;
+      }
+    }
+    else
+    {
+      int tosend = 0;
+      WRITE(&tosend, sizeof(int));
+    }
+    FD_ZERO(&readfds);
+    FD_SET(distfd, &readfds);
+    select(distfd + 1, &readfds, NULL, NULL, &timer);      
+  }
 }
 
 ExecutionManager::~ExecutionManager()
 {
     DBG(logger, "Destructing plugin manager");
+
+    if (is_distributed)
+    {
+      write(distfd, "q", 1);
+      shutdown(distfd, SHUT_RDWR);
+      close(distfd);
+    }
+
+    if (thread_num > 0)
+    {
+      pthread_mutex_destroy(&add_inputs_mutex);
+      pthread_mutex_destroy(&add_exploits_mutex);
+      pthread_mutex_destroy(&add_bb_mutex);
+      pthread_mutex_destroy(&finish_mutex);
+    }
 
     delete config;
 }

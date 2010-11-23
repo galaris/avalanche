@@ -30,16 +30,18 @@
 #include "STP_Input.h"
 #include "STP_Output.h"
 #include "TmpFile.h"
+#include "Monitor.h"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <pthread.h>
 
 using namespace std;
-pid_t stp_pid;
-extern pid_t child_pid;
 
+extern int thread_num;
+extern Monitor* monitor;
 
 static Logger *logger = Logger::getLogger();
 
@@ -50,15 +52,24 @@ STP_Executor::STP_Executor(bool debug_full_enable,
 {
     prog = strdup((install_dir + "stp").c_str());
 
-    args = (char **)calloc(4, sizeof(char *));
+    argsnum = 4;
+
+    args = (char **)calloc(argsnum, sizeof(char *));
 
     args[0] = strdup(prog);
     args[1] = strdup("-p");
 }
 
-STP_Output *STP_Executor::run(STP_Input *input)
+STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
 {
-    LOG(logger, "Running STP");
+    if (!thread_num)
+    {
+      LOG(logger, "Running STP");
+    }
+    else
+    {
+      LOG(logger, "Thread #" << thread_index << ": Running STP");
+    }
     
     if (input == NULL) {
         DBG(logger, "No input");
@@ -73,7 +84,8 @@ STP_Output *STP_Executor::run(STP_Input *input)
     redirect_stderr(file_err.getName());
 
     int ret = exec(true);
-    stp_pid = child_pid;
+    monitor->setPID(child_pid, thread_index);
+ 
     if (ret == -1) {
         ERR(logger, "Problem in execution: " << strerror(errno));
         return NULL;
@@ -81,10 +93,20 @@ STP_Output *STP_Executor::run(STP_Input *input)
 
     ret = wait();
     if (ret == -1) {
-        ERR(logger, "Problem in waiting: " << strerror(errno));
+        if (!monitor->getKilledStatus())
+        {
+          ERR(logger, "Problem in waiting: " << strerror(errno));
+        }
         return NULL;
     }
-    DBG(logger, "STP is finished.");
+    if (!thread_num)
+    {
+      LOG(logger, "STP is finished");
+    }
+    else
+    {
+      LOG(logger, "Thread #" << thread_index << ": STP is finished");
+    }
 
     if (ret != 0) {
         LOG(logger, "STP exits with code " << ret);

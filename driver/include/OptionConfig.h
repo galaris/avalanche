@@ -35,33 +35,48 @@
 class OptionConfig
 {
 public:
-    OptionConfig(): debug(false),
+    OptionConfig(): reportLog(std::string("")),
+                    debug(false),
+                    protectMainAgent(false),
+                    STPThreadsAuto(false),
 		    checkDanger(false),
                     verbose(false),
 		    sockets(false),
 		    traceChildren(false),
                     datagrams(false),
+                    distributed(false), 
+                    agent(false), 
                     useMemcheck(false),
                     suppressSubcalls(false),
                     dumpCalls(false),
                     leaks(false),
                     funcFilterFile(std::string("")),
                     depth(100),
+                    startdepth(1),
                     alarm(300),
                     tracegrindAlarm(0),
                     host(std::string("")),
-                    port(65536) 
+                    prefix(std::string("")),
+                    disthost(std::string("127.0.0.1")),
+                    port(65536),
+                    distport(10000),
+                    STPThreads(0)
     {}
 
     OptionConfig(const OptionConfig *opt_config)
     {
+        reportLog       = opt_config->reportLog;
         traceChildren   = opt_config->traceChildren;
         debug           = opt_config->debug;
+        protectMainAgent= opt_config->protectMainAgent;
+        distributed     = opt_config->distributed;
+        agent           = opt_config->agent;
         checkDanger     = opt_config->checkDanger;
         verbose         = opt_config->verbose;
         sockets         = opt_config->sockets;
         datagrams       = opt_config->datagrams;
         depth           = opt_config->depth;
+        startdepth      = opt_config->startdepth;
         valgrind        = opt_config->valgrind;
         prog_and_arg    = opt_config->prog_and_arg;
         files           = opt_config->files;
@@ -69,6 +84,8 @@ public:
         tracegrindAlarm = opt_config->tracegrindAlarm;
         host	        = opt_config->host;
         port	        = opt_config->port;
+        disthost	= opt_config->disthost;
+        distport	= opt_config->distport;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         funcFilterFile  = opt_config->funcFilterFile;
@@ -76,6 +93,9 @@ public:
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
         inputFilterFile = opt_config->inputFilterFile;
+        STPThreads	= opt_config->STPThreads;
+        STPThreadsAuto	= opt_config->STPThreadsAuto;
+        prefix          = opt_config->prefix;
     }
 
     bool empty() const
@@ -99,17 +119,35 @@ public:
     const std::string getInputFilterFile() const
     { return inputFilterFile; }
 
+    const std::string getReportLog() const
+    { return reportLog; }
+
+    void setReportLog(std::string reportLog)
+    { this->reportLog = reportLog; }
+
     void setDebug()
     { debug = true; }
     
     bool getDebug() const
     { return debug; }
 
+    void setSTPThreadsAuto()
+    { STPThreadsAuto = true; }
+    
+    bool getSTPThreadsAuto() const
+    { return STPThreadsAuto; }
+
     void setTraceChildren()
     { traceChildren = true; }
     
     bool getTraceChildren() const
     { return traceChildren; }
+
+    void setProtectMainAgent()
+    { protectMainAgent = true; }
+
+    bool getProtectMainAgent() const
+    { return protectMainAgent; }
 
     void setDumpCalls()
     { dumpCalls = true; }
@@ -128,6 +166,33 @@ public:
     
     bool getVerbose() const
     { return verbose; }
+
+    void setDistributed()
+    { distributed = true; }
+    
+    bool getDistributed() const
+    { return distributed; }
+
+    void setAgent()
+    { agent = true; }
+
+    void setNotAgent()
+    { agent = false; }
+    
+    bool getAgent() const
+    { return agent; }
+
+    void setSTPThreads(int num)
+    { STPThreads = num; }
+    
+    int getSTPThreads() const
+    { return STPThreads; }
+
+    void setStartdepth(int startdepth)
+    { this->startdepth = startdepth; }
+    
+    int getStartdepth() const
+    { return startdepth; }
 
     void setCheckDanger()
     { checkDanger = true; }
@@ -195,6 +260,12 @@ public:
     unsigned int getPort() const
     { return port; }
 
+    void setDistPort(int port)
+    { distport = port; }
+
+    int getDistPort() const
+    { return distport; }
+
     void addProgAndArg(const std::string &arg)
     { prog_and_arg.push_back(arg); }
 
@@ -216,8 +287,21 @@ public:
     void setHost(std::string& host)
     { this->host = host; }
 
+    std::string getPrefix()
+    { return prefix; }
+
+    void setPrefix(std::string& prefix)
+    { this->prefix = prefix; }
+
+    std::string getDistHost()
+    { return disthost; }
+
+    void setDistHost(std::string& host)
+    { disthost = host; }
+
 private:
     bool                     debug;
+    bool                     protectMainAgent;
     bool                     verbose;
     bool		     sockets;
     bool                     datagrams;
@@ -227,6 +311,10 @@ private:
     bool                     suppressSubcalls;
     bool                     dumpCalls;
     bool 		     traceChildren;
+    bool                     distributed;
+    bool                     agent;
+    bool                     STPThreadsAuto;
+    std::string              reportLog;
     std::string              funcFilterFile;
     std::size_t              depth;
     std::string              valgrind;
@@ -235,9 +323,14 @@ private:
     unsigned int             alarm;
     unsigned int             tracegrindAlarm;
     std::string		     host;
+    std::string              disthost;
     unsigned int	     port;
+    unsigned int             distport;
     std::vector<std::string> funcFilterUnits;
     std::string              inputFilterFile;
+    std::string              prefix;
+    unsigned int             startdepth;
+    unsigned int             STPThreads;
 };
 
 

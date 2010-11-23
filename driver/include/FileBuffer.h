@@ -41,13 +41,15 @@ public:
 
   friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
 
-  FileBuffer(char* name);
+  FileBuffer(const char* name);
 
   FileBuffer(const FileBuffer& other);
 
   virtual FileBuffer* forkInput(char* stpOutputFile);
 
-  virtual void dumpFile(char* name = NULL);
+  virtual void dumpFile(const char* name = NULL);
+
+  void invertQueryAndDump(const char* name);
 
   virtual void applySTPSolution(char* buf);
   

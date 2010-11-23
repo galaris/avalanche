@@ -1,8 +1,8 @@
 
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*-------------------------------------- Chunk.h -----------------------------------------*/
+/*-------------------------------- Distributed Avalanche.  -------------------------------*/
+/*-------------------------------------- util.cpp ----------------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
@@ -22,29 +22,40 @@
    limitations under the License.
 */
 
-#ifndef __CHUNK__H__
-#define __CHUNK__H__
+#include <unistd.h>
 
-#include <vector>
-#include <string>
+#include "util.h"
 
-class FileBuffer;
-
-class Chunk
+void readFromSocket(int fd, const void* b, size_t count)
 {
-private:
-  FileBuffer* trace;
-  std::vector<std::pair<int, int> > exploitGroups;
-public:
-  Chunk(FileBuffer* trace, int exploitNum, int inputNum);
-  ~Chunk();
+  char* buf = (char*) b;
+  size_t received = 0;
+  while (received < count)
+  {
+    size_t r = read(fd, buf + received, count - received);
+    if (r == 0)
+    {
+      throw "connection is down";
+    }
+    if (r == -1)
+    {
+      throw "error reading from socket";
+    }
+    received += r;
+  }
+}
 
-  void addGroup(int exploitNum, int inputNum);
-  
-  FileBuffer* getTrace();
-
-  void print(std::string prefix, int chunkNum, int fd = -1);
-};
-
-#endif
-
+void writeToSocket(int fd, const void* b, size_t count)
+{
+  char* buf = (char*) b;
+  size_t sent = 0;
+  while (sent < count)
+  {
+    size_t s = write(fd, buf + sent, count - sent);
+    if (s == -1)
+    {
+      throw "error writing to socket";
+    }
+    sent += s;
+  }
+}

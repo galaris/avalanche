@@ -42,9 +42,22 @@ Input::Input()
   this->parent = NULL;
 }
 
-void Input::dumpExploit(char* name, bool predict)
+Input::~Input()
 {
-  int fd = open(name, O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  if (prediction != NULL)
+  {
+    delete []prediction;
+  }
+  for (int i = 0; i < files.size(); i ++)
+  {
+    delete (files.at(i));
+  }
+}
+
+void Input::dumpExploit(const char* name, bool predict, const char* name_modifier)
+{
+  std::string res_name = std::string(name) + std::string(name_modifier);
+  int fd = open(res_name.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   int size = files.size();
   write(fd, &size, sizeof(int));
   for (int i = 0; i < files.size(); i++)
@@ -55,21 +68,24 @@ void Input::dumpExploit(char* name, bool predict)
   close(fd);
   if (predict && (prediction != NULL))
   {
-    int fd = open("prediction.log", O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    std::string pred_name = std::string("prediction") + std::string(name_modifier) + std::string(".log");
+    int fd = open(pred_name.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
     write(fd, prediction, predictionSize * sizeof(bool));
     close(fd);
   }  
 }
 
-void Input::dumpFiles(char* name)
+void Input::dumpFiles(char* name, const char* name_modifier)
 {
   for (int i = 0; i < files.size(); i++)
   {
-    files.at(i)->dumpFile(name);
+    std::string res_name = std::string(files.at(i)->name) + std::string(name_modifier);
+    files.at(i)->dumpFile(res_name.c_str());
   }
   if ((prediction != NULL) && (name == NULL))
   {
-    int fd = open("prediction.log", O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    std::string pred_name = std::string("prediction") + std::string(name_modifier) + std::string(".log");
+    int fd = open(pred_name.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
     write(fd, prediction, predictionSize * sizeof(bool));
     close(fd);
   }

@@ -29,15 +29,57 @@
 
 #include <cstddef>
 #include <string>
+#include <map>
 #include <set>
+#include <functional>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
-
+class FileBuffer;
 class OptionConfig;
 class Input;
+
+class Key
+{
+public:
+  unsigned int score;
+  unsigned int depth;
+  
+  Key(unsigned int score, unsigned int depth)
+  {
+    this->score = score;
+    this->depth = depth;
+  }
+};
+
+class cmp: public std::binary_function<Key, Key, bool>
+{
+public:
+  result_type operator()(first_argument_type k1, second_argument_type k2)
+  {
+    if (k1.score < k2.score)
+    {
+      return true;
+    }
+    else if (k1.score > k2.score)
+    {
+      return false;
+    }
+    else
+    {
+      if (k1.depth > k2.depth)
+      {
+        return true;
+      }
+      else
+      {
+        return false;
+      }
+    }
+  }
+};
 
 class ExecutionManager
 {
@@ -56,10 +98,18 @@ public:
    
     void cleanfifo();
 
-    int checkAndScore(Input* input, bool addNoCoverage);
+    int runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input* first_input, unsigned long first_depth);
+    int checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier = "", bool first_run = false);
+
+    void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
+    bool dumpMCExploit(Input* input, const char* exec_log);
 
     void updateInput(Input* input);
-  
+
+    void talkToServer(std::multimap<Key, Input*, cmp>& inputs);
+
+    OptionConfig* getConfig() { return config; }
+
     ~ExecutionManager();
 
 private:
