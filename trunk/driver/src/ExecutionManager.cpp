@@ -64,15 +64,12 @@ bool trace_kind;
 static Logger *logger = Logger::getLogger();
 Input* initial;
 int allSockets = 0;
-int curSockets;
 int listeningSocket;
 int fifofd;
 int memchecks = 0;
 Kind kind;
 bool is_distributed = false;
 
-set <unsigned long> delta_bb_covered;
-  
 vector<Chunk*> report;
 
 pthread_mutex_t add_inputs_mutex;
@@ -90,7 +87,6 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
     DBG(logger, "Initializing plugin manager");
 
-    cond_depth  = 1;
     config      = new OptionConfig(opt_config);
     exploits    = 0;
     divergences = 0;
@@ -149,62 +145,169 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
    }
 }
 
+void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
+{
+  ostringstream tg_invert_depth;
+  tg_invert_depth << "--invertdepth=" << config->getDepth();
+
+  plugin_opts.push_back(tg_invert_depth.str());
+
+  if (config->getDumpCalls())
+  {
+    plugin_opts.push_back("--dump-file=calldump.log");
+  }
+  else
+  {
+    plugin_opts.push_back("--dump-prediction=yes");
+  }
+
+  if (config->getCheckDanger())
+  {
+    plugin_opts.push_back(string("--check-danger=yes"));
+  }
+  else
+  {
+    plugin_opts.push_back(string("--check-danger=no"));
+  }
+
+  for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
+  {
+    plugin_opts.push_back(string("--func-name=") + config->getFuncFilterUnit(i));
+  }
+  if (config->getFuncFilterFile() != "")
+  {
+    plugin_opts.push_back(string("--func-filter-file=") + config->getFuncFilterFile());
+  }
+
+  if (config->getInputFilterFile() != "")
+  {
+    plugin_opts.push_back(string("--mask=") + config->getInputFilterFile());
+  }
+
+  if (config->getSuppressSubcalls())
+  {
+    plugin_opts.push_back("--suppress-subcalls=yes");
+  }
+
+  if (config->usingSockets())
+  {
+    ostringstream tg_host;
+    tg_host << "--host=" << config->getHost();
+    plugin_opts.push_back(tg_host.str());
+    ostringstream tg_port;
+    tg_port << "--port=" << config->getPort();
+    plugin_opts.push_back(tg_port.str());
+
+    plugin_opts.push_back("--replace=yes");
+    plugin_opts.push_back("--sockets=yes");
+    if (config->getTracegrindAlarm() != 0)
+    {
+      alarm(config->getTracegrindAlarm());
+    }
+    killed = false;
+  }
+  else if (config->usingDatagrams())
+  {
+    plugin_opts.push_back("--replace=yes");
+    plugin_opts.push_back("--datagrams=yes");
+    if (config->getTracegrindAlarm() != 0)
+    {
+      alarm(config->getTracegrindAlarm());
+    }
+  killed = false;
+  }      
+  else
+  {
+    for (int i = 0; i < config->getNumberOfFiles(); i++)
+    {
+      plugin_opts.push_back(string("--file=") + config->getFile(i));
+    }
+  }
+}
+
+void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string fileNameModifier, bool addNoCoverage)
+{
+  if (config->usingSockets())
+  {
+    ostringstream cv_host;
+    cv_host << "--host=" << config->getHost();
+    plugin_opts.push_back(cv_host.str());
+
+    ostringstream cv_port;
+    cv_port << "--port=" << config->getPort();
+    plugin_opts.push_back(cv_port.str());
+    
+    plugin_opts.push_back(string("--replace=replace_data") + fileNameModifier);
+    plugin_opts.push_back("--sockets=yes");
+
+    LOG(logger, "setting alarm " << config->getAlarm());
+    alarm(config->getAlarm());
+    killed = false;
+  }
+  else if (config->usingDatagrams())
+  { 
+    plugin_opts.push_back(string("--replace=replace_data") + fileNameModifier);
+    plugin_opts.push_back("--datagrams=yes");
+
+    LOG(logger, "setting alarm " << config->getAlarm());
+    alarm(config->getAlarm());
+    killed = false;
+  }
+  else
+  {
+    ostringstream cv_alarm;
+    cv_alarm << "--alarm=" << config->getAlarm();
+    plugin_opts.push_back(cv_alarm.str());
+  }
+
+  string cv_exec_file = string("execution") + fileNameModifier + string(".log");
+  plugin_opts.push_back(string("--log-file=") + cv_exec_file);
+
+  if (addNoCoverage)
+  {
+    plugin_opts.push_back("--no-coverage=yes");
+  }
+  if (fileNameModifier != string(""))
+  {
+    plugin_opts.push_back(string("--filename=basic_blocks") + fileNameModifier + string(".log"));
+  }
+}
+
 void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group)
 {
   time_t exploittime;
   time(&exploittime);
   string t = string(ctime(&exploittime));
   REPORT(logger, "Crash detected.");
-  LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));  
+  LOG(logger, "exploit time: " << t.substr(0, t.size() - 1));
+  if (info_available)
+  {
+    if (!same_exploit)
+    {
+      stringstream ss(stringstream::in | stringstream::out);
+      ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
+      stack_trace->dumpFile((char*) ss.str().c_str());
+      REPORT(logger, "Dumping stack trace to file " << ss.str());
+    }
+    else
+    {
+      REPORT(logger, "Bug was detected previously. Stack trace can be found in " 
+                     << config->getPrefix() << "stacktrace_" << exploit_group << ".log");
+    }
+  }
+  else
+  {
+    REPORT(logger, "No stack trace is available.");
+  }
   if (config->usingSockets() || config->usingDatagrams())
   {
     stringstream ss(stringstream::in | stringstream::out);
     ss << config->getPrefix() << "exploit_" << exploits;
     REPORT(logger, "Dumping an exploit to file " << ss.str());
     input->dumpExploit((char*) ss.str().c_str(), false);
-    if (info_available)
-    {
-      if (!same_exploit)
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
-        stack_trace->dumpFile((char*) ss.str().c_str());
-        REPORT(logger, "Dumping stack trace to file " << ss.str());
-      }
-      else
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "stacktrace_" << exploit_group << ".log";
-        REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
-      }
-    }
-    else
-    {
-      REPORT(logger, "No stack trace is available.");
-    }
   }
   else
   {
-    if (info_available)
-    {
-      if (!same_exploit)
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
-        stack_trace->dumpFile((char*) ss.str().c_str());
-        REPORT(logger, "Dumping stack trace to file " << ss.str());
-      }
-      else
-      {
-        stringstream ss(stringstream::in | stringstream::out);
-        ss << config->getPrefix() << "stacktrace_" << exploit_group << ".log";
-        REPORT(logger, "Bug was detected previously. Stack trace can be found in " << ss.str());
-      }
-    }
-    else
-    {
-      REPORT(logger, "No stack trace is available.");
-    }
     for (int i = 0; i < input->files.size(); i++)
     {
       stringstream ss(stringstream::in | stringstream::out);
@@ -271,71 +374,65 @@ bool ExecutionManager::dumpMCExploit(Input* input, const char *exec_log)
   return res;
 }
 
-int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier, bool first_run)
+int ExecutionManager::calculateScore(string fileNameModifier)
+{
+  bool enable_mutexes = (fileNameModifier != string(""));
+  int res = 0;
+  int fd = open((string("basic_blocks") + fileNameModifier + string(".log")).c_str(), O_RDWR);
+  if (fd != -1)
+  {
+    struct stat fileInfo;
+    fstat(fd, &fileInfo);
+    int size = fileInfo.st_size / sizeof(long);
+    if (size > 0)
+    {
+      unsigned long basicBlockAddrs[size];
+      read(fd, basicBlockAddrs, fileInfo.st_size);
+      close(fd);
+      if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
+      for (int i = 0; i < size; i++)
+      {
+        if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+        {
+          res++;
+        }
+        if(thread_num < 1)
+        {
+          basicBlocksCovered.insert(basicBlockAddrs[i]);
+        }
+        else
+        {
+          delta_basicBlocksCovered.insert(basicBlockAddrs[i]);
+        }
+      }
+      if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);
+    }
+  }
+  else
+  {
+    ERR(logger, "Error opening file " << string("basic_blocks") + fileNameModifier + string(".log"));
+  }
+  return res;
+}
+
+int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fileNameModifier, bool first_run)
 {
   if (config->usingSockets() || config->usingDatagrams())
   {
-    input->dumpExploit("replace_data", false, fileNameModifier);
+    input->dumpExploit("replace_data", false, fileNameModifier.c_str());
   }
   else
   {
-    input->dumpFiles(NULL, fileNameModifier);
+    input->dumpFiles(NULL, fileNameModifier.c_str());
   }
   vector<string> plugin_opts;
-  ostringstream rp_data;
-  rp_data << "--replace=replace_data" << fileNameModifier;
-  if (config->usingSockets())
-  {
-    ostringstream cv_host;
-    cv_host << "--host=" << config->getHost();
-    plugin_opts.push_back(cv_host.str());
+  getCovgrindOptions(plugin_opts, fileNameModifier, addNoCoverage);
 
-    ostringstream cv_port;
-    cv_port << "--port=" << config->getPort();
-    plugin_opts.push_back(cv_port.str());
-    
-    plugin_opts.push_back(rp_data.str().c_str());
-    plugin_opts.push_back("--sockets=yes");
-
-    LOG(logger, "setting alarm " << config->getAlarm());
-    alarm(config->getAlarm());
-    killed = false;
-  }
-  else if (config->usingDatagrams())
-  { 
-    plugin_opts.push_back(rp_data.str().c_str());
-    plugin_opts.push_back("--datagrams=yes");
-
-    LOG(logger, "setting alarm " << config->getAlarm());
-    alarm(config->getAlarm());
-    killed = false;
-  }
-  else
-  {
-    ostringstream cv_alarm;
-    cv_alarm << "--alarm=" << config->getAlarm();
-    plugin_opts.push_back(cv_alarm.str());
-  }
-
-  string cv_exec_file = string("execution") + string(fileNameModifier) + string(".log");
-  ostringstream cv_exec_log;
-  cv_exec_log << "--log-file=" << cv_exec_file;
-  plugin_opts.push_back(cv_exec_log.str());
-
-  if (addNoCoverage)
-  {
-    plugin_opts.push_back("--no-coverage=yes");
-  }
-  if (strcmp(fileNameModifier, ""))
-  {
-    ostringstream cv_bb_log;
-    cv_bb_log << "--filename=basic_blocks" << fileNameModifier << ".log";
-    plugin_opts.push_back(cv_bb_log.str());
-  }
-
+  string cv_exec_file = string("execution") + fileNameModifier + string(".log");
+  
   vector <string> new_prog_and_args = config->getProgAndArg();
   
-  if (strcmp(fileNameModifier, "") && !(config->usingSockets()) && !(config->usingDatagrams()))
+  if (fileNameModifier != string("") && !(config->usingSockets()) && !(config->usingDatagrams()))
   {
     for (int i = 0; i < new_prog_and_args.size(); i ++)
     {
@@ -343,23 +440,18 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
       {
         if (!strcmp(new_prog_and_args[i].c_str(), input->files.at(j)->name))
         {
-          new_prog_and_args[i].append(string(fileNameModifier));
+          new_prog_and_args[i].append(fileNameModifier);
         }
       }
     }
   }
-  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
+  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(),
+                            new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
   new_prog_and_args.clear();
   plugin_opts.clear();
-  curSockets = 0;
   bool enable_mutexes = (config->getSTPThreads() != 0) && !first_run;
-  int thread_index = 0;
-  if (strcmp(fileNameModifier, ""))
-  {
-    thread_index = atoi(string(fileNameModifier).substr(1).c_str());
-  }
-  time_t start_time = time(NULL);
-  monitor->setState(CHECKER, start_time, thread_index);
+  int thread_index = (fileNameModifier == string("")) ? 0 : atoi(fileNameModifier.substr(1).c_str());
+  monitor->setState(CHECKER, time(NULL), thread_index);
   int exitCode = plugin_exe.run(thread_index);
   monitor->addTime(time(NULL), thread_index);
   FileBuffer* mc_output;
@@ -378,6 +470,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
   }
   if (has_crashed)
   {
+    int chunk_file_num = (config->usingSockets() || config->usingDatagrams()) ? (-1) : (input->files.size());
     FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
     infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
@@ -387,46 +480,25 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
         if (((*it)->getTrace() != NULL) && (*(*it)->getTrace() == *cv_output))
         {
           sameExploit = true;
-          if (config->usingSockets() || config->usingDatagrams())
-          {
-            (*it)->addGroup(exploits, -1);
-          }
-          else
-          {
-            (*it)->addGroup(exploits, input->files.size());
-          }
+          (*it)->addGroup(exploits, chunk_file_num);
           break;
         }
       }
       if (!sameExploit) 
       {
         Chunk* ch;
-        if (config->usingSockets() || config->usingDatagrams())
-        {
-          ch = new Chunk(cv_output, exploits, -1);
-        }
-        else
-        {
-          ch = new Chunk(cv_output, exploits, input->files.size());
-        }
+        ch = new Chunk(cv_output, exploits, chunk_file_num);
         report.push_back(ch);
       }
     }
     else
     {
       Chunk* ch;
-      if (config->usingSockets() || config->usingDatagrams())
-      {
-        ch = new Chunk(NULL, exploits, -1);
-      }
-      else
-      {
-        ch = new Chunk(NULL, exploits, input->files.size());
-      }
+      ch = new Chunk(NULL, exploits, chunk_file_num);
       report.push_back(ch);
     }
     dumpExploit(input, cv_output, infoAvailable, sameExploit, exploit_group);
-    exploits++;
+    exploits ++;
     delete cv_output;
   }
   else if (config->usingMemcheck() && !addNoCoverage)
@@ -437,47 +509,57 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, const char
     }
   }
   if (enable_mutexes) pthread_mutex_unlock(&add_exploits_mutex);
+  int result = 0;
   if (!addNoCoverage)
   {
-    int res = 0;
-    string bb_name = string("basic_blocks") + string(fileNameModifier) + string(".log");
-    int fd = open(bb_name.c_str(), O_RDWR);
-    if (fd != -1)
+    result = calculateScore(fileNameModifier);
+  }
+  return result;
+}
+
+int ExecutionManager::checkDivergence(Input* first_input, int score)
+{
+  int divfd = open("divergence.log", O_RDWR);
+  if (divfd != -1)
+  {
+    bool divergence;
+    read(divfd, &divergence, sizeof(bool));
+    if (divergence)
     {
-      struct stat fileInfo;
-      fstat(fd, &fileInfo);
-      int size = fileInfo.st_size / sizeof(long);
-      if (size > 0)
+      int d;
+      read(divfd, &d, sizeof(int));
+      DBG(logger, "divergence at depth " << d << "\n");
+      if (config->usingSockets() || config->usingDatagrams())
       {
-        unsigned long* basicBlockAddrs = new unsigned long[size];
-        read(fd, basicBlockAddrs, fileInfo.st_size);
-        close(fd);
-        if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
-        for (int i = 0; i < size; i++)
+        stringstream ss(stringstream::in | stringstream::out);
+        ss << config->getPrefix() << "divergence_" << divergences;
+        LOG(logger, "dumping divergent input to file " << ss.str());
+        first_input->parent->dumpExploit((char*) ss.str().c_str(), false);
+      }
+      else
+      {
+        for (int i = 0; i < first_input->parent->files.size(); i++)
         {
-          if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
-          {
-            res++;
-          }
-          if(thread_num < 1)
-          {
-            basicBlocksCovered.insert(basicBlockAddrs[i]);
-          }
-          else
-          {
-            delta_bb_covered.insert(basicBlockAddrs[i]);
-          }
+          stringstream ss(stringstream::in | stringstream::out);
+          ss << config->getPrefix() << "divergence_" << divergences << "_" << i;
+          LOG(logger, "dumping divergent input to file " << ss.str());
+          first_input->parent->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
         }
-        if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);
-        delete[] basicBlockAddrs;
+      }
+      divergences++;
+      DBG(logger, "with startdepth=" << first_input->parent->startdepth << " and invertdepth=" << config->getDepth() << "\n");
+      close(divfd);
+      if (score == 0) 
+      {
+        if (is_distributed)
+        {
+          talkToServer();
+        }
+        return 1;
       }
     }
-    return res;
   }
-  else
-  {
-    return 0;
-  }
+  return 0;
 }
 
 void ExecutionManager::updateInput(Input* input)
@@ -516,7 +598,7 @@ void alarmHandler(int signo)
   signal(SIGALRM, alarmHandler);
 }
 
-void* exec_STP_CG(void* data)
+void* process_query(void* data)
 {
   PoolThread* actor = (PoolThread*) data;
   ExecutionManager* this_pointer = (ExecutionManager*) (Thread::getSharedData("this_pointer"));
@@ -526,15 +608,27 @@ void* exec_STP_CG(void* data)
   long first_depth = (long) (Thread::getSharedData("first_depth"));
   long depth = (long) (actor->getPrivateData("depth"));
   int cur_tid = actor->getCustomTID();
-  ostringstream input_modifier;
-  input_modifier << "_" << actor->getCustomTID();
-  string cur_trace_log = string("curtrace") + input_modifier.str() + string(".log");
+  this_pointer->processQuery(first_input, actual, first_depth, depth, cur_tid);
+  return NULL;
+}
+
+int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index)
+{
+  string cur_trace_log = (trace_kind) ? string("curtrace") : string("curdtrace");
+  string input_modifier = string("");
+  if (thread_index)
+  {
+    ostringstream input_modifier_s;
+    input_modifier_s << "_" << thread_index;
+    input_modifier = input_modifier_s.str();
+  }
+  cur_trace_log += input_modifier + string(".log");
   STP_Input si;
   si.setFile(cur_trace_log.c_str());
-  STP_Executor stp_exe(this_pointer->getConfig()->getDebug(), this_pointer->getConfig()->getValgrind());        
-  monitor->setState(STP, time(NULL), cur_tid);
-  STP_Output *out = stp_exe.run(&si, cur_tid);
-  monitor->addTime(time(NULL), cur_tid);
+  STP_Executor stp_exe(getConfig()->getDebug(), getConfig()->getValgrind());        
+  monitor->setState(STP, time(NULL), thread_index);
+  STP_Output *out = stp_exe.run(&si, thread_index);
+  monitor->addTime(time(NULL), thread_index);
   if (out == NULL)
   {
     if (!monitor->getKilledStatus())
@@ -547,7 +641,7 @@ void* exec_STP_CG(void* data)
   else if (out->getFile() != NULL)
   {
     FileBuffer f(out->getFile());
-    DBG(logger, "Thread #" << cur_tid << ": stp output:\n" << string(f.buf));
+    DBG(logger, "Thread #" << thread_index << ": stp output:\n" << string(f.buf));
     Input* next = new Input();
     int st_depth = first_input->startdepth;
     for (int k = 0; k < first_input->files.size(); k++)
@@ -567,29 +661,40 @@ void* exec_STP_CG(void* data)
     }
     if (next != NULL)
     {
-      next->startdepth = st_depth + depth + 1;
-      next->prediction = new bool[st_depth + depth];
-      for (int j = 0; j < st_depth + depth - 1; j++)
+      next->startdepth = st_depth + cur_depth + 1;
+      next->prediction = new bool[st_depth + cur_depth];
+      for (int j = 0; j < st_depth + cur_depth - 1; j++)
       {
         next->prediction[j] = actual[j];
       }
-      next->prediction[st_depth + depth - 1] = !actual[st_depth + depth - 1];
-      next->predictionSize = st_depth + depth;
+      next->prediction[st_depth + cur_depth - 1] = !actual[st_depth + cur_depth - 1];
+      next->predictionSize = st_depth + cur_depth;
       next->parent = first_input;
-      int score = this_pointer->checkAndScore(next, trace_kind, input_modifier.str().c_str());
-      if (!trace_kind)
+      int score = checkAndScore(next, !trace_kind, input_modifier);
+      if (trace_kind)
       {
-        LOG(logger, "Thread #" << cur_tid << ": score=" << score << "\n");
-        pthread_mutex_lock(&add_inputs_mutex);
-        inputs->insert(make_pair(Key(score, first_depth + depth + 1), next));
-        pthread_mutex_unlock(&add_inputs_mutex);
+        if (thread_index)
+        {
+          LOG(logger, "Thread #" << thread_index << ": score=" << score << "\n");
+          pthread_mutex_lock(&add_inputs_mutex);
+        }
+        else
+        {
+          LOG(logger, "score=" << score << "\n");
+        }
+        inputs.insert(make_pair(Key(score, first_depth + cur_depth + 1), next));
+        if (thread_index) 
+        {
+          pthread_mutex_unlock(&add_inputs_mutex);
+        }
       }
     }
   }
   if (out != NULL) delete out;
+  return 1;
 }
 
-int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*, cmp> * inputs, Input * first_input, unsigned long first_depth)
+int ExecutionManager::processTraceParallel(Input * first_input, unsigned long first_depth)
 {
   int actualfd = open("actual.log", O_RDWR);
   int actual_length;
@@ -606,10 +711,9 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   close(actualfd);
   int active_threads = thread_num;
   long depth = 0;
-  FileBuffer *trace = new FileBuffer((!_trace_kind) ? "trace.log" : "dangertrace.log");
-  trace_kind = _trace_kind;
+  FileBuffer *trace = new FileBuffer(((trace_kind) ? "trace.log" : "dangertrace.log"));
   Thread::clearSharedData();
-  Thread::addSharedData((void*) inputs, string("inputs"));
+  Thread::addSharedData((void*) &inputs, string("inputs"));
   Thread::addSharedData((void*) first_input, string("first_input"));
   Thread::addSharedData((void*) first_depth, string("first_depth"));
   Thread::addSharedData((void*) actual, string("actual"));
@@ -648,10 +752,18 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
     }
     active_threads --;
     threads[thread_counter].addPrivateData((void*) i, string("depth"));
-    external_data[i].work_func = exec_STP_CG;
+    external_data[i].work_func = process_query;
     external_data[i].data = &(threads[thread_counter]);
     ostringstream cur_trace;
-    cur_trace << "curtrace_" << thread_counter + 1 << ".log";
+    if (trace_kind)
+    {
+      cur_trace << "curtrace_";
+    }
+    else
+    {
+      cur_trace << "curdtrace_";
+    } 
+    cur_trace << thread_counter + 1 << ".log";
     trace->invertQueryAndDump(cur_trace.str().c_str());
     in_thread_creation = thread_counter;
     threads[thread_counter].setStatus(PoolThread::BUSY);
@@ -667,9 +779,77 @@ int ExecutionManager::runSTPAndCGParallel(bool _trace_kind, multimap<Key, Input*
   return depth;
 }
 
+int ExecutionManager::processTraceSequental(Input* first_input, unsigned long first_depth)
+{
+  int actualfd = open("actual.log", O_RDWR);
+  int actual_length, depth = 0;
+  if (config->getDepth() == 0)
+  {
+    read(actualfd, &actual_length, sizeof(int));
+  }
+  else
+  {
+    actual_length = first_input->startdepth - 1 + config->getDepth();
+  }
+  bool* actual = new bool[actual_length];
+  read(actualfd, actual, actual_length * sizeof(bool));
+  close(actualfd);
+  if (config->getCheckDanger())
+  {
+    int cur_depth = 0;
+    trace_kind = false;
+    FileBuffer dtrace("dangertrace.log");
+    char* dquery;
+    while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
+    {
+      dtrace.invertQueryAndDump("curdtrace.log");
+      processQuery(first_input, actual, first_depth, cur_depth ++);
+    }
+  }
+  trace_kind = true;
+  FileBuffer trace("trace.log");
+  char* query;
+  while ((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
+  {
+    depth++;
+    trace.invertQueryAndDump("curtrace.log");
+    processQuery(first_input, actual, first_depth, depth - 1);
+  }
+  delete []actual;
+  return depth;
+}
+
 void dummy_handler(int signo)
 {
 
+}
+
+int ExecutionManager::requestNonZeroInput()
+{
+  multimap<Key, Input*, cmp>::iterator it = --(inputs.end());
+  int best_score = it->first.score;
+  if ((best_score == 0) && config->getAgent())
+  {
+    LOG(logger, "All inputs have zero score: requesting new input");
+    signal(SIGUSR2, dummy_handler);
+    kill(getppid(), SIGUSR1);
+    pause();
+    int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    int startdepth = 0;
+    read(descr, &startdepth, sizeof(int));
+    close(descr);
+    if (startdepth > 0)
+    {
+      return startdepth;
+    }
+    config->setNotAgent();
+    inputs.erase(it);
+  }
+  else
+  {
+    inputs.erase(it);
+  }
+  return 0;
 }
 
 void ExecutionManager::run()
@@ -685,7 +865,6 @@ void ExecutionManager::run()
       kind = COVGRIND;
     }
 
-    multimap<Key, Input*, cmp> inputs;
     initial = new Input();
     if (!config->usingSockets() && !config->usingDatagrams())
     {
@@ -703,9 +882,8 @@ void ExecutionManager::run()
       signal(SIGALRM, alarmHandler);
     }
     initial->startdepth = config->getStartdepth();
-    int score;
-    score = checkAndScore(initial, false, "", true);
-    basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
+    int score = checkAndScore(initial, false, "", true);
+    basicBlocksCovered.insert(delta_basicBlocksCovered.begin(), delta_basicBlocksCovered.end());
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
     bool delete_fi;
@@ -715,7 +893,7 @@ void ExecutionManager::run()
       delete_fi = false;
       REPORT(logger, "Starting iteration " << runs);
       LOG(logger, "inputs.size()=" << inputs.size());
-      delta_bb_covered.clear();
+      delta_basicBlocksCovered.clear();
       multimap<Key, Input*, cmp>::iterator it = --(inputs.end());
       Input* fi = it->second;
       unsigned int scr = it->first.score;
@@ -730,135 +908,29 @@ void ExecutionManager::run()
       {
         fi->dumpFiles();
       }
+
       ostringstream tg_depth;
       vector<string> plugin_opts;
       bool newInput = false;
-      if ((scr == 0) && config->getAgent())
+
+      int startdepth = requestNonZeroInput();
+      if (startdepth)
       {
-        LOG(logger, "All inputs have zero score: requesting new input");
-        signal(SIGUSR2, dummy_handler);
-        kill(getppid(), SIGUSR1);
-        pause();
-        int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
-        int startdepth;
-        read(descr, &startdepth, sizeof(int));
-        close(descr);
-        if (startdepth > 0)
-        {
-          tg_depth << "--startdepth=" << startdepth;
-          newInput = true;
-        }
-        else
-        {
-          config->setNotAgent();
-          delete_fi = true;
-          inputs.erase(it);
-          if (runs > 0)
-          {
-            plugin_opts.push_back("--check-prediction=yes");
-          }
-          tg_depth << "--startdepth=" << fi->startdepth;
-        }
+        tg_depth << "--startdepth=" << startdepth;
+        newInput = true;
       }
       else
       {
-        delete_fi = true;
-        inputs.erase(it);
         if (runs > 0)
         {
           plugin_opts.push_back("--check-prediction=yes");
         }
         tg_depth << "--startdepth=" << fi->startdepth;
       }
-
-      ostringstream tg_invert_depth;
-      tg_invert_depth << "--invertdepth=" << config->getDepth();
-         
       plugin_opts.push_back(tg_depth.str());
-      plugin_opts.push_back(tg_invert_depth.str());
-    
-      if (config->getDumpCalls())
-      {
-        plugin_opts.push_back("--dump-file=calldump.log");
-      }
-      else
-      {
-        plugin_opts.push_back("--dump-prediction=yes");
-      }
+  
+      getTracegrindOptions(plugin_opts);
 
-      ostringstream tg_check_danger;
-      if (config->getCheckDanger())
-      {
-        tg_check_danger << "--check-danger=yes";
-      }
-      else
-      {
-        tg_check_danger << "--check-danger=no";
-      }
-      plugin_opts.push_back(tg_check_danger.str());
-      for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
-      {
-        ostringstream tg_fname;
-        tg_fname << "--func-name=" << config->getFuncFilterUnit(i);
-        plugin_opts.push_back(tg_fname.str()); 
-      }
-      if (config->getFuncFilterFile() != "")
-      {
-        ostringstream tg_func_filter_filename;
-        tg_func_filter_filename << "--func-filter-file=" << config->getFuncFilterFile();
-        plugin_opts.push_back(tg_func_filter_filename.str());
-      }
- 
-      if (config->getInputFilterFile() != "")
-      {
-        ostringstream tg_input_filter_filename;
-        tg_input_filter_filename << "--mask=" << config->getInputFilterFile();
-        plugin_opts.push_back(tg_input_filter_filename.str());
-      }
-
-      if (config->getSuppressSubcalls())
-      {
-        plugin_opts.push_back("--suppress-subcalls=yes");
-      }
-
-      if (config->usingSockets())
-      {
-        ostringstream tg_host;
-        tg_host << "--host=" << config->getHost();
-        plugin_opts.push_back(tg_host.str());
-
-        ostringstream tg_port;
-        tg_port << "--port=" << config->getPort();
-        plugin_opts.push_back(tg_port.str());
-
-        plugin_opts.push_back("--replace=yes");
-        plugin_opts.push_back("--sockets=yes");
-        if (config->getTracegrindAlarm() != 0)
-        {
-          alarm(config->getTracegrindAlarm());
-        }
-        killed = false;
-      }
-      else if (config->usingDatagrams())
-      {
-        plugin_opts.push_back("--replace=yes");
-        plugin_opts.push_back("--datagrams=yes");
-        if (config->getTracegrindAlarm() != 0)
-        {
-          alarm(config->getTracegrindAlarm());
-        }
-        killed = false;
-      }      
-      else
-      {
-        for (int i = 0; i < config->getNumberOfFiles(); i++)
-        {
-          ostringstream tg_inputfile;
-          tg_inputfile << "--file=" << config->getFile(i);
-          plugin_opts.push_back(tg_inputfile.str());
-        }
-      }
-      
       PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
       plugin_opts.clear();
       if (config->getTracegrindAlarm() == 0)
@@ -883,50 +955,12 @@ void ExecutionManager::run()
         LOG(logger, "failure in tracegrind");
       }
 
-      int divfd = open("divergence.log", O_RDWR);
-      if ((divfd != -1) && config->getDebug() && (runs > 0) && !newInput)
+      if (config->getDebug() && (runs > 0) && !newInput)
       {
-        bool divergence;
-        read(divfd, &divergence, sizeof(bool));
-        if (divergence)
+        if (checkDivergence(fi, scr))
         {
-          int d;
-          read(divfd, &d, sizeof(int));
-          DBG(logger, "divergence at depth " << d << "\n");
-
-          if (config->usingSockets() || config->usingDatagrams())
-          {
-            stringstream ss(stringstream::in | stringstream::out);
-            ss << config->getPrefix() << "divergence_" << divergences;
-            LOG(logger, "dumping divergent input to file " << ss.str());
-            fi->parent->dumpExploit((char*) ss.str().c_str(), false);
-          }
-          else
-          {
-            for (int i = 0; i < fi->parent->files.size(); i++)
-            {
-              stringstream ss(stringstream::in | stringstream::out);
-              ss << config->getPrefix() << "divergence_" << divergences << "_" << i;
-              LOG(logger, "dumping divergent input to file " << ss.str());
-              fi->parent->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
-            }
-          }
-          divergences++;
-          DBG(logger, "with startdepth=" << fi->parent->startdepth << " and invertdepth=" << config->getDepth() << "\n");
-          close(divfd);
-          if (scr == 0) 
-          {
-            runs++;
-            if (is_distributed)
-            {
-              talkToServer(inputs);
-            }
-            continue;
-          }
-        }
-        else
-        {
-          close(divfd);
+          runs ++;
+          continue;
         }
       }
  
@@ -939,143 +973,18 @@ void ExecutionManager::run()
       {
         if (config->getCheckDanger())
         {
-          depth = runSTPAndCGParallel(true, &inputs, fi, dpth);
+          trace_kind = false;
+          depth = processTraceParallel(fi, dpth);
         }
-        depth = runSTPAndCGParallel(false, &inputs, fi, dpth);
+        trace_kind = true;
+        depth = processTraceParallel(fi, dpth);
       }
+
       else
       {
-        int actualfd = open("actual.log", O_RDWR);
-        int actual_length;
-        if (config->getDepth() == 0)
-        {
-          read(actualfd, &actual_length, sizeof(int));
-        }
-        else
-        {
-          actual_length = fi->startdepth - 1 + config->getDepth();
-        }
-        bool* actual = new bool[actual_length];
-        read(actualfd, actual, actual_length * sizeof(bool));
-        close(actualfd);
-
-        if (config->getCheckDanger())
-        {
-          FileBuffer dtrace("dangertrace.log");
-          char* dquery;
-          while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
-          {
-            dtrace.invertQueryAndDump("curdtrace.log");
-            STP_Input si;
-            //si.setFile(".avalanche/curdtrace.log");
-            si.setFile("curdtrace.log");
-            //the rest stuff
-            STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-            nokill = true;
-            time_t start_time = time(NULL);
-            monitor->setState(STP, start_time);
-            STP_Output *stp_output = stp_exe.run(&si);
-            monitor->addTime(time(NULL));
-            nokill = false;
-            if (stp_output == NULL)
-            {
-              ERR(logger, "STP has encountered an error");
-              FileBuffer f("curdtrace.log");
-              ERR(logger, "curdtrace.log:\n" << string(f.buf));
-              continue;
-            }
-            if (stp_output->getFile() != NULL)
-            {
-              FileBuffer f(stp_output->getFile());
-              DBG(logger, "stp output:\n" << string(f.buf));
-              Input* next = new Input();
-              for (int i = 0; i < fi->files.size(); i++)
-              { 
-                FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
-                if (fb == NULL)
-                {
-                  delete next;
-                  next = NULL;
-                  break;
-                }
-                else
-                {
-                  next->files.push_back(fb);
-                }
-              }
-              if (next != NULL)
-              {
-                checkAndScore(next, true);
-                delete next;
-              }
-            }
-            delete stp_output;
-          }
-        }
-        FileBuffer trace("trace.log");
-        char* query;
-        while ((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
-        {
-          depth++;
-          trace.invertQueryAndDump("curtrace.log");
-          STP_Input si;
-          //si.setFile(".avalanche/curtrace.log");
-          si.setFile("curtrace.log");
-          //the rest stuff
-          STP_Executor stp_exe(config->getDebug(), config->getValgrind());        
-          nokill = true;
-          time_t start_time = time(NULL);
-          monitor->setState(STP, start_time);
-          STP_Output *stp_output = stp_exe.run(&si);
-          monitor->addTime(time(NULL));
-          nokill = false;
-          if (stp_output == NULL)
-          {
-            ERR(logger, "STP has encountered an error");
-            FileBuffer f("curtrace.log");
-            ERR(logger, "curtrace.log:\n" << string(f.buf));
-            continue;
-          }
-          if (stp_output->getFile() != NULL)
-          {
-            FileBuffer f(stp_output->getFile());
-            DBG(logger, "stp output:\n" << string(f.buf));
-            Input* next = new Input();
-            for (int i = 0; i < fi->files.size(); i++)
-            { 
-              FileBuffer* fb = fi->files.at(i)->forkInput(stp_output->getFile());
-              if (fb == NULL)
-              {
-                delete next;
-                next = NULL;
-                break;
-              }
-              else
-              {
-                next->files.push_back(fb);
-              }
-            }
-            if (next != NULL)
-            {
-              next->startdepth = fi->startdepth + depth;
-              next->prediction = new bool[fi->startdepth - 1 + depth];
-              for (int j = 0; j < fi->startdepth + depth - 2; j++)
-              {
-                next->prediction[j] = actual[j];
-              }
-              next->prediction[fi->startdepth + depth - 2] = !actual[fi->startdepth + depth - 2];
-              next->predictionSize = fi->startdepth - 1 + depth;
-              next->parent = fi;
-              int score;
-              score = checkAndScore(next, false);
-              LOG(logger, "score=" << score << "\n");
-              inputs.insert(make_pair(Key(score, dpth + depth), next));
-            }
-          }
-          delete stp_output;
-        }
-        delete []actual;
+        depth = processTraceSequental(fi, dpth);
       }
+        
       if (depth == 0)
       {
         LOG(logger, "no QUERY's found\n");
@@ -1088,10 +997,10 @@ void ExecutionManager::run()
           delete fi;
         }
       }
-      basicBlocksCovered.insert(delta_bb_covered.begin(), delta_bb_covered.end());
+      basicBlocksCovered.insert(delta_basicBlocksCovered.begin(), delta_basicBlocksCovered.end());
       if (is_distributed)
       {
-        talkToServer(inputs);
+        talkToServer();
       }
     }
     if (!(config->usingSockets()) && !(config->usingDatagrams()))
@@ -1134,7 +1043,7 @@ void readFromSocket(int fd, const void* b, size_t count)
   }
 }
 
-void ExecutionManager::talkToServer(multimap<Key, Input*, cmp>& inputs)
+void ExecutionManager::talkToServer()
 {
   try
   {
@@ -1357,4 +1266,3 @@ ExecutionManager::~ExecutionManager()
 
     delete config;
 }
-

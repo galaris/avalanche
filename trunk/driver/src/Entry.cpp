@@ -79,20 +79,14 @@ static void printHelpBanner()
         "                                 (ignored if '--use-memcheck' isn't specified)\n"
         "    --verbose                    much more detailed avalanche output\n" 
         "    --debug                      save some debugging information - divergent inputs, etc.\n" 
-        "    --depth=<number>             the number of conditions inverted during one run of\n"
-        "                                 tracegrind (default is 100)\n"
-        "    --alarm=<number>             timer value in seconds (for infinite loop recognition) (default is 300)\n"
+        "    --depth=<number>             the number of conditions inverted during one run of tracegrind\n"
+        "                                 you can specify --depth=infinity or --depth=0 to invert all conditions\n"
+        "    --alarm=<number>             timer value in seconds (for infinite loop recognition)\n"
         "    --filename=<input_file>      the path to the file with the input data for the application being tested\n"
         "    --trace-children             run valgrind plugins with '--trace-children=yes' option\n"
         "    --check-danger               emit special constraints for memory access operations\n"
 	"                                 and divisions (slows down the analysis)\n"
-	"    --dump-calls                 dump the list of functions manipulating with tainted data to calldump.log\n"
-	"    --func-name=<name>           the name of function that should be used for separate function analysis\n"
-	"    --func-file=<name>           the path to the file with the list of functions that\n"
-	"                                 should be used for separate function analysis\n"
-	"    --mask=<mask_file>           the path to the file with input mask\n"
-	"    --suppress-subcalls          ignore conditions in a nested function calls during separate analysis\n"
-        "\n"
+	"\n"
         "  special options for sockets:\n"
         "    --sockets                    mark data read from TCP sockets as tainted\n"
         "    --host=<IPv4 address>        IP address of the network connection (for TCP sockets only)\n"
@@ -100,7 +94,25 @@ static void printHelpBanner()
         "    --datagrams                  mark data read from UDP sockets as tainted\n"
         "    --alarm=<number>             timer for breaking infinite waitings in covgrind\n"
         "                                 or memcheck (not set by default)\n" 
-        "    --tracegrind-alarm=<number>  timer for breaking infinite waitings in tracegrind (not set by default)\n"; 
+        "    --tracegrind-alarm=<number>  timer for breaking infinite waitings in tracegrind (not set by default)\n"
+        "\n"
+        "  special options for separate analysis:\n"
+        "    --dump-calls                 dump the list of functions manipulating with tainted data to calldump.log\n"
+	"    --func-name=<name>           the name of function that should be used for separate function analysis\n"
+	"    --func-file=<name>           the path to the file with the list of functions that\n"
+	"                                 should be used for separate function analysis\n"
+	"    --suppress-subcalls          ignore conditions in a nested function calls during separate analysis\n"
+	"    --mask=<mask_file>           the path to the file with input mask\n"
+        "\n"
+        "  special options for distributed analysis:\n"
+        "    --stp-threads=<number>       number of threads to run STP and Covgrind concurrently\n"
+        "    --stp-threads-auto           automatically determine the number of threads to run\n"
+        "                                 STP and Convgrind concurrently\n"
+        "    --distributed                run avalanche as main agent in distributed analysis model\n"
+        "    --dist-host=<IPv4 address>   IP adress of distributed analysis server\n"
+        "    --dist-port=<number>         port number for connection to distributed analysis server\n"
+        "    --protect-main-agent         limit number of inputs given to agents\n";
+
 
     cout << banner << endl;
 }
@@ -219,9 +231,10 @@ int main(int argc, char *argv[])
     }
     checker_name.clear();
     time_t work_start_time = time(NULL);
+    string t = string(ctime(&work_start_time));
 
     LOG(logger, "Avalanche, a dynamic analysis tool.");
-    LOG(logger, "Start time: " << ctime(&work_start_time));
+    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));
   
     em = new ExecutionManager(opt_config);
     em->run();

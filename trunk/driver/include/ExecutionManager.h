@@ -31,6 +31,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <vector>
 #include <functional>
 
 #include <sys/types.h>
@@ -98,15 +99,27 @@ public:
    
     void cleanfifo();
 
-    int runSTPAndCGParallel(bool trace_kind, std::multimap<Key, Input*, cmp> * inputs, Input* first_input, unsigned long first_depth);
-    int checkAndScore(Input* input, bool addNoCoverage, const char* fileNameModifier = "", bool first_run = false);
+    int processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index = 0);
+
+    int processTraceSequental(Input* first_input, unsigned long first_depth);
+    int processTraceParallel(Input* first_input, unsigned long first_depth);
+
+    int requestNonZeroInput();
+
+    void getTracegrindOptions(std::vector <std::string> &plugin_opts);
+    void getCovgrindOptions(std::vector <std::string> &plugin_opts, std::string fileNameModifier, bool addNoCoverage);
+
+    int calculateScore(std::string filaNameModifier = "");
+    int checkAndScore(Input* input, bool addNoCoverage, std::string fileNameModifier = "", bool first_run = false);
 
     void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
     bool dumpMCExploit(Input* input, const char* exec_log);
 
+    int checkDivergence(Input* first_input, int score);
+
     void updateInput(Input* input);
 
-    void talkToServer(std::multimap<Key, Input*, cmp>& inputs);
+    void talkToServer();
 
     OptionConfig* getConfig() { return config; }
 
@@ -114,7 +127,8 @@ public:
 
 private:
     OptionConfig *config;
-    std::size_t   cond_depth;
+    std::multimap<Key, Input*, cmp> inputs;
+    std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
     int exploits;
     int divergences;

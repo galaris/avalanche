@@ -413,7 +413,7 @@ int main(int argc, char** argv)
 
       char report[128];
       sprintf(report, "--report-log=report%d.log", runs);
-      avalanche_argv[7 + argv_delta] = report; 
+      avalanche_argv[6 + argv_delta] = report; 
     }
   }
   catch (const char* msg)
