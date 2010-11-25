@@ -445,7 +445,18 @@ int main(int argc, char** argv)
     }
 
     printf("selecting...\n");
-    int res = select(max_d + 1, &readfds, NULL, NULL, NULL);
+    int res;
+    if ((starvating_a.size() == 0) && (starvating_g.size() == 0) || !gameBegan)
+    {
+      res = select(max_d + 1, &readfds, NULL, NULL, NULL);
+    }
+    else
+    {
+      struct timeval timer;
+      timer.tv_sec = 0;
+      timer.tv_usec = 0;
+      res = select(max_d + 1, &readfds, NULL, NULL, &timer);
+    }
     printf("done\n");
     if (res < 1) 
     {
