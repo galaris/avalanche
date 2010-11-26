@@ -40,7 +40,6 @@ void finalize_and_exit()
     catch (...)
     { 
       printf("connection with %d is down\n", *fd); 
-      fds.erase(find(fds.begin(), fds.end(), *fd));
     }    
     shutdown(*fd, SHUT_RDWR);
     close(*fd);
@@ -57,7 +56,6 @@ void finalize_and_exit()
     catch (...)
     { 
       printf("connection with %d is down\n", *fd); 
-      fds.erase(find(fds.begin(), fds.end(), *fd));
     }  
     shutdown(*fd, SHUT_RDWR);
     close(*fd);
