@@ -59,7 +59,7 @@ public:
                     prefix(std::string("")),
                     disthost(std::string("127.0.0.1")),
                     port(65536),
-                    distport(10000),
+                    distport(12200),
                     STPThreads(0)
     {}
 

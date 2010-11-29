@@ -1,5 +1,29 @@
-/* Server code in C */
- 
+/*----------------------------------------------------------------------------------------*/
+/*------------------------------------- AVALANCHE ----------------------------------------*/
+/*---------------------- Simple server for distributed Avalanche. ------------------------*/
+/*-------------------------------------- dist.cpp ----------------------------------------*/
+/*----------------------------------------------------------------------------------------*/
+
+/*
+   Copyright (C) 2010 Ildar Isaev
+      iisaev@ispras.ru
+   Copyright (C) 2010 Michael Ermakov
+      mermakov@ispras.ru
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,6 +39,8 @@
 #include <set>
 
 #include "util.h"
+
+//#define DEBUG
 
 using namespace std;
 
@@ -38,7 +64,7 @@ void finalize_and_exit()
       readFromSocket(*fd, &tosend, sizeof(int));
     }
     catch (...)
-    { 
+    {  
       printf("connection with %d is down\n", *fd); 
     }    
     shutdown(*fd, SHUT_RDWR);
@@ -243,7 +269,9 @@ int main(int argc, char** argv)
 
     if (gameBegan)
     {
+#ifdef DEBUG 
       printf("iterating through starvated\n");
+#endif
       int size = starvating_a.size();
       if (size > 0)
       {
@@ -280,7 +308,9 @@ int main(int argc, char** argv)
             printf("connection with main avalanche is down\n"); 
             finalize_and_exit(); 
           }
+#ifdef DEBUG 
           printf("filenum=%d\n", filenum);
+#endif
           if (filenum > 0)
           {
             try
@@ -442,7 +472,9 @@ int main(int argc, char** argv)
       }
     }
 
+#ifdef DEBUG 
     printf("selecting...\n");
+#endif
     int res;
     if ((starvating_a.size() == 0) && (starvating_g.size() == 0) || !gameBegan)
     {
@@ -455,10 +487,13 @@ int main(int argc, char** argv)
       timer.tv_usec = 0;
       res = select(max_d + 1, &readfds, NULL, NULL, &timer);
     }
+#ifdef DEBUG 
     printf("done\n");
-    if (res < 1) 
+#endif
+    if (res == -1) 
     {
-
+      FD_ZERO(&readfds);
+      perror("select failed");
     }
 
     if (FD_ISSET(sfd, &readfds)) 
@@ -470,14 +505,13 @@ int main(int argc, char** argv)
         close(sfd);
         exit(EXIT_FAILURE);
       }
-      fds.push_back(cfd);
-      printf("pushed back %d\n", cfd);
-      //mainfd = cfd;
-      //free++;
-      printf("accepted\n");
+      fds.push_back(cfd); 
+      printf("connection with %d is set up\n", cfd);
     }
 
+#ifdef DEBUG 
     printf("iterating through sockets...\n");
+#endif
     vector<int> to_erase;
     for (vector<int>::iterator fd = fds.begin(); fd != fds.end(); fd++)
     {
@@ -506,7 +540,9 @@ int main(int argc, char** argv)
         }
         if (command == 'm') 
         {
+#ifdef DEBUG 
           printf("received m\n");
+#endif
           mainfd = *fd;
           gameBegan = true;
           int size = fds.size();
@@ -527,12 +563,16 @@ int main(int argc, char** argv)
         }
         else if (command == 'g')
         {
+#ifdef DEBUG 
           printf("added %d to starvated_g\n", *fd);
+#endif
           starvating_g.insert(*fd);
         }         
         else //game not began
         {
+#ifdef DEBUG 
           printf("added %d to starvated_a\n", *fd);
+#endif
           starvating_a.insert(*fd);
         }
       }
