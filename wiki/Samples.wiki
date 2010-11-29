@@ -113,3 +113,7 @@ user@machine:$ ./inst/bin/valgrind --tool=memcheck samples/simple/mleak memcheck
 == Input masks and function filtering ==
 
 See a separate wiki page describing these features: [Input_masks_and_function_filtering]
+
+== Distributed analysis and multiple threads for STP queries ==
+
+See a separate wiki page describing these features: [Distributed_avalanche]
