@@ -125,12 +125,14 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i].find("--stp-threads=") != string::npos) {
             string thread_num = arg_vec[i].substr(strlen("--stp-threads="));
-            stpThreadsSpecified = true;
-            config->setSTPThreads(atoi(thread_num.c_str()));
-        }
-        else if (arg_vec[i].find("--stp-threads-auto") != string::npos) {
-            config->setSTPThreadsAuto();
-            config->setSTPThreads(sysconf(_SC_NPROCESSORS_ONLN));
+            if (thread_num == string("auto")) {
+                config->setSTPThreadsAuto();
+                config->setSTPThreads(sysconf(_SC_NPROCESSORS_ONLN));
+            }
+            else {
+                stpThreadsSpecified = true;
+                config->setSTPThreads(atoi(thread_num.c_str()));
+            }
         }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();

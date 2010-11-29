@@ -1,5 +1,3 @@
-// $Id: ExecutionManager.cpp 80 2009-10-30 18:55:50Z iisaev $
-
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -1190,7 +1188,6 @@ void ExecutionManager::talkToServer()
       }
       else if (c == 'g')
       {
-        //printf("received get\n");
         writeToSocket(distfd, "r", 1);
         //sending "r"(responding) before data - this is to have something different from "q", so that server
         //can understand that main avalanche finished normally
