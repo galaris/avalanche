@@ -1,9 +1,8 @@
-*This page describes features under development (a custom [http://code.google.com/p/avalanche/source/browse/#svn/branches/distributed-avalanche branch] is used for that).*
+==Multiple threads for STP queries==
 
-===Local parallelization for STP and Covgrind===
+Avalanche can use multiple threads to process STP queries (and the corresponding Covgring checks) emitted during one run of Tracegrind.
 
-Avalanche can use multiple threads to process STP queries (and Covgring checking for each input generated according to a query) during one iteration.
-To run avalanche with multiple threads, use --stp-threads=number option. You may also use --stp-threads-auto instead and avalanche will automatically determine the number of threads to run (equal to the number of available processors).
+To run Avalanche with multiple threads for STP queries, use --stp-threads=number option, where number is the amount of simultaneously running threads. You may also use --stp-threads=auto notation. In this case the number of CPU cores is taken.
 
 ==Distributed analysis model==
 
@@ -17,37 +16,51 @@ http://avalanche.googlecode.com/files/distributed-scheme.jpg
  # Main avalanche agent (main avalanche). An instance of avalanche that starts distributed analysis using initial input provided by user. Additional options specified when starting main avalanche ([http://code.google.com/p/avalanche/wiki/Using_Avalanche list of avalanche options]) are used by all worker agents. After the end of each analysis iteration main avalanche processes pending requests from server. It keeps the best input (input with the highest score) or several best inputs (if --protect-main-agent is used) and passes other inputs in response to worker agent requests'. When main avalanche runs out of inputs the analysis is over.
  # Avalanche worker agent (av-agent). Upon connection to the server worker agent sends request for starting options and an input. After the request has been satisfied it runs an instance of avalanche with received options and using input as initial. When avalanche finishes work worker agent saves exploit info and requests another input. Worker agent starts an instance of avalanche with the same starting options and using newly received input. This process continues until main avalanche runs out of inputs.
 
-===Running distributed analysis===
+*Distributed analysis requires several rules to be followed:*
 
-To run distributed analysis, first start the dist server:
+  * Binary executables are not copied through the network - each machine running av-agent should have the analysed program installed. Path to executable should match the path specified in command line for main avalanche.
+
+  * Only files specified in main avalanche command line (as --filename=name) are copied through the network and are multiplied locally when multiple threads for STP queries are used (to avoid potential conflicts).
+
+==Running distributed analysis==
+
+Here is a [http://code.google.com/p/avalanche/source/browse/trunk/samples/simple/dist3.c dist3.c] sample. To run distributed analysis, first start the distribution server. It takes a single option - port number to listen for the incoming connections.
 
 {{{
-user@machine1:$ ./inst/bin/av-dist <port number> 
+user@machine1:$ ./inst/bin/av-dist 10000
 }}}
 
-Then start a number of agents on different machines:
+Distribution server terminates when the analysis is over. 
+
+Then start a number of agents on different machines. Each agent requires two necessary options: IP address and port number of the distribution server. The third possible option is '--request-non-zero'. This option will force instance of Avalanche run by agent to request input from the server if all its' inputs have zero score.
 
 {{{
-user@machine2:$ ./inst/bin/av-agent <machine1 IP address> <port number> [--request-non-zero]
+user@machine2:$ ./inst/bin/av-agent <machine1 IP address> 10000
 }}}
 
---request-non-zero option will force instance of avalanche run by agent to request inputs
-from the server at the start of iteration if all its' inputs have zero score.
+{{{
+user@machine3:$ ./inst/bin/av-agent <machine1 IP address> 10000
+}}}
 
 Finally, start avalanche, adding --distributed, --dist-host and --dist-port options:
 
 {{{
-user@machinei:$ inst/bin/avalanche --stp-threads=4 --dist-host=<machine1 IP address> --dist-port=<port number> --distributed [--protect-main-agent] --mask=mask_pbc_dump --debug --verbose --filename=PGE.pbc parrot-2.6.0/inst/bin/pbc_dump -d PGE.pbc
+user@machine1:$ inst/bin/avalanche --distributed --dist-host=<machine1 IP address> --dist-port=10000 --filename=samples/simple/seed samples/simple/dist3 samples/simple/seed
 }}}
 
---protect-main-agent forces main avalanche to reject input requests if it has less than N
-inputs, where N is determined according to the number of active agents.
+Avalanche should find three exploits, one on each of the three Avalanche agents involved.
 
-Some exploits found in pbc_dump by distributed avalanche (not found in a usual, non-distributed mode without STP threads):
+{{{
+user@mechine1:$ cat exploit_0_0
+bar
+}}}
 
-[http://avalanche.googlecode.com/files/branch0_exploit_324_0 one_exploit]<br>
-[http://avalanche.googlecode.com/files/branch0_exploit_859_0 another_exploit]
+{{{
+user@mechine2:$ cat branch0_exploit_0_0
+foo
+}}}
 
-*Distributed analysis requires several rules to be followed:*
-  * Binary executables are not copied through the network - each machine running av-agent should have the analyzed program installed. Path to executable should match the path specified in command line for main avalanche.
-  * Only files specified in main avalanche command line (as --filename=name) are copied through the network and are multiplied locally when threads for STP and Covgrind execution  are used (to avoid potential conflicts) - specify all necessary files in main avalanche command line (as --filename=name).
+{{{
+user@mechine3:$ cat branch0_exploit_0_0
+wtf
+}}}
