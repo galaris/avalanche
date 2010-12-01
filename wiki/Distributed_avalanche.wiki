@@ -1,9 +1,3 @@
-==Multiple threads for STP queries==
-
-Avalanche can use multiple threads to process STP queries (and the corresponding Covgring checks) emitted during one run of Tracegrind.
-
-To run Avalanche with multiple threads for STP queries, use --stp-threads=number option, where number is the amount of simultaneously running threads. You may also use --stp-threads=auto notation. In this case the number of CPU cores is taken.
-
 ==Distributed analysis model==
 
 Avalanche distributed analysis is based on the concept of using several agents to process branches of condition tree. One of the agents in the model (referred to as main avalanche agent) is the source of inputs for other (worker) agents. Communication between agents and main avalanche is handled by distributed avalanche server. The following scheme depicts the components of distributed model and their interaction.
