@@ -275,7 +275,7 @@ int main(int argc, char** argv)
 
     if (STPThreadsAuto)
     {
-      avalanche_argv[5 + argv_delta] = "--stp-threads-auto";
+      avalanche_argv[5 + argv_delta] = "--stp-threads=auto";
     }
     else
     {
