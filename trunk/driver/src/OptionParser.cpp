@@ -181,12 +181,6 @@ OptionConfig *OptionParser::run() const
             config->addProgAndArg(arg_vec[i]);
     }
 
-    if (stpThreadsSpecified && config->getSTPThreadsAuto()) {
-        delete config;
-        cout << "you cannot specify '--stp-threads-auto' and '--stp-threads' at the same time\n";
-        return NULL;
-    }
-
     if (config->getAgent() && config->getDistributed()) {
         delete config;
         cout << "you cannot specify '--agent' and '--distributed' at the same time\n";

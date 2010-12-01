@@ -11,3 +11,6 @@ av_agent_SOURCES = \
 av_dist_SOURCES = \
        dist.cpp \
        util.cpp
+
+noinst_HEADERS = util.h
+
