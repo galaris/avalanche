@@ -49,7 +49,7 @@ public:
 
   virtual void dumpFile(const char* name = NULL);
 
-  void invertQueryAndDump(const char* name);
+  void cutQueryAndDump(const char* name, bool do_invert = false);
 
   virtual void applySTPSolution(char* buf);
   
