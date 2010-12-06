@@ -1,3 +1,0 @@
-prereq: ./supported_libpthread
-vgopts: --var-info=yes --check-stack-var=yes
-prog: ../../helgrind/tests/hg05_race2
