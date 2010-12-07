@@ -85,31 +85,51 @@ void FileBuffer::dumpFile(const char* name)
   close(fd);
 }
 
-void FileBuffer::invertQueryAndDump(const char* name)
+void FileBuffer::cutQueryAndDump(const char* name, bool do_invert)
 {
   char* query = strstr(buf, "QUERY(FALSE);");
-  if (query[-4] == '0')
+  if (do_invert)
   {
-    query[-4] = '1';
-  } 
-  else if (query[-4] == '1')
-  {
-    query[-4] = '0';
+    if (query[-4] == '0')
+    {
+      query[-4] = '1';
+    } 
+    else if (query[-4] == '1')
+    {
+      query[-4] = '0';
+    }
   }
   unsigned int oldsize = size;
   size = (query - buf) + 13;
   dumpFile(name);
-  for (int k = 0; k < 13; k++)
+  if (do_invert)
   {
-    query[k] = '\n';
+    for (int k = 0; k < 13; k++)
+    {
+      query[k] = '\n';
+    }
+    if (query[-4] == '0')
+    {
+      query[-4] = '1';
+    } 
+    else if (query[-4] == '1')
+    {
+      query[-4] = '0';
+    }
   }
-  if (query[-4] == '0')
+  else
   {
-    query[-4] = '1';
-  } 
-  else if (query[-4] == '1')
-  {
-    query[-4] = '0';
+    int k = 0;
+    for (; k < 13; k++)
+    {
+      query[k] = '\n';
+    }
+    k = -1;
+    while (query[k] != '\n')
+    {
+      query[k] = '\n';
+      k--;
+    }
   }
   size = oldsize;
 }

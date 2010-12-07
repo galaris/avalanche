@@ -762,7 +762,7 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
       cur_trace << "curdtrace_";
     } 
     cur_trace << thread_counter + 1 << ".log";
-    trace->invertQueryAndDump(cur_trace.str().c_str());
+    trace->cutQueryAndDump(cur_trace.str().c_str(), trace_kind);
     in_thread_creation = thread_counter;
     threads[thread_counter].setStatus(PoolThread::BUSY);
     threads[thread_counter].createThread(&(external_data[i]));
@@ -800,7 +800,7 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
     char* dquery;
     while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
     {
-      dtrace.invertQueryAndDump("curdtrace.log");
+      dtrace.cutQueryAndDump("curdtrace.log");
       processQuery(first_input, actual, first_depth, cur_depth ++);
     }
   }
@@ -810,7 +810,7 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
   while ((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
   {
     depth++;
-    trace.invertQueryAndDump("curtrace.log");
+    trace.cutQueryAndDump("curtrace.log", true);
     processQuery(first_input, actual, first_depth, depth - 1);
   }
   delete []actual;
