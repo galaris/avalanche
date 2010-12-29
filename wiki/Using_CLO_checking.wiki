@@ -1,8 +1,8 @@
 #labels Deprecated
 Enable command line checking with --check-argv=list option. You can specify list as following:
 
- * list="N,,1,, N,,2,, N,,3,, ... N,,n,," (use '"' to specify multiple arguments to check). Numbers represent arguments' indexes. N,,i,, corresponds to argv[N,,i,,]. Specifying 0 as one of the indexes won't cause any effect.
- * list=all to check all arguments (except argv[0]).
+ * list="N,,1,, N,,2,, N,,3,, ... N,,n,," (use '"' to specify multiple arguments to check). Numbers represent arguments' indexes. N,,i,, corresponds to {{{argv[Ni]}}}. Specifying 0 as one of the indexes won't cause any effect.
+ * list=all to check all arguments (except {{{argv[0]}}}).
 
 Example:
 ./inst/bin/avalanche --check-argv=2 executable_name arg1 arg2 arg3 (only arg2 will be changed)
