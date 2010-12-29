@@ -50,6 +50,7 @@ public:
                     suppressSubcalls(false),
                     dumpCalls(false),
                     leaks(false),
+                    protectArgName(false),
                     funcFilterFile(std::string("")),
                     depth(100),
                     startdepth(1),
@@ -60,7 +61,8 @@ public:
                     disthost(std::string("127.0.0.1")),
                     port(65536),
                     distport(12200),
-                    STPThreads(0)
+                    STPThreads(0),
+                    checkArgv(std::string(""))
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -96,6 +98,8 @@ public:
         STPThreads	= opt_config->STPThreads;
         STPThreadsAuto	= opt_config->STPThreadsAuto;
         prefix          = opt_config->prefix;
+        checkArgv       = opt_config->checkArgv;
+        protectArgName  = opt_config->protectArgName;
     }
 
     bool empty() const
@@ -131,6 +135,12 @@ public:
     bool getDebug() const
     { return debug; }
 
+    void setProtectArgName()
+    { protectArgName = true; }
+    
+    bool getProtectArgName() const
+    { return protectArgName; }
+
     void setSTPThreadsAuto()
     { STPThreadsAuto = true; }
     
@@ -148,6 +158,12 @@ public:
 
     bool getProtectMainAgent() const
     { return protectMainAgent; }
+
+    void setCheckArgv(const std::string &arg)
+    { checkArgv = arg; }
+
+    std::string getCheckArgv() const
+    { return checkArgv; }
 
     void setDumpCalls()
     { dumpCalls = true; }
@@ -314,6 +330,7 @@ private:
     bool                     distributed;
     bool                     agent;
     bool                     STPThreadsAuto;
+    bool                     protectArgName;
     std::string              reportLog;
     std::string              funcFilterFile;
     std::size_t              depth;
@@ -331,6 +348,7 @@ private:
     std::string              prefix;
     unsigned int             startdepth;
     unsigned int             STPThreads;
+    std::string              checkArgv;
 };
 
 

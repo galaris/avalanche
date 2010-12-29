@@ -81,11 +81,19 @@ int in_thread_creation = -1;
 int distfd;
 int agents;
 
+int args_length;
+
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
     DBG(logger, "Initializing plugin manager");
 
     config      = new OptionConfig(opt_config);
+    cur_argv    = config->getProgAndArg();
+    for (vector <string>::iterator i = cur_argv.begin() + 1; i != cur_argv.end(); i ++)
+    {
+      args_length += (*i).size();
+    }
+    args_length += cur_argv.size() - 2;
     exploits    = 0;
     divergences = 0;
     is_distributed = opt_config->getDistributed();
@@ -96,6 +104,19 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
       pthread_mutex_init(&add_bb_mutex, NULL);
       pthread_mutex_init(&finish_mutex, NULL);
       pthread_cond_init(&finish_cond, NULL);
+    }
+
+    if (config->getCheckArgv() != "")
+    {
+      int fd = open("arg_lengths", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
+      int length;
+      for (int i = 1; i < cur_argv.size(); i ++)
+      {
+        length = cur_argv[i].size();
+        cout << length;
+        write(fd, &length, sizeof(int));
+      }
+      close(fd);
     }
   
     if (is_distributed)
@@ -163,6 +184,10 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
   {
     plugin_opts.push_back(string("--check-danger=yes"));
   }
+  if (config->getProtectArgName())
+  {
+    plugin_opts.push_back(string("--protect-arg-name=yes"));
+  }
   else
   {
     plugin_opts.push_back(string("--check-danger=no"));
@@ -220,6 +245,10 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
     {
       plugin_opts.push_back(string("--file=") + config->getFile(i));
     }
+  }
+  if (config->getCheckArgv() != "")
+  {
+    plugin_opts.push_back("--check-argv=" + config->getCheckArgv());
   }
 }
 
@@ -306,7 +335,12 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
   }
   else
   {
-    for (int i = 0; i < input->files.size(); i++)
+    int f_num = input->files.size();
+    if ((config->getCheckArgv() != ""))
+    {
+      f_num --;
+    }
+    for (int i = 0; i < f_num; i++)
     {
       stringstream ss(stringstream::in | stringstream::out);
       ss << config->getPrefix() << "exploit_" << exploits << "_" << i;
@@ -314,6 +348,29 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
       input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
     }
   }
+  if ((config->getCheckArgv() != ""))
+  {
+    dumpExploitArgv();
+  }
+}
+
+void ExecutionManager::dumpExploitArgv()
+{
+  stringstream ss(stringstream::in | stringstream::out);
+  ss << config->getPrefix() << "exploit_" << exploits << "_argv";
+  REPORT(logger, "Dumping exploit argv to file " << ss.str());
+  int fd = open(ss.str().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+  for (vector <string>::iterator i = cur_argv.begin(); i != cur_argv.end(); i ++)
+  {
+    char x[(*i).size()];
+    strcpy(x, (*i).c_str());
+    write(fd, x, strlen(x));
+    if (i + 1 != cur_argv.end())
+    {
+      write(fd, " ", 1);
+    }
+  }
+  close(fd);
 }
 
 bool ExecutionManager::dumpMCExploit(Input* input, const char *exec_log)
@@ -428,7 +485,14 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fil
 
   string cv_exec_file = string("execution") + fileNameModifier + string(".log");
   
-  vector <string> new_prog_and_args = config->getProgAndArg();
+  if (!first_run && (config->getCheckArgv() != ""))
+  {
+    if (!updateArgv(input))
+    {
+      return -1;
+    }
+  }
+  vector <string> new_prog_and_args = cur_argv;
   
   if (fileNameModifier != string("") && !(config->usingSockets()) && !(config->usingDatagrams()))
   {
@@ -469,6 +533,10 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fil
   if (has_crashed)
   {
     int chunk_file_num = (config->usingSockets() || config->usingDatagrams()) ? (-1) : (input->files.size());
+    if ((config->getCheckArgv() != ""))
+    {
+      chunk_file_num --;
+    }
     FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
     infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
@@ -485,14 +553,14 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fil
       if (!sameExploit) 
       {
         Chunk* ch;
-        ch = new Chunk(cv_output, exploits, chunk_file_num);
+        ch = new Chunk(cv_output, exploits, chunk_file_num, (config->getCheckArgv() != ""));
         report.push_back(ch);
       }
     }
     else
     {
       Chunk* ch;
-      ch = new Chunk(NULL, exploits, chunk_file_num);
+      ch = new Chunk(NULL, exploits, chunk_file_num, (config->getCheckArgv() != ""));
       report.push_back(ch);
     }
     dumpExploit(input, cv_output, infoAvailable, sameExploit, exploit_group);
@@ -669,7 +737,7 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
       next->predictionSize = st_depth + cur_depth;
       next->parent = first_input;
       int score = checkAndScore(next, !trace_kind, input_modifier);
-      if (trace_kind)
+      if (trace_kind && score != -1)
       {
         if (thread_index)
         {
@@ -850,6 +918,76 @@ int ExecutionManager::requestNonZeroInput()
   return 0;
 }
 
+/*bool valid_char(char value)
+{
+  return (value >= 0x20) && (value <= 0x7d);
+}*/
+
+bool ExecutionManager::updateArgv(Input* input)
+{
+  int cur_opt = 1, cur_offset = 0;
+//  int ctrl_counter = 0;
+//  bool reached_zero = false;
+//  bool reached_normal = false;
+  char* argv_val = input->files.at(input->files.size() - 1)->buf;
+  string spaced_mask = string(" ") + config->getCheckArgv() + " ";
+  char buf[16];
+/*  if ((!valid_char(argv_val[0]) || (argv_val[0] == ' ')) && (argv_val[0] != 0))
+  {
+    REPORT(logger, "Discarding input - argument starting with control character\n");
+    return false;
+  }
+  else
+  {
+    reached_normal = true;
+  }*/
+  for (int i = 0; i < args_length; i ++)
+  {
+    sprintf(buf, " %d ", cur_opt);
+    if (spaced_mask.find(buf) != string::npos)
+    {
+      cur_argv[cur_opt][cur_offset] = argv_val[i];
+    }
+    cur_offset ++;
+    /*if (!valid_char(argv_val[i]))
+    {
+      if (ctrl_counter && reached_normal && !reached_zero && (argv_val[i]))
+      {
+        REPORT(logger, "Discarding input - multiple control characters\n");
+        return false;
+      }
+      if (argv_val[i] == 0)
+      {
+        reached_zero = true;
+      }
+      else
+      {
+        ctrl_counter = 1;
+      }
+    }
+    else
+    {
+      reached_normal = true;
+    }*/
+    if (cur_offset == cur_argv[cur_opt].size())
+    {
+      //ctrl_counter = 0;
+      i ++;
+      cur_opt ++;
+      cur_offset = 0;
+      /*if (i + 1 < args_length)
+      {
+        if ((!valid_char(argv_val[i + 1]) || (argv_val[i + 1] == ' ')) && (argv_val[i + 1] != 0))	
+        {
+          REPORT(logger, "Discarding input - argument starting with control character\n");
+          return false;
+        }
+      }*/
+    }
+  }
+  return true;
+}  
+
 void ExecutionManager::run()
 {
     DBG(logger, "Running execution manager");
@@ -928,16 +1066,29 @@ void ExecutionManager::run()
       plugin_opts.push_back(tg_depth.str());
   
       getTracegrindOptions(plugin_opts);
-
-      PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), config->getProgAndArg(), plugin_opts, TRACEGRIND);
+      
+      if (runs && (config->getCheckArgv() != ""))
+      {
+        updateArgv(fi);
+      }
+      
+      PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), cur_argv, plugin_opts, TRACEGRIND);
       plugin_opts.clear();
-      if (config->getTracegrindAlarm() == 0)
       {
         nokill = true;
       }
       time_t start_time = time(NULL);
       monitor->setState(TRACER, start_time);
       int exitCode = plugin_exe.run();
+      if ((config->getCheckArgv() != ""))
+      {
+        if (!runs)
+        {
+          string argv_file("argv.log");
+          config->addFile(argv_file);
+          fi->files.push_back(new FileBuffer("argv.log"));
+        }
+      }
       monitor->addTime(time(NULL));
       if (config->getTracegrindAlarm() == 0)
       {      

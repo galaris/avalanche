@@ -194,6 +194,8 @@ UInt curvisited;
 
 Bool checkDanger = False;
 
+Bool protectArgName = False;
+
 static
 Bool getFunctionName(Addr addr, Bool onlyEntry, Bool showOffset)
 {
@@ -532,6 +534,31 @@ void instrumentIMark(UInt iaddrLowerBytes, UInt iaddrUpperBytes, UInt basicBlock
 #ifdef TAINTED_TRACE_PRINTOUT
   VG_(printf)("------ IMark(0x%llx) ------\n", addr);
 #endif
+}
+
+static
+void taintMemoryFromArgv(HWord key, ULong offset)
+{
+  SizeT s = sizeof(taintedNode);
+  taintedNode* node;
+  node = VG_(malloc)("taintMemoryNode", s);
+  node->key = key;
+  node->filename = "argv_dot_log";
+  node->offset = offset;
+  VG_(HT_add_node) (taintedMemory, node);
+  Char ss[256];
+  Char format[256];
+#if defined(VGA_x86)
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_argv_dot_log[0hex%%08x];\n", memory + 1, memory);
+#elif defined(VGA_amd64)
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_argv_dot_log[0hex%%08x];\n", memory + 1, memory);
+#else
+#  error Unknown arch
+#endif
+  memory++;
+  Int l = VG_(sprintf)(ss, format, key, offset);
+  my_write(fdtrace, ss, l);
+  my_write(fddanger, ss, l);
 }
 
 static
@@ -1566,6 +1593,7 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     }
 #endif
     UWord addr = (UWord) loadAddr;
+    VG_(printf) ("load addr = 0x%x\n", addr);
     
     switch (curNode->temps[tmp].size)
     {
@@ -4307,6 +4335,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
   Char* funcfilterfile;
   Char* inputfilterfile;
   Char* dumpfile;
+  Char* checkArgv;
   if (VG_INT_CLO(arg, "--startdepth", depth))
   {
     depth -= 1;
@@ -4383,6 +4412,81 @@ static Bool tg_process_cmd_line_option(Char* arg)
     VG_(HT_add_node)(inputfiles, node);
     return True;
   }
+  else if (VG_STR_CLO(arg, "--check-argv", checkArgv))
+  {
+    Int fdargv = sr_Res(VG_(open) ("argv.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    my_write(fdtrace, "file_argv_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
+    my_write(fddanger, "file_argv_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
+    HChar** argv = VG_(client_argv);
+    Int i, j, argvSize = 0;
+    Char buf[10];
+    Int eqPos;
+    Int argc = VG_(sizeXA) (VG_(args_for_client));
+    Int fdargl = sr_Res(VG_(open) ("arg_lengths", VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    Int* argLength = VG_(malloc) ("argLength", argc * sizeof(Int));
+    for (i = 0; i < argc; i ++)
+    {
+      VG_(read) (fdargl, &(argLength[i]), sizeof(Int));
+    }
+    Int *argFilterUnits = VG_(malloc) ("argFilterUnits", argc * sizeof(Int));
+    for (i = 0; i < argc; i ++)
+    {
+      argFilterUnits[i] = -1;
+    }
+    if (!VG_(strcmp) (checkArgv, "all"))
+    {
+      for (i = 0; i < argc; i ++)
+      {
+        argFilterUnits[i] = 1;
+      }
+    }
+    else
+    {
+      parseArgvMask(checkArgv, argFilterUnits);
+    }
+    for (i = 0; i < argc; i ++)
+    {
+      if (argFilterUnits[i] > 0)
+      {
+        eqPos = -1;
+        if (protectArgName)
+        {
+          HChar* eqPosC = VG_(strchr) (argv[i], '=');
+          if (eqPosC != NULL)
+          {
+            eqPos = eqPosC - argv[i];
+          }
+        }
+        for (j = 0; j < VG_(strlen) (argv[i]) + 1; j ++)
+        {
+          if (j > eqPos)
+          { 
+            taintMemoryFromArgv(argv[i] + j, argvSize);
+          }
+          argvSize ++;
+          VG_(write) (fdargv, argv[i] + j, 1);
+        }
+      }
+      else
+      {
+        for (j = 0; j < VG_(strlen) (argv[i]) + 1; j ++)
+        {
+          argvSize ++;
+          VG_(write) (fdargv, argv[i] + j, 1);
+        }
+      }
+      for (j = VG_(strlen) (argv[i]) + 1; j < argLength[i] + 1; j ++)
+      {
+        argvSize ++;
+        VG_(write) (fdargv, "\0", 1);
+      }
+    }
+    VG_(free) (argFilterUnits);
+    VG_(free) (argLength);
+    VG_(close) (fdargv);
+    VG_(close) (fdargl);
+    return True;
+  }
   else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))
   {
     return True;
@@ -4394,6 +4498,10 @@ static Bool tg_process_cmd_line_option(Char* arg)
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
+  {
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--protect-arg-name", protectArgName))
   {
     return True;
   }
