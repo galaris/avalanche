@@ -114,6 +114,9 @@ public:
 
     void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
     bool dumpMCExploit(Input* input, const char* exec_log);
+    void dumpExploitArgv();
+
+    bool updateArgv(Input* input);
 
     int checkDivergence(Input* first_input, int score);
 
@@ -128,6 +131,7 @@ public:
 private:
     OptionConfig *config;
     std::multimap<Key, Input*, cmp> inputs;
+    std::vector <std::string> cur_argv;
     std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
     int exploits;

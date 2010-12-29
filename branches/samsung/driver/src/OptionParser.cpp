@@ -134,8 +134,15 @@ OptionConfig *OptionParser::run() const
                 config->setSTPThreads(atoi(thread_num.c_str()));
             }
         }
+        else if (arg_vec[i].find("--check-argv=") != string::npos) {
+            string argv_mask = arg_vec[i].substr(strlen("--check-argv="));
+            config->setCheckArgv(argv_mask);
+        }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
+        }
+        else if (arg_vec[i] == "--protect-arg-name") {
+            config->setProtectArgName();
         }
         else if (arg_vec[i] == "--protect-main-agent") {
             config->setProtectMainAgent();
@@ -192,9 +199,9 @@ OptionConfig *OptionParser::run() const
         return NULL;
     }
 
-    if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams()) {
+    if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams() && (config->getCheckArgv() == "")) {
         delete config;
-        cout << "no input files or sockets specified\n";
+        cout << "no input files or sockets specified and command line option checking is not enabled\n";
         return NULL;
     }
     else if (config->usingSockets() && ((config->getPort() == 65536) || (config->getHost() == ""))) {

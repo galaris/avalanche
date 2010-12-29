@@ -67,6 +67,9 @@ Int VG_(cl_cmdline_fd) = -1;
 /* Args for the client. */
 XArray* /* of HChar* */ VG_(args_for_client) = NULL;
 
+/* Pointer (in client stack) to data in argv */
+HChar ** VG_(client_argv) = NULL;
+
 /* Args for V (augments, then those from the launcher). */
 XArray* /* of HChar* */ VG_(args_for_valgrind) = NULL;
 

@@ -593,6 +593,7 @@ Addr setup_client_stack( void*  init_sp,
    if (have_exename)
       *ptr++ = (Addr)copy_str(&strtab, VG_(args_the_exename));
 
+   VG_(client_argv) = (HChar**) ptr;
    for (i = 0; i < VG_(sizeXA)( VG_(args_for_client) ); i++) {
       *ptr++ = (Addr)copy_str(
                        &strtab, 

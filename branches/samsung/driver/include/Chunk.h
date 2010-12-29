@@ -35,8 +35,10 @@ class Chunk
 private:
   FileBuffer* trace;
   std::vector<std::pair<int, int> > exploitGroups;
+  bool argvSpecified;
+ 
 public:
-  Chunk(FileBuffer* trace, int exploitNum, int inputNum);
+  Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool argvSpecified = false);
   ~Chunk();
 
   void addGroup(int exploitNum, int inputNum);
