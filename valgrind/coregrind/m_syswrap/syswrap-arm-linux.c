@@ -58,6 +58,12 @@
 #include "priv_syswrap-linux.h"     /* for decls of linux-ish wrappers */
 #include "priv_syswrap-main.h"
 
+Bool accept = False;
+Bool connect = False;
+Bool socket = False;
+
+extern Int listeningSocket;
+extern Int boundSocket;
 
 /* ---------------------------------------------------------------------
    clone() handling
@@ -352,6 +358,10 @@ PRE(sys_socketcall)
 #  define ARG2_4  (((UWord*)ARG2)[4])
 #  define ARG2_5  (((UWord*)ARG2)[5])
 
+   accept = False;
+   connect = False;
+   socket = False;
+
    *flags |= SfMayBlock;
    PRINT("sys_socketcall ( %ld, %#lx )",ARG1,ARG2);
    PRE_REG_READ2(long, "socketcall", int, call, unsigned long *, args);
@@ -365,6 +375,10 @@ PRE(sys_socketcall)
       break;
 
    case VKI_SYS_SOCKET:
+      if ((ARG2_1 & 0xff) == 2)
+      {
+        socket = True;
+      }
      /* int socket(int domain, int type, int protocol); */
       PRE_MEM_READ( "socketcall.socket(args)", ARG2, 3*sizeof(Addr) );
       break;
@@ -382,6 +396,7 @@ PRE(sys_socketcall)
       break;
 
    case VKI_SYS_ACCEPT: {
+      accept = True;
      /* int accept(int s, struct sockaddr *addr, int *addrlen); */
       PRE_MEM_READ( "socketcall.accept(args)", ARG2, 3*sizeof(Addr) );
       ML_(generic_PRE_sys_accept)( tid, ARG2_0, ARG2_1, ARG2_2 );
@@ -419,12 +434,13 @@ PRE(sys_socketcall)
          from parameter.
      */
      PRE_MEM_READ( "socketcall.recv(args)", ARG2, 4*sizeof(Addr) );
-     ML_(generic_PRE_sys_recv)( tid, ARG2_0, ARG2_1, ARG2_2 );
+     ML_(generic_PRE_sys_recv)( tid, ARG2_0, ARG2_1, ARG2_2, ARG2_3 );
      break;
 
    case VKI_SYS_CONNECT:
      /* int connect(int sockfd,
    struct sockaddr *serv_addr, int addrlen ); */
+     connect = True;
      PRE_MEM_READ( "socketcall.connect(args)", ARG2, 3*sizeof(Addr) );
      ML_(generic_PRE_sys_connect)( tid, ARG2_0, ARG2_1, ARG2_2 );
      break;
@@ -519,7 +535,7 @@ POST(sys_socketcall)
     break;
 
   case VKI_SYS_SOCKET:
-    r = ML_(generic_POST_sys_socket)( tid, VG_(mk_SysRes_Success)(RES) );
+    r = ML_(generic_POST_sys_socket)( tid, VG_(mk_SysRes_Success)(RES), ARG2_0, ARG2_1, ARG2_2 );
     SET_STATUS_from_SysRes(r);
     break;
 
@@ -530,6 +546,10 @@ POST(sys_socketcall)
 
   case VKI_SYS_LISTEN:
     /* int listen(int s, int backlog); */
+      if (ARG2_0 == boundSocket)
+      {
+        listeningSocket = boundSocket;
+      }
     break;
 
   case VKI_SYS_ACCEPT:
@@ -552,7 +572,7 @@ POST(sys_socketcall)
     break;
 
   case VKI_SYS_RECV:
-    ML_(generic_POST_sys_recv)( tid, RES, ARG2_0, ARG2_1, ARG2_2 );
+    ML_(generic_POST_sys_recv)( tid, RES, ARG2_0, ARG2_1, ARG2_2, ARG2_3 );
     break;
 
   case VKI_SYS_CONNECT:
@@ -609,7 +629,7 @@ POST(sys_socket)
 {
    SysRes r;
    vg_assert(SUCCESS);
-   r = ML_(generic_POST_sys_socket)(tid, VG_(mk_SysRes_Success)(RES));
+   r = ML_(generic_POST_sys_socket)(tid, VG_(mk_SysRes_Success)(RES), ARG1, ARG2, ARG3);
    SET_STATUS_from_SysRes(r);
 }
 
@@ -955,12 +975,12 @@ PRE(sys_recv)
    PRINT("sys_recv ( %ld, %#lx, %ld, %lu )",ARG1,ARG2,ARG3,ARG4);
    PRE_REG_READ4(long, "recv",
                  int, s, void *, buf, int, len, unsigned int, flags);
-   ML_(generic_PRE_sys_recv)( tid, ARG1, ARG2, ARG3 );
+   ML_(generic_PRE_sys_recv)( tid, ARG1, ARG2, ARG3, ARG4 );
 }
 
 POST(sys_recv)
 {
-   ML_(generic_POST_sys_recv)( tid, RES, ARG1, ARG2, ARG3 );
+   ML_(generic_POST_sys_recv)( tid, RES, ARG1, ARG2, ARG3, ARG4 );
 }
 
 PRE(sys_mmap2)
