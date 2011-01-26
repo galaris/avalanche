@@ -41,6 +41,8 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <stdio.h>
+#include <errno.h>
 #include <string>
 #include <vector>
 #include <set>

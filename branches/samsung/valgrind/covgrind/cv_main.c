@@ -128,7 +128,7 @@ static void cv_fini(Int exitcode)
     {
       while (n != NULL)
       {
-#if defined(VGA_x86)
+#if defined(VGP_arm_linux)
         UInt addr = (UInt) n->key;
 #elif defined(VGA_amd64)
         Addr64 addr = n->key;
