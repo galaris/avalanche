@@ -247,7 +247,6 @@ Bool useFiltering()
     {
       if (VG_(HT_lookup) (funcNames, hashCode(diFunctionName)) != NULL || checkWildcards(diFunctionName))
       {
-        VG_(printf) ("checking %s\n", diFunctionName);
         return True;
       }
     }
@@ -541,7 +540,7 @@ void instrumentIMark(UInt iaddrLowerBytes/*, UInt iaddrUpperBytes*/, UInt basicB
 }
 
 static
-void taintMemoryFromArgv(HWord key, ULong offset)
+void taintMemoryFromArgv(HWord key, HWord offset)
 {
   SizeT s = sizeof(taintedNode);
   taintedNode* node;
@@ -564,7 +563,7 @@ void taintMemoryFromArgv(HWord key, ULong offset)
 }
 
 static
-void taintMemoryFromFile(HWord key, ULong offset)
+void taintMemoryFromFile(HWord key, HWord offset)
 {
   SizeT s = sizeof(taintedNode);
   taintedNode* node;
@@ -590,7 +589,7 @@ void taintMemoryFromFile(HWord key, ULong offset)
 }
 
 static
-void taintMemoryFromSocket(HWord key, ULong offset)
+void taintMemoryFromSocket(HWord key, HWord offset)
 {
   SizeT s = sizeof(taintedNode);
   taintedNode* node;
@@ -1052,6 +1051,7 @@ void pre_call(ThreadId tid, UInt syscallno)
 static
 void post_call(ThreadId tid, UInt syscallno, SysRes res)
 {
+//  VG_(printf) ("post_call, syscallno = %u\n", syscallno);
   if (syscallno == __NR_read)
   {
     isRead = False;
@@ -1072,11 +1072,15 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
       my_write(fddanger, s, l);
     }
   }
-#if defined(VGP_arm_linux)
+/*#if defined(VGP_arm_linux)
   else if ((syscallno == __NR_socketcall) && (accept || connect || socket) && (cursocket != -1))
 #elif defined(VGP_amd64_linux)
   else if (((syscallno == __NR_accept) || (syscallno == __NR_connect) || socket) && (cursocket != -1))
-#endif
+#endif*/
+
+//XXX: "caught connect" message produces __NR_connect message for VGP_arm_linux
+
+  else if (((syscallno == __NR_accept) || (syscallno == __NR_connect) || socket) && (cursocket != -1))
   {
     Char s[256];
     Int l = VG_(sprintf)(s, "socket_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", cursocket);
@@ -1582,10 +1586,6 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
   //VG_(printf)("t=%p\n", t);
   if (t != NULL)
   {
-    //ppIRExpr(loadAddr);
-    //VG_(printf) ("\n");
-    ppIRStmt(clone);
-    VG_(printf) ("\n");
     Char s[1024];
     Int l = 0;
     taintTemp(tmp);
@@ -1603,20 +1603,7 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
     }
 #endif
     UWord addr = (UWord) loadAddr;
-  /*  VG_(printf) ("x_curblock = %x\nllx_curblock = %llx\nlx_curblock=%lx\n", curblock, curblock, curblock);
-    VG_(printf) ("d_memory = %d\nu_memory = %u\n", memory, memory);
-    VG_(printf) ("08x_loadAdd = %08x\nx_loadAddr = %x\n", loadAddr, loadAddr);
-    VG_(printf) ("08x_addr = %08x\nx_addr = %x\n", addr, addr);
-    VG_(printf) ("tmp = %d\n", tmp);
-    VG_(printf) ("size = %d\n", curNode->temps[tmp].size);
-    VG_(printf) ("ASSERT(t_%lx_%u_%u=memory_%d[0hex%08x]);\n", curblock, tmp, curvisited, memory, addr);
-    VG_(printf) ("ASSERT(t_%lx_%u_%u=memory_%d[0hex%08x]);\n", curblock, tmp, curvisited, memory, addr);
-    VG_(sprintf) (s, "ASSERT(t_%lx_%u_%u=memory_%d[0hex%08x]);\n", curblock, tmp, curvisited, memory, addr);
-    VG_(printf) ("s = %s\n");
-    VG_(sprintf) (s, "ASSERT(t_%lx_%u_%u=memory_%d[0hex%08x]);\n", curblock, tmp, curvisited, memory, addr);
-    VG_(printf) ("s = %s\n");*/
-    
-
+ 
     switch (curNode->temps[tmp].size)
     {
 #if defined(VGP_arm_linux)
@@ -1707,11 +1694,6 @@ void instrumentWrTmpRdTmp(IRStmt* clone, UInt ltmp, UInt rtmp)
 static
 void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
 {
-  /*if (inTaintedBlock)
-  {
-    ppIRStmt(clone);
-    VG_(printf) ("\n");
-  }*/
   if (VG_(HT_lookup)(taintedTemps, rtmp) != NULL)
   {
     taintTemp(ltmp);
@@ -1955,22 +1937,10 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value1, IRExpr* value2)
   arg1 = clone->Ist.WrTmp.data->Iex.CCall.args[1];
   arg2 = clone->Ist.WrTmp.data->Iex.CCall.args[2];
   UInt r = isPropagation2(arg1, arg2);
-  /*if (inTaintedBlock)
-  {
-    ppIRStmt(clone);
-    VG_(printf) ("\n");
-    ppIRExpr(arg1);
-    VG_(printf) ("\n");
-    ppIRExpr(arg2);
-    VG_(printf) ("\n%d\n", r);
-  }*/
   if (r)
   {
     UInt arg0 = clone->Ist.WrTmp.data->Iex.CCall.args[0]->Iex.Const.con->Ico.U32;
-//    VG_(printf) ("arg0 = %x\n", arg0);
     UInt op = arg0 >> 4;
-/*    UInt size = arg0 & 0xF;
-    VG_(printf) ("op = %d\n size = %d\n", op, size);*/
     UInt ltmp = clone->Ist.WrTmp.tmp;
     Char s[256];
     Int l = 0;
