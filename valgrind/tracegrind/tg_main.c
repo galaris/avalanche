@@ -1968,704 +1968,182 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value1, IRExpr* value2)
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-/*#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}*/
-			l = VG_(sprintf)(s, "[31:0],");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
                 	break;
       case ARMCondHS:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF BVGE(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-/*#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}*/
-			l = VG_(sprintf)(s, "[31:0],");
- 			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
                 	break;
       case ARMCondEQ:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF ", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-/*#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]=");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]=");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]=");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]=");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]=");
-			}*/
-			l = VG_(sprintf)(s, "[31:0]=");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, "=", 1);
+			my_write(fddanger, "=", 1);
       			translate2(arg2, value2, r);
-/*#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0] THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0] THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0] THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0] THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0] THEN ");
-			}*/
-			l = VG_(sprintf)(s, "[31:0] THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " THEN ", 6);
+			my_write(fddanger, " THEN ", 6);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
                 	break;
       case ARMCondNE:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF NOT(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]=");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]=");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]=");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]=");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]=");
-			}*/
-			l = VG_(sprintf)(s, "[31:0]=");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, "=", 1);
+			my_write(fddanger, "=", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
                 	break;
       case ARMCondLS:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF BVLE(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-      			translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}*/
-			l = VG_(sprintf)(s, "[31:0],");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+		      	translate1(arg1, value1, r);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
-			break;
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
+                	break;
       case ARMCondHI:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF BVGT(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-      			translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}*/
-			l = VG_(sprintf)(s, "[31:0],");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+		      	translate1(arg1, value1, r);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
-			break;
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
+                	break;
       case ARMCondLT:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF SBVLT(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-      			translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}*/
-			l = VG_(sprintf)(s, "[31:0],");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+		      	translate1(arg1, value1, r);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
-      			break;
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
+                	break;
       case ARMCondGE:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF SBVGE(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-      			translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0],");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+		      	translate1(arg1, value1, r);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
-      			break;
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
+                	break;
       case ARMCondLE:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF SBVLE(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-      			translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+		      	translate1(arg1, value1, r);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]) THEN ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
-      			break;
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
+                	break;
       case ARMCondGT:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF SBVGT(", curblock, ltmp, curvisited);
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
-      			translate1(arg1, value1, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0],");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0],");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0],");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0],");
-			}*/
-			l = VG_(sprintf)(s, "[31:0],");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+		      	translate1(arg1, value1, r);
+			my_write(fdtrace, ",", 1);
+			my_write(fddanger, ",", 1);
       			translate2(arg2, value2, r);
-/*
-#if defined(VGP_arm_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#elif defined(VGP_amd64_linux)
-			if (size == 0)
-			{
-			  l = VG_(sprintf)(s, "[63:0]) THEN ");
-			}
-			else if (size == 3)
-			{
-			  l = VG_(sprintf)(s, "[31:0]) THEN ");
-			}
-#endif
-			else if (size == 1)
-			{
-		     	  l = VG_(sprintf)(s, "[7:0]) THEN ");
-			}
-			else if (size == 2)
-			{
-			  l = VG_(sprintf)(s, "[15:0]) THEN ");
-			}
-*/
-			l = VG_(sprintf)(s, "[31:0]) THEN");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, ") THEN ", 7);
+			my_write(fddanger, ") THEN ", 7);
       			printSizedTrue(ltmp, fdtrace);
       			printSizedTrue(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ELSE ");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
+			my_write(fdtrace, " ELSE ", 6);
+			my_write(fddanger, " ELSE ", 6);
       			printSizedFalse(ltmp, fdtrace);
       			printSizedFalse(ltmp, fddanger);
-      			l = VG_(sprintf)(s, " ENDIF);\n");
-			my_write(fdtrace, s, l);
-			my_write(fddanger, s, l);
-      			break;
+			my_write(fdtrace, " ENDIF);\n", 9);
+			my_write(fddanger, " ENDIF);\n", 9);
+                	break;
       /* other conditions */
       default:  	break;
     }
