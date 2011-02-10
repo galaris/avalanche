@@ -57,7 +57,7 @@
 #include "parser.h"
 
 //#define TAINTED_TRACE_PRINTOUT
-//#define TAINTED_BLOCKS_PRINTOUT
+#define TAINTED_BLOCKS_PRINTOUT
 //#define CALL_STACK_PRINTOUT
 
 enum {
@@ -569,7 +569,6 @@ void taintMemoryFromFile(HWord key, HWord offset)
   taintedNode* node;
   node = VG_(malloc)("taintMemoryNode", s);
   node->key = key;
-  //do we really need node->filename field???
   node->filename = curfile;
   node->offset = offset;
   VG_(HT_add_node)(taintedMemory, node);
@@ -1123,7 +1122,6 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
   }
   else if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
   {
-    //VG_(printf)("sizeof(Addr)=%d aaa=%lx\n", sizeof(Addr), a);
     if (replace)
     {
       if (cursocket >= socketsNum)
@@ -1541,21 +1539,6 @@ void instrumentPutConst(IRStmt* clone, UInt offset)
  			break;
     default:		break;
   }
-  if (VG_(HT_lookup)(taintedRegisters, offset) != NULL)
-  {
-#ifdef TAINTED_TRACE_PRINTOUT
-    ppIRStmt(clone);
-    VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
-  }
 }
 
 static
@@ -1583,7 +1566,6 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
 
   }
   taintedNode* t = VG_(HT_lookup)(taintedMemory, loadAddr);
-  //VG_(printf)("t=%p\n", t);
   if (t != NULL)
   {
     Char s[1024];
@@ -1612,6 +1594,8 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
       case 16:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=((memory_%d[0hex%08x] @ 0hex00) | (0hex00 @ memory_%d[0hex%08x])));\n", curblock, tmp, curvisited, memory, addr + 1, memory, addr);
 		break;
       case 32:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=((memory_%d[0hex%08x] @ 0hex000000) | (0hex00 @ memory_%d[0hex%08x] @ 0hex0000) | (0hex0000 @ memory_%d[0hex%08x] @ 0hex00) | (0hex000000 @ memory_%d[0hex%08x])));\n", curblock, tmp, curvisited, memory, addr + 3, memory, addr + 2, memory, addr + 1, memory, addr);
+		break;
+      case 64:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=((memory_%d[0hex%08x] @ 0hex00000000000000) | (0hex00 @ memory_%d[0hex%08x] @ 0hex000000000000) | (0hex0000 @ memory_%d[0hex%08x] @ 0hex0000000000) | (0hex000000 @ memory_%d[0hex%08x] @ 0hex00000000) | (0hex00000000 @ memory_%d[0hex%08x] @ 0hex000000) | (0hex0000000000 @ memory_%d[0hex%08x] @ 0hex0000) | (0hex000000000000 @ memory_%d[0hex%08x] @ 0hex00) | (0hex00000000000000 @ memory_%d[0hex%08x])));\n", curblock, tmp, curvisited, memory, addr + 7, memory, addr + 6, memory, addr + 5, memory, addr + 4, memory, addr + 3, memory, addr + 2, memory, addr + 1, memory, addr);
 		break;
 #elif defined(VGP_amd64_linux)
       case 8:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=memory_%d[0hex%016lx]);\n", curblock, tmp, curvisited, memory, addr);
@@ -1714,76 +1698,76 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
     Int l = 0;
     switch (op)
     {
-      case Iop_1Uto8:   l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0bin0000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_1Uto32:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0bin0000000000000000000000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_1Uto64:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0bin000000000000000000000000000000000000000000000000000000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_8Uto16:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex00@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_8Uto32:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_8Uto64:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex00000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_16Uto32: l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex0000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_16Uto64: l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_32Uto64: l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex00000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-
-      case Iop_1Sto8:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 8));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_1Sto16: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 16));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_1Sto32:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 32));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_1Sto64:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_8Sto16:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 16));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_8Sto32:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 32));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_8Sto64:  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_16Sto32: l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 32));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_16Sto64: l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_32Sto64: l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-
-
+      case Iop_1Uto8:   	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0bin0000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_1Uto32:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0bin0000000000000000000000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_1Uto64:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0bin000000000000000000000000000000000000000000000000000000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_8Uto16:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex00@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_8Uto32:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_8Uto64:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex00000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_16Uto32: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex0000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_16Uto64: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex000000000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_32Uto64: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex00000000@t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_1Sto8:  		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 8));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_1Sto16: 		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 16));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_1Sto32:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 32));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_1Sto64:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_8Sto16:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 16));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_8Sto32:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 32));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_8Sto64:  	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_16Sto32: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 32));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_16Sto64: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_32Sto64: 	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, 64));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
       case Iop_16to8:
       case Iop_32to8:
-      case Iop_64to8:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[7:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
+      case Iop_64to8:		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[7:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
       case Iop_32to16:
       case Iop_64to16:
-			l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[15:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_64to32:
-			l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[31:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
+				l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[15:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_64to32:		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[31:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
       case Iop_32to1:
-      case Iop_64to1:
-			l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[0:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_16HIto8:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[15:8]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_32HIto16:l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[31:16]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
-      case Iop_64HIto32:l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[63:32]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
+      case Iop_64to1:		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[0:0]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_16HIto8:		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[15:8]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_32HIto16:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[31:16]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_64HIto32:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u[63:32]);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
 
 
       case Iop_Not1:
       case Iop_Not8:
       case Iop_Not16:
       case Iop_Not32:
-      case Iop_Not64:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=~t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
-			break;
+      case Iop_Not64:		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=~t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
+      case Iop_ReinterpF32asI32:
+      case Iop_ReinterpI32asF32:
+      case Iop_ReinterpF64asI64:
+      case Iop_ReinterpI64asF64:l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=t_%lx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
+				break;
       default:		break;
     }
     my_write(fdtrace, s, l);
@@ -1929,9 +1913,7 @@ void printSizedFalse(UInt ltmp, Int fd)
 
 
 static
-//void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size, IRExpr* value1, IRExpr* value2)
-
-void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value1, IRExpr* value2)
+void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value0, IRExpr* value1, IRExpr* value2)
 {
   IRExpr *arg1, *arg2;
   arg1 = clone->Ist.WrTmp.data->Iex.CCall.args[1];
@@ -1939,8 +1921,8 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value1, IRExpr* value2)
   UInt r = isPropagation2(arg1, arg2);
   if (r)
   {
-    UInt arg0 = clone->Ist.WrTmp.data->Iex.CCall.args[0]->Iex.Const.con->Ico.U32;
-    UInt op = arg0 >> 4;
+//    UInt arg0 = clone->Ist.WrTmp.data->Iex.CCall.args[0]->Iex.Const.con->Ico.U32;
+    UInt op = ((UInt) value0) >> 4;
     UInt ltmp = clone->Ist.WrTmp.tmp;
     Char s[256];
     Int l = 0;
@@ -1957,11 +1939,6 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value1, IRExpr* value2)
       newSB = False;
     }
 #endif
-/*#if defined(VGP_arm_linux)
-    size %= 3;
-#elif defined(VGP_amd64_linux)
-    size %= 4;
-#endif*/
     switch (op)
     {
       case ARMCondLO:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF BVLT(", curblock, ltmp, curvisited);
@@ -2150,20 +2127,38 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value1, IRExpr* value2)
   }
 }
 
-#if defined(VGP_x86_linux)
+#if defined(VGP_arm_linux)
 static
-void instrumentWrTmpLongBinop(IRStmt* clone, UInt oprt, UInt ltmp, IRExpr* arg1, IRExpr* arg2, UInt value1LowerBytes, UInt value1UpperBytes, UInt value2LowerBytes, UInt value2UpperBytes)
 
+void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong value)
 {
+  IRExpr* arg1 = clone->Ist.WrTmp.data->Iex.Binop.arg1;
+  IRExpr* arg2 = clone->Ist.WrTmp.data->Iex.Binop.arg2;
   UShort r = isPropagation2(arg1, arg2);
-  if (r)
+  if (!r) {
+    return;
+  }
+  Bool firstT, secondT;
+  ULong value1, value2;
+  if (firstTainted(r))
   {
-    Addr64 value1 = (((Addr64) value1UpperBytes) << 32) ^ value1LowerBytes;
-    Addr64 value2 = (((Addr64) value2UpperBytes) << 32) ^ value2LowerBytes;
-#elif defined(VGP_arm_linux)
+    firstT = True;
+    value1 = 0;
+    value2 = value;
+  }
+  if (secondTainted(r))
+  {
+    secondT = True;
+    value1 = value;
+    value2 = 1;
+  }
+  UInt ltmp = clone->Ist.WrTmp.tmp;
+  UInt oprt = clone->Ist.WrTmp.data->Iex.Binop.op;
+  if ((firstT && (diCounter == 1)) || (secondT && (diCounter == 2) && (!firstT)))
+  {
+#elif defined(VGP_amd64_linux)
 static
 void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
-
 {
   IRExpr* arg1 = clone->Ist.WrTmp.data->Iex.Binop.arg1;
   IRExpr* arg2 = clone->Ist.WrTmp.data->Iex.Binop.arg2;
@@ -2175,7 +2170,10 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
 #endif
     Char s[256];
     Int l = 0;
-    taintTemp(ltmp);
+    if ((oprt != Iop_Shr64) && (oprt != Iop_Sar64) && (oprt != Iop_Shl64))
+    {
+      taintTemp(ltmp);
+    }
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
@@ -2394,11 +2392,12 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_Sar64:		if (secondTainted(r))
+      case Iop_Sar64:		if (!firstT)
 				{
-				  //break;
+				  break;
 				}
-				l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=SBVDIV(64,", curblock, ltmp, curvisited);
+                                taintTemp(ltmp);
+                                l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=SBVDIV(64,", curblock, ltmp, curvisited);
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				translateLong1(arg1, value1, r);
@@ -2410,14 +2409,14 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_Shl64: 		if (secondTainted(r))
+      case Iop_Shl64: 		if (!firstT)
 				{
-				  //break;
+				  return;
 				}
-                                value2 = getLongDecimalValue(arg2, value2);
-				//VG_(printf)("Iop_Shl64 arg2->tag=%x value2LowerBytes=%lx value2UpperBytes=%lx value2=%lx\n", arg2->tag, value2LowerBytes, value2UpperBytes, value2);
+                                value2 = getDecimalValue(arg2, value2);
 				if (value2 == 0)
                                 {
+                                  taintTemp(ltmp);
                                   l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, ltmp, curvisited);
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
@@ -2426,14 +2425,15 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
                                 }
-				else if (value2 >= 64)
+/*				else if (value2 >= 64)
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=0hex0000000000000000);\n", curblock, ltmp, curvisited);
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
-				}
-                                else
+				}*/
+                                else if (value2 < 64)
                                 {
+                                  taintTemp(ltmp);
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=(", curblock, ltmp, curvisited);
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
@@ -2443,13 +2443,14 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
 				  my_write(fddanger, s, l);
 				}
 				break;
-      case Iop_Shr64: 		if (secondTainted(r))
+      case Iop_Shr64: 		if (!firstT)
 				{
-				  //break;
+				  return;
 				}
-                                value2 = getLongDecimalValue(arg2, value2);
+                                value2 = getDecimalValue(arg2, value2);
 				if (value2 == 0)
                                 {
+                                  taintTemp(ltmp);
                                   l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, ltmp, curvisited);
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
@@ -2460,6 +2461,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
                                 }
                                 else
                                 {
+                                  taintTemp(ltmp);
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=(", curblock, ltmp, curvisited);
 				  my_write(fdtrace, s, l);
 				  my_write(fddanger, s, l);
@@ -3247,6 +3249,31 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 		my_write(fddanger, ss, l);
                 memory += 4;
                 break;
+      case 64:  l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[7:0];\n", memory + 1, memory, addr, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[15:8];\n", memory + 2, memory + 1, addr + 1, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[23:16];\n", memory + 3, memory + 2, addr + 2, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[31:24];\n", memory + 4, memory + 3, addr + 3, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[39:32];\n", memory + 5, memory + 4, addr + 4, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[47:40];\n", memory + 6, memory + 5, addr + 5, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[55:48];\n", memory + 7, memory + 6, addr + 6, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%lx_%u_%u[63:56];\n", memory + 8, memory + 7, addr + 7, curblock, tmp, curvisited);
+                my_write(fdtrace, ss, l);
+		my_write(fddanger, ss, l);
+                memory += 8;
 #elif defined(VGP_amd64_linux)
       case 8:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%016lx] := t_%lx_%u_%u;\n", memory + 1, memory, addr, curblock, tmp, curvisited);
                 my_write(fdtrace, ss, l);
@@ -3327,21 +3354,6 @@ void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
 			break;
   }
   untaintMemory((UWord) addr, size);
-  if (VG_(HT_lookup)(taintedMemory, (UWord) addr) != NULL)
-  {
-#ifdef TAINTED_TRACE_PRINTOUT
-    ppIRStmt(clone);
-    VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
-  }
 }
 
 static
@@ -3549,11 +3561,11 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 static
 void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 {
-  IRDirty* di;
-  IRExpr* arg1,* arg2,* arg3,* arg4;
+  IRDirty* di, *di2;
+  IRExpr* arg0, * arg1,* arg2,* arg3;
   UInt tmp = clone->Ist.WrTmp.tmp;
   IRExpr* data = clone->Ist.WrTmp.data;
-  IRExpr* value1,* value2;
+  IRExpr* value0, *value1,* value2;
   switch (data->tag)
   {
     case Iex_Load: 	if (data->Iex.Load.addr->tag == Iex_RdTmp)
@@ -3596,24 +3608,29 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
       			    (data->Iex.Binop.op == Iop_DivU64) ||
       			    (data->Iex.Binop.op == Iop_DivS64))
 			{
-#if defined(VGP_x86_linux)
-                          ULong value1UpperBytes = (((Addr64) arg1) & ((Addr64) 0xffffffff00000000)) >> 32;
-                          ULong value1LowerBytes = ((Addr64) arg1) & ((Addr64) 0x00000000ffffffff);
-                          ULong value2UpperBytes = (((Addr64) arg2) & ((Addr64) 0xffffffff00000000)) >> 32;
-                          ULong value2LowerBytes = ((Addr64) arg2) & ((Addr64) 0x00000000ffffffff);
-                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_9(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(data->Iex.Binop.op), mkIRExpr_HWord(tmp), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1LowerBytes, value1UpperBytes, value2LowerBytes, value2UpperBytes));
-                   	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-#elif defined(VGP_arm_linux)
-                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), value1, value2));
-                   	  //addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-#endif
+#if defined(VGP_arm_linux)
+/*
+     Each LongBinop statement is instrumented two times consequently with
+   (diCounter = 1, value = arg2_value) and (diCounter = 2, value = arg1_value).
+   instrumentWrTmpLongBinop only does actual work if either
+     diCounter == 1) AND arg1 is tainted
+   OR
+     diCounter == 2 AND arg2 is tainted AND arg1 is NOT tainted
+   to ensure that no duplicates appear in tainted trace log.
+*/
 
+                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(1), value2));
+                          di2 = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(2), value1));
+                          addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+                          addStmtToIRSB(sbOut, IRStmt_Dirty(di2));
 			}
-			else if ((data->Iex.Binop.op == Iop_DivModU64to32) || (data->Iex.Binop.op == Iop_DivModS64to32))
+#endif
+//FIXME: rewrite with less args
+/*			else if ((data->Iex.Binop.op == Iop_DivModU64to32) || (data->Iex.Binop.op == Iop_DivModS64to32))
 			{
 			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpDivisionBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpDivisionBinop), mkIRExprVec_5(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1, value2));
                      	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-			}
+			}*/
 			else if ((data->Iex.Binop.op - Iop_INVALID <= 128) &&
                                  (typeOfIRExpr(tyenv, arg1) - Ity_INVALID <= 5) &&
                                  (typeOfIRExpr(tyenv, arg2) - Ity_INVALID <= 5))
@@ -3624,22 +3641,18 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 			}
 			break;
     case Iex_Const:	break;
-    case Iex_CCall:	if (!VG_(strcmp)(data->Iex.CCall.cee->name, "armg_calculate_condition") || //FIX: fixed string
+    case Iex_CCall:	if (!VG_(strcmp)(data->Iex.CCall.cee->name, "armg_calculate_condition") ||
                             !VG_(strcmp)(data->Iex.CCall.cee->name, "amd64g_calculate_condition")) 
 			{
-                          IRExpr* arg0 = data->Iex.CCall.args[0]; //ARMCondcode << 4 | c_op
-			  IRExpr* arg1 = data->Iex.CCall.args[1]; //condition arg1
-			  IRExpr* arg2 = data->Iex.CCall.args[2]; //condition arg2
-			  IRExpr* arg3 = data->Iex.CCall.args[3]; //something
-	//		  IRExpr* arg4 = data->Iex.CCall.args[4];
-			  {
-                            IRExpr* value1 = adjustSize(sbOut, tyenv, arg1);
-                            IRExpr* value2 = adjustSize(sbOut, tyenv, arg2);
-//			    IRExpr* value1 = adjustSize(sbOut, tyenv, arg1);
-//			    di = unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", VG_(fnptr_to_fnentry)(&instrumentWrTmpCCall), mkIRExprVec_6(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg2), mkIRExpr_HWord((HWord) arg3), value1, value2, value3));
-                            di = unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", VG_(fnptr_to_fnentry)(&instrumentWrTmpCCall), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), value1, value2));
-                   	    addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-			  }
+                          arg0 = data->Iex.CCall.args[0]; //ARMCondcode << 4 | c_op
+			  arg1 = data->Iex.CCall.args[1]; //condition arg1
+			  arg2 = data->Iex.CCall.args[2]; //condition arg2
+			  arg3 = data->Iex.CCall.args[3]; //something
+                          value1 = adjustSize(sbOut, tyenv, arg1);
+                          value2 = adjustSize(sbOut, tyenv, arg2);
+			  value0 = adjustSize(sbOut, tyenv, arg0);
+                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", VG_(fnptr_to_fnentry)(&instrumentWrTmpCCall), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), value0, value1, value2));
+                   	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 			}
 			break;
   }
