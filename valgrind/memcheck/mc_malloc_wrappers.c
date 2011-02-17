@@ -8,7 +8,7 @@
    This file is part of MemCheck, a heavyweight Valgrind tool for
    detecting memory errors.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -120,7 +120,8 @@ static void add_to_freed_queue ( MC_Chunk* mc )
       mc1->next = NULL; /* just paranoia */
 
       /* free MC_Chunk */
-      VG_(cli_free) ( (void*)(mc1->data) );
+      if (MC_AllocCustom != mc1->allockind)
+         VG_(cli_free) ( (void*)(mc1->data) );
       VG_(free) ( mc1 );
    }
 }
@@ -155,6 +156,7 @@ MC_Chunk* create_MC_Chunk ( ExeContext* ec, Addr p, SizeT szB,
 /*--- client_malloc(), etc                                 ---*/
 /*------------------------------------------------------------*/
 
+// XXX: should make this a proper error (bug #79311).
 static Bool complain_about_silly_args(SizeT sizeB, Char* fn)
 {
    // Cast to a signed type to catch any unexpectedly negative args.  We're
@@ -162,7 +164,7 @@ static Bool complain_about_silly_args(SizeT sizeB, Char* fn)
    // (for 32-bit platforms) or 2^63 bytes (for 64-bit platforms).
    if ((SSizeT)sizeB < 0) {
       if (!VG_(clo_xml)) 
-         VG_(message)(Vg_UserMsg, "Warning: silly arg (%ld) to %s()",
+         VG_(message)(Vg_UserMsg, "Warning: silly arg (%ld) to %s()\n",
                       (SSizeT)sizeB, fn );
       return True;
    }
@@ -174,7 +176,7 @@ static Bool complain_about_silly_args2(SizeT n, SizeT sizeB)
    if ((SSizeT)n < 0 || (SSizeT)sizeB < 0) {
       if (!VG_(clo_xml))
          VG_(message)(Vg_UserMsg,
-                      "Warning: silly args (%ld,%ld) to calloc()",
+                      "Warning: silly args (%ld,%ld) to calloc()\n",
                       (SSizeT)n, (SSizeT)sizeB);
       return True;
    }
@@ -289,14 +291,10 @@ void die_and_free_mem ( ThreadId tid, MC_Chunk* mc, SizeT rzB )
       accessible with a client request... */
    MC_(make_mem_noaccess)( mc->data-rzB, mc->szB + 2*rzB );
 
-   /* Put it out of harm's way for a while, if not from a client request */
-   if (MC_AllocCustom != mc->allockind) {
-      /* Record where freed */
-      mc->where = VG_(record_ExeContext) ( tid, 0/*first_ip_delta*/ );
-      add_to_freed_queue ( mc );
-   } else {
-      VG_(free) ( mc );
-   }
+   /* Record where freed */
+   mc->where = VG_(record_ExeContext) ( tid, 0/*first_ip_delta*/ );
+   /* Put it out of harm's way for a while */
+   add_to_freed_queue ( mc );
 }
 
 void MC_(handle_free) ( ThreadId tid, Addr p, UInt rzB, MC_AllocKind kind )
@@ -487,6 +485,7 @@ SizeT MC_(malloc_usable_size) ( ThreadId tid, void* p )
    return ( mc ? mc->szB : 0 );
 }
 
+
 /* Memory pool stuff. */
 
 void MC_(create_mempool)(Addr pool, UInt rzB, Bool is_zeroed)
@@ -494,7 +493,7 @@ void MC_(create_mempool)(Addr pool, UInt rzB, Bool is_zeroed)
    MC_Mempool* mp;
 
    if (VG_(clo_verbosity) > 2) {
-      VG_(message)(Vg_UserMsg, "create_mempool(0x%lx, %d, %d)",
+      VG_(message)(Vg_UserMsg, "create_mempool(0x%lx, %d, %d)\n",
                                pool, rzB, is_zeroed);
       VG_(get_and_pp_StackTrace)
          (VG_(get_running_tid)(), MEMPOOL_DEBUG_STACKTRACE_DEPTH);
@@ -529,7 +528,7 @@ void MC_(destroy_mempool)(Addr pool)
    MC_Mempool* mp;
 
    if (VG_(clo_verbosity) > 2) {
-      VG_(message)(Vg_UserMsg, "destroy_mempool(0x%lx)", pool);
+      VG_(message)(Vg_UserMsg, "destroy_mempool(0x%lx)\n", pool);
       VG_(get_and_pp_StackTrace)
          (VG_(get_running_tid)(), MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
@@ -590,7 +589,7 @@ check_mempool_sane(MC_Mempool* mp)
 	   }
 	 }
 	 
-	 VG_(message)(Vg_UserMsg, 
+         VG_(message)(Vg_UserMsg, 
                       "Total mempools active: %d pools, %d chunks\n", 
 		      total_pools, total_chunks);
 	 tick = 0;
@@ -605,7 +604,7 @@ check_mempool_sane(MC_Mempool* mp)
       if (chunks[i]->data > chunks[i+1]->data) {
          VG_(message)(Vg_UserMsg, 
                       "Mempool chunk %d / %d is out of order "
-                      "wrt. its successor", 
+                      "wrt. its successor\n", 
                       i+1, n_chunks);
          bad = 1;
       }
@@ -615,7 +614,7 @@ check_mempool_sane(MC_Mempool* mp)
    for (i = 0; i < n_chunks-1; i++) {
       if (chunks[i]->data + chunks[i]->szB > chunks[i+1]->data ) {
          VG_(message)(Vg_UserMsg, 
-                      "Mempool chunk %d / %d overlaps with its successor", 
+                      "Mempool chunk %d / %d overlaps with its successor\n", 
                       i+1, n_chunks);
          bad = 1;
       }
@@ -623,11 +622,12 @@ check_mempool_sane(MC_Mempool* mp)
 
    if (bad) {
          VG_(message)(Vg_UserMsg, 
-                "Bad mempool (%d chunks), dumping chunks for inspection:",
-                      n_chunks);
+                "Bad mempool (%d chunks), dumping chunks for inspection:\n",
+                n_chunks);
          for (i = 0; i < n_chunks; ++i) {
             VG_(message)(Vg_UserMsg, 
-                         "Mempool chunk %d / %d: %ld bytes [%lx,%lx), allocated:",
+                         "Mempool chunk %d / %d: %ld bytes "
+                         "[%lx,%lx), allocated:\n",
                          i+1, 
                          n_chunks, 
                          chunks[i]->szB + 0UL,
@@ -645,7 +645,8 @@ void MC_(mempool_alloc)(ThreadId tid, Addr pool, Addr addr, SizeT szB)
    MC_Mempool* mp;
 
    if (VG_(clo_verbosity) > 2) {     
-      VG_(message)(Vg_UserMsg, "mempool_alloc(0x%lx, 0x%lx, %ld)", pool, addr, szB);
+      VG_(message)(Vg_UserMsg, "mempool_alloc(0x%lx, 0x%lx, %ld)\n",
+                               pool, addr, szB);
       VG_(get_and_pp_StackTrace) (tid, MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
 
@@ -673,7 +674,7 @@ void MC_(mempool_free)(Addr pool, Addr addr)
    }
 
    if (VG_(clo_verbosity) > 2) {
-      VG_(message)(Vg_UserMsg, "mempool_free(0x%lx, 0x%lx)", pool, addr);
+      VG_(message)(Vg_UserMsg, "mempool_free(0x%lx, 0x%lx)\n", pool, addr);
       VG_(get_and_pp_StackTrace) (tid, MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
 
@@ -686,7 +687,7 @@ void MC_(mempool_free)(Addr pool, Addr addr)
 
    if (VG_(clo_verbosity) > 2) {
       VG_(message)(Vg_UserMsg, 
-		   "mempool_free(0x%lx, 0x%lx) freed chunk of %ld bytes",
+		   "mempool_free(0x%lx, 0x%lx) freed chunk of %ld bytes\n",
 		   pool, addr, mc->szB + 0UL);
    }
 
@@ -704,7 +705,8 @@ void MC_(mempool_trim)(Addr pool, Addr addr, SizeT szB)
    VgHashNode** chunks;
 
    if (VG_(clo_verbosity) > 2) {
-      VG_(message)(Vg_UserMsg, "mempool_trim(0x%lx, 0x%lx, %ld)", pool, addr, szB);
+      VG_(message)(Vg_UserMsg, "mempool_trim(0x%lx, 0x%lx, %ld)\n",
+                               pool, addr, szB);
       VG_(get_and_pp_StackTrace) (tid, MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
 
@@ -813,7 +815,7 @@ void MC_(move_mempool)(Addr poolA, Addr poolB)
    MC_Mempool* mp;
 
    if (VG_(clo_verbosity) > 2) {
-      VG_(message)(Vg_UserMsg, "move_mempool(0x%lx, 0x%lx)", poolA, poolB);
+      VG_(message)(Vg_UserMsg, "move_mempool(0x%lx, 0x%lx)\n", poolA, poolB);
       VG_(get_and_pp_StackTrace)
          (VG_(get_running_tid)(), MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
@@ -837,7 +839,7 @@ void MC_(mempool_change)(Addr pool, Addr addrA, Addr addrB, SizeT szB)
    ThreadId     tid = VG_(get_running_tid)();
 
    if (VG_(clo_verbosity) > 2) {
-      VG_(message)(Vg_UserMsg, "mempool_change(0x%lx, 0x%lx, 0x%lx, %ld)",
+      VG_(message)(Vg_UserMsg, "mempool_change(0x%lx, 0x%lx, 0x%lx, %ld)\n",
                    pool, addrA, addrB, szB);
       VG_(get_and_pp_StackTrace) (tid, MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
@@ -897,15 +899,15 @@ void MC_(print_malloc_stats) ( void )
       nbytes += (ULong)mc->szB;
    }
 
-   VG_(message)(Vg_UserMsg, 
-                "malloc/free: in use at exit: %'llu bytes in %'lu blocks.",
-                nbytes, nblocks);
-   VG_(message)(Vg_UserMsg, 
-                "malloc/free: %'lu allocs, %'lu frees, %'llu bytes allocated.",
-                cmalloc_n_mallocs,
-                cmalloc_n_frees, cmalloc_bs_mallocd);
-   if (VG_(clo_verbosity) > 1)
-      VG_(message)(Vg_UserMsg, "");
+   VG_(umsg)(
+      "HEAP SUMMARY:\n"
+      "    in use at exit: %'llu bytes in %'lu blocks\n"
+      "  total heap usage: %'lu allocs, %'lu frees, %'llu bytes allocated\n"
+      "\n",
+      nbytes, nblocks,
+      cmalloc_n_mallocs,
+      cmalloc_n_frees, cmalloc_bs_mallocd
+   );
 }
 
 /*--------------------------------------------------------------------*/

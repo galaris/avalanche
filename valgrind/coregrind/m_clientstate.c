@@ -9,7 +9,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -75,7 +75,7 @@ Int VG_(args_for_valgrind_noexecpass) = 0;
 
 /* The name of the client executable, as specified on the command
    line. */
-HChar* VG_(args_the_exename) = NULL;
+const HChar* VG_(args_the_exename) = NULL;
 
 // Client's original rlimit data and rlimit stack
 struct vki_rlimit VG_(client_rlimit_data);

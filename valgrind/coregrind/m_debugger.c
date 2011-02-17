@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -205,10 +205,41 @@ static Int ptrace_setregs(Int pid, VexGuestArchState* vex)
                                               (void*)(long)LibVEX_GuestPPC64_get_XER(vex)); 
    return rc; 
 
+#elif defined(VGP_arm_linux)
+   struct vki_user_regs_struct uregs;
+   VG_(memset)(&uregs, 0, sizeof(uregs));
+   uregs.ARM_r0   = vex->guest_R0; 
+   uregs.ARM_r1   = vex->guest_R1; 
+   uregs.ARM_r2   = vex->guest_R2; 
+   uregs.ARM_r3   = vex->guest_R3; 
+   uregs.ARM_r4   = vex->guest_R4; 
+   uregs.ARM_r5   = vex->guest_R5; 
+   uregs.ARM_r6   = vex->guest_R6; 
+   uregs.ARM_r7   = vex->guest_R7; 
+   uregs.ARM_r8   = vex->guest_R8; 
+   uregs.ARM_r9   = vex->guest_R9; 
+   uregs.ARM_r10  = vex->guest_R10; 
+   uregs.ARM_fp   = vex->guest_R11; 
+   uregs.ARM_ip   = vex->guest_R12; 
+   uregs.ARM_sp   = vex->guest_R13; 
+   uregs.ARM_lr   = vex->guest_R14; 
+   // Remove the T bit from the bottom of R15T.  It will get shipped
+   // over in CPSR.T instead, since LibVEX_GuestARM_get_cpsr copies
+   // it from R15T[0].
+   uregs.ARM_pc   = vex->guest_R15T & 0xFFFFFFFE;
+   uregs.ARM_cpsr = LibVEX_GuestARM_get_cpsr(vex);
+   return VG_(ptrace)(VKI_PTRACE_SETREGS, pid, NULL, &uregs);
+
 #elif defined(VGP_ppc32_aix5)
    I_die_here;
 
 #elif defined(VGP_ppc64_aix5)
+   I_die_here;
+
+#elif defined(VGP_x86_darwin)
+   I_die_here;
+
+#elif defined(VGP_amd64_darwin)
    I_die_here;
 
 #else
@@ -290,22 +321,22 @@ void VG_(start_debugger) ( ThreadId tid )
          
          *bufptr++ = '\0';
   
-         VG_(message)(Vg_UserMsg, "starting debugger with cmd: %s", buf);
+         VG_(message)(Vg_UserMsg, "starting debugger with cmd: %s\n", buf);
          res = VG_(system)(buf);
          if (res == 0) {      
-            VG_(message)(Vg_UserMsg, "");
+            VG_(message)(Vg_UserMsg, "\n");
             VG_(message)(Vg_UserMsg, 
                          "Debugger has detached.  Valgrind regains control."
-                         "  We continue.");
+                         "  We continue.\n");
          } else {
             VG_(message)(Vg_UserMsg, 
-                         "Warning: Debugger attach failed! (sys_system)");
-            VG_(message)(Vg_UserMsg, "");
+                         "Warning: Debugger attach failed! (sys_system)\n");
+            VG_(message)(Vg_UserMsg, "\n");
          }
       } else {
          VG_(message)(Vg_UserMsg, 
-                      "Warning: Debugger attach failed! (ptrace problem?)");
-         VG_(message)(Vg_UserMsg, "");
+                      "Warning: Debugger attach failed! (ptrace problem?)\n");
+         VG_(message)(Vg_UserMsg, "\n");
       }
 
       VG_(kill)(pid, VKI_SIGKILL);

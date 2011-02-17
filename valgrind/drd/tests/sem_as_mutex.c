@@ -5,7 +5,7 @@
 #include <stdio.h>     /* printf() */
 #include <pthread.h>
 #include <semaphore.h>
-#include <unistd.h>    /* usleep() */
+#include <unistd.h>    /* sleep() */
 
 
 /* Local functions declarations. */
@@ -56,7 +56,7 @@ int main(int argc, char** argv)
   sem_init(&s_sem, 0, 1);
 
   /*
-   * Switch to line-buffered mode, such that timing information can be 
+   * Switch to line-buffered mode, such that timing information can be
    * obtained for each printf() call with strace.
    */
   setlinebuf(stdout);
@@ -70,6 +70,8 @@ int main(int argc, char** argv)
   s_d3 = 3;
 
   pthread_create(&threadid, 0, thread_func, 0);
+
+  sleep(1); /* Wait until thread_func() finished. */
 
   {
     if (s_do_mutual_exclusion) sem_wait(&s_sem);

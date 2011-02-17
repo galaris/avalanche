@@ -547,9 +547,9 @@ void taintMemoryFromFile(HWord key, ULong offset)
   VG_(HT_add_node)(taintedMemory, node);
   Char ss[256];
   Char format[256];
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
   VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_%s[0hex%%08x];\n", memory + 1, memory, curfile);
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
   VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_%s[0hex%%08x];\n", memory + 1, memory, curfile);
 #else
 #  error Unknown arch
@@ -572,9 +572,9 @@ void taintMemoryFromSocket(HWord key, ULong offset)
   VG_(HT_add_node)(taintedMemory, node);
   Char ss[256];
   Char format[256];
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
   VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08lx] := socket_%d[0hex%%08x];\n", memory + 1, memory, cursocket);
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
   VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := socket_%d[0hex%%08x];\n", memory + 1, memory, cursocket);
 #endif
   memory++;
@@ -1007,12 +1007,12 @@ void pre_call(ThreadId tid, UInt syscallno)
   {
     isOpen = True;
   }
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
   else if ((syscallno == __NR_mmap) || (syscallno == __NR_mmap2))
   {
     isMap = True;
   }
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
   else if (syscallno == __NR_mmap)
   {
     isMap = True;
@@ -1027,7 +1027,7 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
   {
     isRead = False;
   }
-  else if ((syscallno == __NR_clone) && !res.isError && (res.res == 0))
+  else if ((syscallno == __NR_clone) && !sr_isError(res) && (sr_Res(res) == 0))
   {
     VG_(printf)("__NR_clone\n");
     //VG_(exit)(0);
@@ -1043,9 +1043,9 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
       my_write(fddanger, s, l);
     }
   }
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
   else if ((syscallno == __NR_socketcall) && (accept || connect || socket) && (cursocket != -1))
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
   else if (((syscallno == __NR_accept) || (syscallno == __NR_connect) || socket) && (cursocket != -1))
 #endif
   {
@@ -1053,15 +1053,15 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
     Int l = VG_(sprintf)(s, "socket_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", cursocket);
     my_write(fdtrace, s, l);
     my_write(fddanger, s, l);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
     accept = False;
     connect = False;
 #endif
     socket = False;
   }
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
   else if ((syscallno == __NR_mmap) || (syscallno == __NR_mmap2))
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
   else if (syscallno == __NR_mmap)
 #endif
   {
@@ -1219,7 +1219,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
     UWord addr = (UWord) loadAddr;
     switch (size)
     {
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
       case 8:	l = VG_(sprintf)(ss, "registers_%d : ARRAY BITVECTOR(8) OF BITVECTOR(8) = registers_%d WITH [0hex%02x] := memory_%d[0hex%08x];\n", registers + 1, registers, offset, memory, addr);
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
@@ -1247,7 +1247,7 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
   		my_write(fddanger, ss, l);
                 registers += 4;
                 break;
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
       case 8:	l = VG_(sprintf)(ss, "registers_%d : ARRAY BITVECTOR(8) OF BITVECTOR(8) = registers_%d WITH [0hex%02x] := memory_%d[0hex%016lx];\n", registers + 1, registers, offset, memory, addr);
   		my_write(fdtrace, ss, l);
   		my_write(fddanger, ss, l);
@@ -1533,7 +1533,7 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     Char s[256];
     Int l = 0;
     Addr addrs[256];
-    Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
+    //Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
@@ -1569,14 +1569,14 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     
     switch (curNode->temps[tmp].size)
     {
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
       case 8:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=memory_%d[0hex%08x]);\n", curblock, tmp, curvisited, memory, addr);
 		break;
       case 16:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=((memory_%d[0hex%08x] @ 0hex00) | (0hex00 @ memory_%d[0hex%08x])));\n", curblock, tmp, curvisited, memory, addr + 1, memory, addr);
 		break;
       case 32:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=((memory_%d[0hex%08x] @ 0hex000000) | (0hex00 @ memory_%d[0hex%08x] @ 0hex0000) | (0hex0000 @ memory_%d[0hex%08x] @ 0hex00) | (0hex000000 @ memory_%d[0hex%08x])));\n", curblock, tmp, curvisited, memory, addr + 3, memory, addr + 2, memory, addr + 1, memory, addr);
 		break;
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
       case 8:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=memory_%d[0hex%016lx]);\n", curblock, tmp, curvisited, memory, addr);
 		break;
       case 16:	l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=((memory_%d[0hex%016lx] @ 0hex00) | (0hex00 @ memory_%d[0hex%016lx])));\n", curblock, tmp, curvisited, memory, addr + 1, memory, addr);
@@ -1913,9 +1913,9 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
       newSB = False;
     }
 #endif
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
     size %= 3;
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
     size %= 4;
 #endif
     switch (op)
@@ -1924,12 +1924,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -1950,12 +1950,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -1990,12 +1990,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2016,12 +2016,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
  			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2056,12 +2056,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]=");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]=");
@@ -2082,12 +2082,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0] THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0] THEN ");
@@ -2122,12 +2122,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
 		      	translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]=");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]=");
@@ -2148,12 +2148,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2188,12 +2188,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2214,12 +2214,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2254,12 +2254,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2280,12 +2280,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2320,12 +2320,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2346,12 +2346,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2386,12 +2386,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2412,12 +2412,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2452,12 +2452,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2478,12 +2478,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2518,12 +2518,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate1(arg1, value1, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0],");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0],");
@@ -2544,12 +2544,12 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 			my_write(fdtrace, s, l);
 			my_write(fddanger, s, l);
       			translate2(arg2, value2, r);
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[31:0]) THEN ");
 			}
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 			if (size == 0)
 			{
 			  l = VG_(sprintf)(s, "[63:0]) THEN ");
@@ -2589,7 +2589,7 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
   }
 }
 
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 static
 void instrumentWrTmpLongBinop(IRStmt* clone, UInt oprt, UInt ltmp, IRExpr* arg1, IRExpr* arg2, UInt value1LowerBytes, UInt value1UpperBytes, UInt value2LowerBytes, UInt value2UpperBytes)
 
@@ -2599,7 +2599,7 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UInt oprt, UInt ltmp, IRExpr* arg1,
   {
     Addr64 value1 = (((Addr64) value1UpperBytes) << 32) ^ value1LowerBytes;
     Addr64 value2 = (((Addr64) value2UpperBytes) << 32) ^ value2LowerBytes;
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 static
 void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord value1, UWord value2)
 
@@ -3521,7 +3521,7 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
     Int l = 0;
     switch (size)
     {
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
       case 8:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := registers_%d[0hex%02x];\n", memory + 1, memory, addr, registers, offset);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3549,7 +3549,7 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
 		my_write(fddanger, ss, l);
                 memory += 4;
                 break;
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
       case 8:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%016lx] := registers_%d[0hex%02x];\n", memory + 1, memory, addr, registers, offset);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3623,7 +3623,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     Char s[256];
     Int l = 0;
     Addr addrs[256];
-    Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
+    //Int segs = VG_(am_get_client_segment_starts)(addrs, 256);
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
@@ -3654,7 +3654,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     Int l = 0;
     switch (curNode->temps[tmp].size)
     {
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
       case 8:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%08x] := t_%llx_%u_%u;\n", memory + 1, memory, addr, curblock, tmp, curvisited);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3682,7 +3682,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
 		my_write(fddanger, ss, l);
                 memory += 4;
                 break;
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
       case 8:	l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%016lx] := t_%llx_%u_%u;\n", memory + 1, memory, addr, curblock, tmp, curvisited);
                 my_write(fdtrace, ss, l);
 		my_write(fddanger, ss, l);
@@ -3818,9 +3818,9 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     {
       SysRes fd = VG_(open)("divergence.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
       divergence = True;
-      VG_(write)(fd.res, &divergence, sizeof(Bool));
-      VG_(write)(fd.res, &curdepth, sizeof(Int));
-      VG_(close)(fd.res);
+      VG_(write)(sr_Res(fd), &divergence, sizeof(Bool));
+      VG_(write)(sr_Res(fd), &curdepth, sizeof(Int));
+      VG_(close)(sr_Res(fd));
     }
     l = VG_(sprintf)(s, ");\n");
     my_write(fdtrace, s, l);
@@ -3829,8 +3829,8 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     {
       SysRes fd = VG_(open)("divergence.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
       divergence = False;
-      VG_(write)(fd.res, &divergence, sizeof(Bool));
-      VG_(close)(fd.res);
+      VG_(write)(sr_Res(fd), &divergence, sizeof(Bool));
+      VG_(close)(sr_Res(fd));
     }
     if (curdepth >= depth)
     {
@@ -3849,12 +3849,12 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
       if (dumpPrediction)
       {
         SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
-        VG_(write)(fd.res, actual, (depth + invertdepth) * sizeof(Bool));
-        VG_(close)(fd.res);
+        VG_(write)(sr_Res(fd), actual, (depth + invertdepth) * sizeof(Bool));
+        VG_(close)(sr_Res(fd));
       }
       if (replace)
       {
-        Int fd = VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+        Int fd = sr_Res(VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
         VG_(write)(fd, &socketsNum, 4);
         Int i;
         for (i = 0; i < socketsNum; i++)
@@ -3893,7 +3893,7 @@ void instrumentPut(IRStmt* clone, IRSB* sbOut)
   }
 }
 
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
 static
 IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 {
@@ -3929,7 +3929,7 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
     default:		break;
   }
 }
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
 static
 IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 {
@@ -4031,14 +4031,14 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
       			    (data->Iex.Binop.op == Iop_DivU64) ||
       			    (data->Iex.Binop.op == Iop_DivS64))
 			{
-#if defined(VGA_x86)
+#if defined(VGP_x86_linux)
                           ULong value1UpperBytes = (((Addr64) arg1) & ((Addr64) 0xffffffff00000000)) >> 32;
                           ULong value1LowerBytes = ((Addr64) arg1) & ((Addr64) 0x00000000ffffffff);
                           ULong value2UpperBytes = (((Addr64) arg2) & ((Addr64) 0xffffffff00000000)) >> 32;
                           ULong value2LowerBytes = ((Addr64) arg2) & ((Addr64) 0x00000000ffffffff);
                           di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_9(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(data->Iex.Binop.op), mkIRExpr_HWord(tmp), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1LowerBytes, value1UpperBytes, value2LowerBytes, value2UpperBytes));
                    	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
                           di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_5(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1, value2));
                    	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 #endif
@@ -4262,21 +4262,21 @@ static void tg_fini(Int exitcode)
     if (noInvertLimit)
     {
       curdepth --;
-      VG_(write) (fd.res, &curdepth, sizeof(Int));
+      VG_(write) (sr_Res(fd), &curdepth, sizeof(Int));
     }
-    VG_(write)(fd.res, actual, (depth + invertdepth) * sizeof(Bool));
-    VG_(close)(fd.res);
+    VG_(write)(sr_Res(fd), actual, (depth + invertdepth) * sizeof(Bool));
+    VG_(close)(sr_Res(fd));
   }
   if (checkPrediction && !divergence)
   {
     SysRes fd = VG_(open)("divergence.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
     divergence = False;
-    VG_(write)(fd.res, &divergence, sizeof(Bool));
-    VG_(close)(fd.res);
+    VG_(write)(sr_Res(fd), &divergence, sizeof(Bool));
+    VG_(close)(sr_Res(fd));
   }
   if (replace)
   {
-    Int fd = VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+    Int fd = sr_Res(VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
     VG_(write)(fd, &socketsNum, 4);
     Int i;
     for (i = 0; i < socketsNum; i++)
@@ -4333,7 +4333,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_STR_CLO(arg, "--func-filter-file", funcfilterfile))
   {
-    Int fd = VG_(open)(funcfilterfile, VKI_O_RDWR, 0).res;
+    Int fd = sr_Res(VG_(open)(funcfilterfile, VKI_O_RDWR, 0));
     parseFuncFilterFile(fd);
     enableFiltering = True;
     VG_(close)(fd);
@@ -4389,8 +4389,8 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_STR_CLO(arg, "--dump-file", dumpfile))
   {
-    fdfuncFilter = VG_(open) (dumpfile, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
-                              VKI_S_IRUSR | VKI_S_IWUSR | VKI_S_IRGRP | VKI_S_IWGRP | VKI_S_IROTH | VKI_S_IWOTH).res;
+    fdfuncFilter = sr_Res(VG_(open) (dumpfile, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
+                              VKI_S_IRUSR | VKI_S_IWUSR | VKI_S_IRGRP | VKI_S_IWGRP | VKI_S_IROTH | VKI_S_IWOTH));
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
@@ -4407,7 +4407,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_BOOL_CLO(arg, "--replace",  replace))
   {
-    Int fd = VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+    Int fd = sr_Res(VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
     VG_(read)(fd, &socketsNum, 4);
     socketsBoundary = socketsNum;
     if (socketsNum > 0)
@@ -4435,8 +4435,8 @@ static Bool tg_process_cmd_line_option(Char* arg)
       checkPrediction = True;
       SysRes fd = VG_(open)("prediction.log", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
       prediction = VG_(malloc)("prediction", depth * sizeof(Bool));
-      VG_(read)(fd.res, prediction, depth * sizeof(Bool));
-      VG_(close)(fd.res);
+      VG_(read)(sr_Res(fd), prediction, depth * sizeof(Bool));
+      VG_(close)(sr_Res(fd));
     }
     else
     {
@@ -4517,12 +4517,12 @@ static void tg_pre_clo_init(void)
   
   diFunctionName = VG_(malloc) ("diFunctionName", 1024 * sizeof(Char));
       
-  fdtrace = VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
-  fddanger = VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
-#if defined(VGA_x86)
+  fdtrace = sr_Res(VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+  fddanger = sr_Res(VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+#if defined(VGP_x86_linux)
   my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
   my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#elif defined(VGA_amd64)
+#elif defined(VGP_amd64_linux)
   my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
   my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
 #endif

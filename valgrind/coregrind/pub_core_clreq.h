@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -47,8 +47,11 @@ typedef
       /* Get the tool's malloc-wrapping functions */
       VG_USERREQ__GET_MALLOCFUNCS   = 0x3030,
 
-      /* Internal equivalent of VALGRIND_PRINTF . */
-      VG_USERREQ__INTERNAL_PRINTF   = 0x3103,
+      /* Internal equivalent of VALGRIND_PRINTF_VALIST_BY_REF . */
+      VG_USERREQ__INTERNAL_PRINTF_VALIST_BY_REF = 0x3103,
+
+      /* Add a target for an indirect function redirection. */
+      VG_USERREQ__ADD_IFUNC_TARGET  = 0x3104,
 
    } Vg_InternalClientRequest;
 
@@ -56,17 +59,16 @@ typedef
 // sim'd CPU.  Must be a function rather than macros so that va_list can
 // be used.
 
-int VALGRIND_INTERNAL_PRINTF(char *format, ...);
-__attribute__((format(__printf__, 1, 2)))
-__attribute__((weak))
-int VALGRIND_INTERNAL_PRINTF(char *format, ...)
+static int VALGRIND_INTERNAL_PRINTF(const char *format, ...)
+   __attribute__((format(__printf__, 1, 2), __unused__));
+static int VALGRIND_INTERNAL_PRINTF(const char *format, ...)
 {
    unsigned long _qzz_res = 0;
    va_list vargs;
    va_start(vargs, format);
    VALGRIND_DO_CLIENT_REQUEST(
-      _qzz_res, 0, VG_USERREQ__INTERNAL_PRINTF,
-      (unsigned long)format, (unsigned long)vargs, 0, 0, 0
+      _qzz_res, 0, VG_USERREQ__INTERNAL_PRINTF_VALIST_BY_REF,
+      (unsigned long)format, (unsigned long)&vargs, 0, 0, 0
    );
    va_end(vargs);
    return _qzz_res;

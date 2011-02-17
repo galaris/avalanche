@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -28,6 +28,8 @@
    The GNU General Public License is contained in the file COPYING.
 */
 
+#if defined(VGO_linux)
+
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 
@@ -43,9 +45,6 @@
 #include "pub_core_ume.h"           // self
 
 #include "priv_ume.h"
-
-
-#if defined(HAVE_ELF)
 
 /* --- !!! --- EXTERNAL HEADERS start --- !!! --- */
 #define _GNU_SOURCE
@@ -72,12 +71,12 @@ struct elfinfo
 
 static void check_mmap(SysRes res, Addr base, SizeT len)
 {
-   if (res.isError) {
+   if (sr_isError(res)) {
       VG_(printf)("valgrind: mmap(0x%llx, %lld) failed in UME "
                   "with error %lu (%s).\n", 
                   (ULong)base, (Long)len, 
-                  res.err, VG_(strerror)(res.err) );
-      if (res.err == VKI_EINVAL) {
+                  sr_Err(res), VG_(strerror)(sr_Err(res)) );
+      if (sr_Err(res) == VKI_EINVAL) {
          VG_(printf)("valgrind: this can be caused by executables with "
                      "very large text, data or bss segments.\n");
       }
@@ -100,9 +99,9 @@ struct elfinfo *readelf(Int fd, const char *filename)
    e->fd = fd;
 
    sres = VG_(pread)(fd, &e->e, sizeof(e->e), 0);
-   if (sres.isError || sres.res != sizeof(e->e)) {
+   if (sr_isError(sres) || sr_Res(sres) != sizeof(e->e)) {
       VG_(printf)("valgrind: %s: can't read ELF header: %s\n", 
-                  filename, VG_(strerror)(sres.err));
+                  filename, VG_(strerror)(sr_Err(sres)));
       goto bad;
    }
 
@@ -140,9 +139,9 @@ struct elfinfo *readelf(Int fd, const char *filename)
    vg_assert(e->p);
 
    sres = VG_(pread)(fd, e->p, phsz, e->e.e_phoff);
-   if (sres.isError || sres.res != phsz) {
+   if (sr_isError(sres) || sr_Res(sres) != phsz) {
       VG_(printf)("valgrind: can't read phdr: %s\n", 
-                  VG_(strerror)(sres.err));
+                  VG_(strerror)(sr_Err(sres)));
       VG_(free)(e->p);
       goto bad;
    }
@@ -373,11 +372,11 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
          buf[ph->p_filesz] = '\0';
 
          sres = VG_(open)(buf, VKI_O_RDONLY, 0);
-         if (sres.isError) {
+         if (sr_isError(sres)) {
             VG_(printf)("valgrind: m_ume.c: can't open interpreter\n");
             VG_(exit)(1);
          }
-         intfd = sres.res;
+         intfd = sr_Res(sres);
 
          interp = readelf(intfd, buf);
          if (interp == NULL) {
@@ -512,7 +511,7 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
    return 0;
 }
 
-#endif /* defined(HAVE_ELF) */
+#endif // defined(VGO_linux)
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

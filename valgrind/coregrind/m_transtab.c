@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -41,6 +41,13 @@
 #include "pub_core_aspacemgr.h"
 #include "pub_core_mallocfree.h" // VG_(out_of_memory_NORETURN)
 
+// JRS FIXME get rid of this somehow
+#if defined(VGP_arm_linux)
+# include "pub_core_vkiscnums.h" // __ARM_NR_cacheflush
+# include "pub_core_syscall.h"   // VG_(do_syscallN)
+#endif
+
+
 /* #define DEBUG_TRANSTAB */
 
 
@@ -64,7 +71,7 @@
 /* Because each sector contains a hash table of TTEntries, we need to
    specify the maximum allowable loading, after which the sector is
    deemed full. */
-#define SECTOR_TT_LIMIT_PERCENT 80
+#define SECTOR_TT_LIMIT_PERCENT 65
 
 /* The sector is deemed full when this many entries are in it. */
 #define N_TTES_PER_SECTOR_USABLE \
@@ -198,6 +205,13 @@ static Int    youngest_sector = -1;
 /* The number of ULongs in each TCEntry area.  This is computed once
    at startup and does not change. */
 static Int    tc_sector_szQ;
+
+
+/* A list of sector numbers, in the order which they should be
+   searched to find translations.  This is an optimisation to be used
+   when searching for translations and should not affect
+   correctness.  -1 denotes "no entry". */
+static Int sector_search_order[N_SECTORS];
 
 
 /* Fast helper for the TC.  A direct-mapped cache which holds a set of
@@ -563,6 +577,44 @@ static Bool sanity_check_eclasses_in_sector ( Sector* sec )
 static Bool sanity_check_redir_tt_tc ( void );
 static Bool sanity_check_fastcache ( void );
 
+static Bool sanity_check_sector_search_order ( void )
+{
+   Int i, j, nListed;
+   /* assert the array is the right size */
+   vg_assert(N_SECTORS == (sizeof(sector_search_order) 
+                           / sizeof(sector_search_order[0])));
+   /* Check it's of the form  valid_sector_numbers ++ [-1, -1, ..] */
+   for (i = 0; i < N_SECTORS; i++) {
+      if (sector_search_order[i] < 0 || sector_search_order[i] >= N_SECTORS)
+         break;
+   }
+   nListed = i;
+   for (/* */; i < N_SECTORS; i++) {
+      if (sector_search_order[i] != -1)
+         break;
+   }
+   if (i != N_SECTORS)
+      return False;
+   /* Check each sector number only appears once */
+   for (i = 0; i < N_SECTORS; i++) {
+      if (sector_search_order[i] == -1)
+         continue;
+      for (j = i+1; j < N_SECTORS; j++) {
+         if (sector_search_order[j] == sector_search_order[i])
+            return False;
+      }
+   }
+   /* Check that the number of listed sectors equals the number
+      in use, by counting nListed back down. */
+   for (i = 0; i < N_SECTORS; i++) {
+      if (sectors[i].tc != NULL)
+         nListed--;
+   }
+   if (nListed != 0)
+      return False;
+   return True;
+}
+
 static Bool sanity_check_all_sectors ( void )
 {
    Int     sno;
@@ -580,8 +632,11 @@ static Bool sanity_check_all_sectors ( void )
       return False;
    if ( !sanity_check_fastcache() )
       return False;
+   if ( !sanity_check_sector_search_order() )
+      return False;
    return True;
 }
+
 
 
 /*-------------------------------------------------------------*/
@@ -696,6 +751,9 @@ static void initialiseSector ( Int sno )
    Sector* sec;
    vg_assert(isValidSector(sno));
 
+   { Bool sane = sanity_check_sector_search_order();
+     vg_assert(sane);
+   }
    sec = &sectors[sno];
 
    if (sec->tc == NULL) {
@@ -714,29 +772,37 @@ static void initialiseSector ( Int sno )
       VG_(debugLog)(1,"transtab", "allocate sector %d\n", sno);
 
       sres = VG_(am_mmap_anon_float_valgrind)( 8 * tc_sector_szQ );
-      if (sres.isError) {
+      if (sr_isError(sres)) {
          VG_(out_of_memory_NORETURN)("initialiseSector(TC)", 
                                      8 * tc_sector_szQ );
 	 /*NOTREACHED*/
       }
-      sec->tc = (ULong*)sres.res;
+      sec->tc = (ULong*)(AddrH)sr_Res(sres);
 
       sres = VG_(am_mmap_anon_float_valgrind)
                 ( N_TTES_PER_SECTOR * sizeof(TTEntry) );
-      if (sres.isError) {
+      if (sr_isError(sres)) {
          VG_(out_of_memory_NORETURN)("initialiseSector(TT)", 
                                      N_TTES_PER_SECTOR * sizeof(TTEntry) );
 	 /*NOTREACHED*/
       }
-      sec->tt = (TTEntry*)sres.res;
+      sec->tt = (TTEntry*)(AddrH)sr_Res(sres);
 
       for (i = 0; i < N_TTES_PER_SECTOR; i++) {
          sec->tt[i].status   = Empty;
          sec->tt[i].n_tte2ec = 0;
       }
 
+      /* Add an entry in the sector_search_order */
+      for (i = 0; i < N_SECTORS; i++) {
+         if (sector_search_order[i] == -1)
+            break;
+      }
+      vg_assert(i >= 0 && i < N_SECTORS);
+      sector_search_order[i] = sno;
+
       if (VG_(clo_verbosity) > 2)
-         VG_(message)(Vg_DebugMsg, "TT/TC: initialise sector %d", sno);
+         VG_(message)(Vg_DebugMsg, "TT/TC: initialise sector %d\n", sno);
 
    } else {
 
@@ -779,14 +845,26 @@ static void initialiseSector ( Int sno )
          }
       }
 
+      /* Sanity check: ensure it is already in
+         sector_search_order[]. */
+      for (i = 0; i < N_SECTORS; i++) {
+         if (sector_search_order[i] == sno)
+            break;
+      }
+      vg_assert(i >= 0 && i < N_SECTORS);
+
       if (VG_(clo_verbosity) > 2)
-         VG_(message)(Vg_DebugMsg, "TT/TC: recycle sector %d", sno);
+         VG_(message)(Vg_DebugMsg, "TT/TC: recycle sector %d\n", sno);
    }
 
    sec->tc_next = sec->tc;
    sec->tt_n_inuse = 0;
 
    invalidateFastCache();
+
+   { Bool sane = sanity_check_sector_search_order();
+     vg_assert(sane);
+   }
 }
 
 static void invalidate_icache ( void *ptr, Int nbytes )
@@ -808,18 +886,26 @@ static void invalidate_icache ( void *ptr, Int nbytes )
    vg_assert(cls == 32 || cls == 64 || cls == 128);
 
    startaddr &= ~(cls - 1);
-   for (addr = startaddr; addr < endaddr; addr += cls)
-      asm volatile("dcbst 0,%0" : : "r" (addr));
-   asm volatile("sync");
-   for (addr = startaddr; addr < endaddr; addr += cls)
-      asm volatile("icbi 0,%0" : : "r" (addr));
-   asm volatile("sync; isync");
+   for (addr = startaddr; addr < endaddr; addr += cls) {
+      __asm__ __volatile__("dcbst 0,%0" : : "r" (addr));
+   }
+   __asm__ __volatile__("sync");
+   for (addr = startaddr; addr < endaddr; addr += cls) {
+      __asm__ __volatile__("icbi 0,%0" : : "r" (addr));
+   }
+   __asm__ __volatile__("sync; isync");
 
 #  elif defined(VGA_x86)
    /* no need to do anything, hardware provides coherence */
 
 #  elif defined(VGA_amd64)
    /* no need to do anything, hardware provides coherence */
+
+#  elif defined(VGP_arm_linux)
+   /* ARM cache flushes are privileged, so we must defer to the kernel. */
+   Addr startaddr = (Addr) ptr;
+   Addr endaddr   = startaddr + nbytes;
+   VG_(do_syscall2)(__NR_ARM_cacheflush, startaddr, endaddr);
 
 #  else
 #    error "Unknown ARCH"
@@ -971,14 +1057,13 @@ Bool VG_(search_transtab) ( /*OUT*/AddrH* result,
    kstart = HASH_TT(guest_addr);
    vg_assert(kstart >= 0 && kstart < N_TTES_PER_SECTOR);
 
-   /* Search in all the sectors.  Although the order should not matter,
-      it might be most efficient to search in the order youngest to
-      oldest. */
-   sno = youngest_sector;
+   /* Search in all the sectors,using sector_search_order[] as a
+      heuristic guide as to what order to visit the sectors. */
    for (i = 0; i < N_SECTORS; i++) {
 
-      if (sectors[sno].tc == NULL)
-         goto notfound; /* sector not in use. */
+      sno = sector_search_order[i];
+      if (UNLIKELY(sno == -1))
+         return False; /* run out of sectors to search */
 
       k = kstart;
       for (j = 0; j < N_TTES_PER_SECTOR; j++) {
@@ -992,6 +1077,14 @@ Bool VG_(search_transtab) ( /*OUT*/AddrH* result,
                               &sectors[sno].tt[k].count );
             if (result)
                *result = (AddrH)sectors[sno].tt[k].tcptr;
+            /* pull this one one step closer to the front.  For large
+               apps this more or less halves the number of required
+               probes. */
+            if (i > 0) {
+               Int tmp = sector_search_order[i-1];
+               sector_search_order[i-1] = sector_search_order[i];
+               sector_search_order[i] = tmp;
+            }
             return True;
          }
          if (sectors[sno].tt[k].status == Empty)
@@ -1004,10 +1097,6 @@ Bool VG_(search_transtab) ( /*OUT*/AddrH* result,
       /* If we fall off the end, all entries are InUse and not
          matching, or Deleted.  In any case we did not find it in this
          sector. */
-
-     notfound:
-      /* move to the next oldest sector */
-      sno = sno==0 ? (N_SECTORS-1) : (sno-1);
    }
 
    /* Not found in any sector. */
@@ -1313,12 +1402,14 @@ static void init_unredir_tt_tc ( void )
 {
    Int i;
    if (unredir_tc == NULL) {
-      SysRes sres = VG_(am_mmap_anon_float_valgrind)( N_UNREDIR_TT * UNREDIR_SZB );
-      if (sres.isError) {
-         VG_(out_of_memory_NORETURN)("init_unredir_tt_tc", N_UNREDIR_TT * UNREDIR_SZB);
+      SysRes sres = VG_(am_mmap_anon_float_valgrind)
+                       ( N_UNREDIR_TT * UNREDIR_SZB );
+      if (sr_isError(sres)) {
+         VG_(out_of_memory_NORETURN)("init_unredir_tt_tc",
+                                     N_UNREDIR_TT * UNREDIR_SZB);
          /*NOTREACHED*/
       }
-      unredir_tc = (ULong *)sres.res;
+      unredir_tc = (ULong *)(AddrH)sr_Res(sres);
    }
    unredir_tc_used = 0;
    for (i = 0; i < N_UNREDIR_TT; i++)
@@ -1457,7 +1548,7 @@ void VG_(init_tt_tc) ( void )
    if (VG_(clo_verbosity) > 2)
       VG_(message)(Vg_DebugMsg, 
                    "TT/TC: VG_(init_tt_tc) "
-                   "(startup of code management)");
+                   "(startup of code management)\n");
 
    /* Figure out how big each tc area should be.  */
    avg_codeszQ   = (VG_(details).avg_translation_sizeB + 7) / 8;
@@ -1481,6 +1572,10 @@ void VG_(init_tt_tc) ( void )
       }
    }
 
+   /* Initialise the sector_search_order hint table. */
+   for (i = 0; i < N_SECTORS; i++)
+      sector_search_order[i] = -1;
+
    /* Initialise the fast caches.  If not profiling (the usual case),
       we have to explicitly invalidate the fastN cache as
       invalidateFastCache() won't do that for us. */
@@ -1493,11 +1588,11 @@ void VG_(init_tt_tc) ( void )
 
    if (VG_(clo_verbosity) > 2) {
       VG_(message)(Vg_DebugMsg,
-         "TT/TC: cache: %d sectors of %d bytes each = %d total", 
+         "TT/TC: cache: %d sectors of %d bytes each = %d total\n", 
           N_SECTORS, 8 * tc_sector_szQ,
           N_SECTORS * 8 * tc_sector_szQ );
       VG_(message)(Vg_DebugMsg,
-         "TT/TC: table: %d total entries, max occupancy %d (%d%%)",
+         "TT/TC: table: %d total entries, max occupancy %d (%d%%)\n",
          N_SECTORS * N_TTES_PER_SECTOR,
          N_SECTORS * N_TTES_PER_SECTOR_USABLE, 
          SECTOR_TT_LIMIT_PERCENT );
@@ -1532,23 +1627,23 @@ UInt VG_(get_bbs_translated) ( void )
 void VG_(print_tt_tc_stats) ( void )
 {
    VG_(message)(Vg_DebugMsg,
-      "    tt/tc: %'llu tt lookups requiring %'llu probes",
+      "    tt/tc: %'llu tt lookups requiring %'llu probes\n",
       n_full_lookups, n_lookup_probes );
    VG_(message)(Vg_DebugMsg,
-      "    tt/tc: %'llu fast-cache updates, %'llu flushes",
+      "    tt/tc: %'llu fast-cache updates, %'llu flushes\n",
       n_fast_updates, n_fast_flushes );
 
    VG_(message)(Vg_DebugMsg,
                 " transtab: new        %'lld "
-                "(%'llu -> %'llu; ratio %'llu:10) [%'llu scs]",
+                "(%'llu -> %'llu; ratio %'llu:10) [%'llu scs]\n",
                 n_in_count, n_in_osize, n_in_tsize,
                 safe_idiv(10*n_in_tsize, n_in_osize),
                 n_in_sc_count);
    VG_(message)(Vg_DebugMsg,
-                " transtab: dumped     %'llu (%'llu -> ?" "?)",
+                " transtab: dumped     %'llu (%'llu -> ?" "?)\n",
                 n_dump_count, n_dump_osize );
    VG_(message)(Vg_DebugMsg,
-                " transtab: discarded  %'llu (%'llu -> ?" "?)",
+                " transtab: discarded  %'llu (%'llu -> ?" "?)\n",
                 n_disc_count, n_disc_osize );
 
    if (0) {

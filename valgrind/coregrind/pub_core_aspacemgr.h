@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -120,7 +120,6 @@ extern void VG_(am_show_nsegments) ( Int logLevel, HChar* who );
 extern Bool VG_(am_do_sync_check) ( const HChar* fn, 
                                     const HChar* file, Int line );
 
-
 //--------------------------------------------------------------
 // Functions pertaining to the central query-notify mechanism
 // used to handle mmap/munmap/mprotect resulting from client
@@ -190,7 +189,7 @@ extern Bool VG_(am_notify_munmap)( Addr start, SizeT len );
    USE IT UNLESS YOU UNDERSTAND the request-notify model used by
    aspacem.  In short, DO NOT USE THIS FUNCTION. */
 extern SysRes VG_(am_do_mmap_NO_NOTIFY)
-   ( Addr start, SizeT length, UInt prot, UInt flags, UInt fd, Off64T offset);
+   ( Addr start, SizeT length, UInt prot, UInt flags, Int fd, Off64T offset);
 
 
 //--------------------------------------------------------------
@@ -250,6 +249,8 @@ extern Bool VG_(am_aix5_sbrk_allowed);
    segment array accordingly. */
 extern SysRes VG_(am_mmap_file_fixed_client)
    ( Addr start, SizeT length, UInt prot, Int fd, Off64T offset );
+extern SysRes VG_(am_mmap_named_file_fixed_client)
+   ( Addr start, SizeT length, UInt prot, Int fd, Off64T offset, const HChar *name );
 
 /* Map anonymously at a fixed address for the client, and update
    the segment array accordingly. */
@@ -372,10 +373,10 @@ extern Bool VG_(am_relocate_nooverlap_client)( /*OUT*/Bool* need_discard,
 
 #if defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
 # define VG_STACK_GUARD_SZB  65536  // 1 or 16 pages
-# define VG_STACK_ACTIVE_SZB 131072 // 2 or 32 pages
+# define VG_STACK_ACTIVE_SZB (4096 * 256) // 1Mb
 #else
 # define VG_STACK_GUARD_SZB  8192   // 2 pages
-# define VG_STACK_ACTIVE_SZB 65536  // 16 pages
+# define VG_STACK_ACTIVE_SZB (4096 * 256) // 1Mb
 #endif
 
 typedef
@@ -395,11 +396,27 @@ typedef
 
 extern VgStack* VG_(am_alloc_VgStack)( /*OUT*/Addr* initial_sp );
 
-/* Figure out how many bytes of the stack's active area have not
-   been used.  Used for estimating if we are close to overflowing it. */
+/* Figure out how many bytes of the stack's active area have not been
+   used.  Used for estimating if we are close to overflowing it.  If
+   the free area is larger than 'limit', just return 'limit'. */
+extern SizeT VG_(am_get_VgStack_unused_szB)( VgStack* stack, SizeT limit ); 
 
-extern Int VG_(am_get_VgStack_unused_szB)( VgStack* stack ); 
+// DDD: this is ugly
+#if defined(VGO_darwin)
+typedef 
+   struct {
+      Bool   is_added;  // Added or removed seg?
+      Addr   start;
+      SizeT  end;
+      UInt   prot;      // Not used for removed segs.
+      Off64T offset;    // Not used for removed segs.
+   }
+   ChangedSeg;
 
+extern Bool VG_(get_changed_segments)(
+      const HChar* when, const HChar* where, /*OUT*/ChangedSeg* css,
+      Int css_size, /*OUT*/Int* css_used);
+#endif
 
 #endif   // __PUB_CORE_ASPACEMGR_H
 

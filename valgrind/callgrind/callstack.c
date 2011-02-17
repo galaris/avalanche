@@ -6,7 +6,7 @@
 /*
    This file is part of Callgrind, a Valgrind tool for call tracing.
 
-   Copyright (C) 2002-2008, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
+   Copyright (C) 2002-2010, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -124,7 +124,7 @@ static void function_entered(fn_node* fn)
     CLG_(clo).verbose = fn->verbosity;
     fn->verbosity = old;
     VG_(message)(Vg_DebugMsg, 
-		 "Entering %s: Verbosity set to %d",
+		 "Entering %s: Verbosity set to %d\n",
 		 fn->name, CLG_(clo).verbose);
   }
 #endif		
@@ -169,7 +169,7 @@ static void function_left(fn_node* fn)
     CLG_(clo).verbose = fn->verbosity;
     fn->verbosity = old;
     VG_(message)(Vg_DebugMsg, 
-		 "Leaving %s: Verbosity set back to %d",
+		 "Leaving %s: Verbosity set back to %d\n",
 		 fn->name, CLG_(clo).verbose);
   }
 #endif		

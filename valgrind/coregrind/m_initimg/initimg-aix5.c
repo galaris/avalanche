@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2006-2008 OpenWorks LLP
+   Copyright (C) 2006-2010 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -33,6 +33,8 @@
    used to endorse or promote products derived from this software
    without prior written permission.
 */
+
+#if defined(VGO_aix5)
 
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
@@ -540,6 +542,8 @@ static void diagnose_load_failure ( void )
             of the symbol was not found.
 */
 
+#endif // defined(VGO_aix5)
+
 /*--------------------------------------------------------------------*/
-/*---                                               initimg-aix5.c ---*/
+/*---                                                              ---*/
 /*--------------------------------------------------------------------*/

@@ -6,8 +6,29 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <setjmp.h>
-#include <sys/mman.h>
+#include "tests/sys_mman.h"
 #include <unistd.h>
+
+/* Division by zero triggers a SIGFPE on x86 and x86_64,
+   but not on the PowerPC architecture.
+
+   On ARM-Linux, we do get a SIGFPE, but not from the faulting of a
+   division instruction (there isn't any such thing) but rather
+   because the process exits via tgkill, sending itself a SIGFPE.
+   Hence we get a SIGFPE but the SI_CODE is different from that on
+   x86/amd64-linux.
+ */
+#if defined(__powerpc__)
+#  define DIVISION_BY_ZERO_TRIGGERS_FPE 0
+#  define DIVISION_BY_ZERO_SI_CODE      SI_TKILL
+#elif defined(__arm__)
+#  define DIVISION_BY_ZERO_TRIGGERS_FPE 1
+#  define DIVISION_BY_ZERO_SI_CODE      SI_TKILL
+#else
+#  define DIVISION_BY_ZERO_TRIGGERS_FPE 1
+#  define DIVISION_BY_ZERO_SI_CODE      FPE_INTDIV
+#endif
+
 
 struct test {
 	void (*test)(void);
@@ -93,6 +114,9 @@ static void test4()
 	volatile int v = 44/zero();
 
 	(void)v;
+#if DIVISION_BY_ZERO_TRIGGERS_FPE == 0
+	raise(SIGFPE);
+#endif
 }
 
 int main()
@@ -125,7 +149,7 @@ int main()
 			T(1, SIGSEGV,	SEGV_MAPERR,	BADADDR),
 			T(2, SIGSEGV,	SEGV_ACCERR,	mapping),
 			T(3, SIGBUS,	BUS_ADRERR,	&mapping[FILESIZE+10]),
-			T(4, SIGFPE,	FPE_INTDIV,	0),
+			T(4, SIGFPE,    DIVISION_BY_ZERO_SI_CODE, 0),
 #undef T
 		};
 

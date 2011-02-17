@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -32,6 +32,16 @@
    and so it doesn't have to conform to Valgrind's arcane rules on
    no-glibc-usage etc. */
 
+/* Include valgrind headers before system headers to avoid problems
+   with the system headers #defining things which are used as names
+   of structure members in vki headers. */
+
+#include "pub_core_debuglog.h"
+#include "pub_core_vki.h"       // Avoids warnings from
+                                // pub_core_libcfile.h
+#include "pub_core_libcproc.h"  // For VALGRIND_LIB, VALGRIND_LAUNCHER
+#include "pub_core_ume.h"
+
 #include <assert.h>
 #include <ctype.h>
 #include <elf.h>
@@ -44,12 +54,6 @@
 #include <sys/mman.h>
 #include <sys/user.h>
 #include <unistd.h>
-
-#include "pub_core_debuglog.h"
-#include "pub_core_vki.h"       // Avoids warnings from
-                                // pub_core_libcfile.h
-#include "pub_core_libcproc.h"  // For VALGRIND_LIB, VALGRIND_LAUNCHER
-#include "pub_core_ume.h"
 
 
 
@@ -112,71 +116,102 @@ static const char *find_client(const char *clientname)
 static const char *select_platform(const char *clientname)
 {
    int fd;
-   unsigned char *header;
+   uint8_t header[4096];
+   ssize_t n_bytes;
    const char *platform = NULL;
-   long pagesize = sysconf(_SC_PAGESIZE);
+
+   VG_(debugLog)(2, "launcher", "selecting platform for '%s'\n", clientname);
 
    if (strchr(clientname, '/') == NULL)
       clientname = find_client(clientname);
+
+   VG_(debugLog)(2, "launcher", "selecting platform for '%s'\n", clientname);
 
    if ((fd = open(clientname, O_RDONLY)) < 0)
       return NULL;
    //   barf("open(%s): %s", clientname, strerror(errno));
 
-   if ((header = mmap(NULL, pagesize, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0)) == MAP_FAILED)
-      return NULL;
-   //   barf("mmap(%s): %s", clientname, strerror(errno));
+   VG_(debugLog)(2, "launcher", "opened '%s'\n", clientname);
 
+   n_bytes = read(fd, header, sizeof(header));
    close(fd);
+   if (n_bytes < 2) {
+      return NULL;
+   }
+
+   VG_(debugLog)(2, "launcher", "read %ld bytes from '%s'\n",
+                    (long int)n_bytes, clientname);
 
    if (header[0] == '#' && header[1] == '!') {
+      int i = 2;
       char *interp = (char *)header + 2;
-      char *interpend;
 
-      while (*interp == ' ' || *interp == '\t')
-         interp++;
+      // Skip whitespace.
+      while (1) {
+         if (i == n_bytes) return NULL;
+         if (' ' != header[i] && '\t' != header[i]) break;
+         i++;
+      }
 
-      for (interpend = interp; !isspace(*interpend); interpend++)
-         ;
-
-      *interpend = '\0';
+      // Get the interpreter name.
+      interp = &header[i];
+      while (1) {
+         if (i == n_bytes) break;
+         if (isspace(header[i])) break;
+         i++;
+      }
+      if (i == n_bytes) return NULL;
+      header[i] = '\0';
 
       platform = select_platform(interp);
-   } else if (memcmp(header, ELFMAG, SELFMAG) == 0) {
 
-      if (header[EI_CLASS] == ELFCLASS32) {
+   } else if (n_bytes >= SELFMAG && memcmp(header, ELFMAG, SELFMAG) == 0) {
+
+      if (n_bytes >= sizeof(Elf32_Ehdr) && header[EI_CLASS] == ELFCLASS32) {
          const Elf32_Ehdr *ehdr = (Elf32_Ehdr *)header;
 
          if (header[EI_DATA] == ELFDATA2LSB) {
             if (ehdr->e_machine == EM_386 &&
-                ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV) {
+                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "x86-linux";
+            }
+            else 
+            if (ehdr->e_machine == EM_ARM &&
+                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+               platform = "arm-linux";
             }
          }
          else if (header[EI_DATA] == ELFDATA2MSB) {
             if (ehdr->e_machine == EM_PPC &&
-                ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV) {
+                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "ppc32-linux";
             }
          }
-      } else if (header[EI_CLASS] == ELFCLASS64) {
+
+      } else if (n_bytes >= sizeof(Elf64_Ehdr) && header[EI_CLASS] == ELFCLASS64) {
          const Elf64_Ehdr *ehdr = (Elf64_Ehdr *)header;
 
          if (header[EI_DATA] == ELFDATA2LSB) {
             if (ehdr->e_machine == EM_X86_64 &&
-                ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV) {
+                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "amd64-linux";
             }
          } else if (header[EI_DATA] == ELFDATA2MSB) {
             if (ehdr->e_machine == EM_PPC64 &&
-                ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV) {
+                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "ppc64-linux";
             }
          }
       }
    }
 
-   munmap(header, pagesize);
+   VG_(debugLog)(2, "launcher", "selected platform '%s'\n",
+                 platform ? platform : "unknown");
 
    return platform;
 }
@@ -242,7 +277,8 @@ int main(int argc, char** argv, char** envp)
    if ((0==strcmp(VG_PLATFORM,"x86-linux"))   ||
        (0==strcmp(VG_PLATFORM,"amd64-linux")) ||
        (0==strcmp(VG_PLATFORM,"ppc32-linux")) ||
-       (0==strcmp(VG_PLATFORM,"ppc64-linux")))
+       (0==strcmp(VG_PLATFORM,"ppc64-linux")) ||
+       (0==strcmp(VG_PLATFORM,"arm-linux")))
       default_platform = VG_PLATFORM;
    else
       barf("Unknown VG_PLATFORM '%s'", VG_PLATFORM);
@@ -265,7 +301,7 @@ int main(int argc, char** argv, char** envp)
    
    /* Figure out the name of this executable (viz, the launcher), so
       we can tell stage2.  stage2 will use the name for recursive
-      invokations of valgrind on child processes. */
+      invocations of valgrind on child processes. */
    memset(launcher_name, 0, PATH_MAX+1);
    r = readlink("/proc/self/exe", launcher_name, PATH_MAX);
    if (r == -1) {
@@ -305,7 +341,7 @@ int main(int argc, char** argv, char** envp)
    if (cp != NULL)
       valgrind_lib = cp;
 
-   /* Build the stage2 invokation, and execve it.  Bye! */
+   /* Build the stage2 invocation, and execve it.  Bye! */
    toolfile = malloc(strlen(valgrind_lib) + strlen(toolname) + strlen(platform) + 3);
    if (toolfile == NULL)
       barf("malloc of toolfile failed.");

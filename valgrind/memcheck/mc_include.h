@@ -8,7 +8,7 @@
    This file is part of MemCheck, a heavyweight Valgrind tool for
    detecting memory errors.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -55,14 +55,15 @@ typedef
    }
    MC_AllocKind;
    
-/* Nb: first two fields must match core's VgHashNode. */
+/* This describes a heap block. Nb: first two fields must match core's
+ * VgHashNode. */
 typedef
    struct _MC_Chunk {
       struct _MC_Chunk* next;
-      Addr         data;            // ptr to actual block
-      SizeT        szB : (sizeof(UWord)*8)-2; // size requested; 30 or 62 bits
-      MC_AllocKind allockind : 2;   // which wrapper did the allocation
-      ExeContext*  where;           // where it was allocated
+      Addr         data;            // Address of the actual block.
+      SizeT        szB : (sizeof(SizeT)*8)-2; // Size requested; 30 or 62 bits.
+      MC_AllocKind allockind : 2;   // Which operation did the allocation.
+      ExeContext*  where;           // Where it was allocated.
    }
    MC_Chunk;
 
@@ -97,7 +98,10 @@ Bool MC_(mempool_exists)  ( Addr pool );
 
 MC_Chunk* MC_(get_freed_list_head)( void );
 
-/* For tracking malloc'd blocks */
+/* For tracking malloc'd blocks.  Nb: it's quite important that it's a
+   VgHashTable, because VgHashTable allows duplicate keys without complaint.
+   This can occur if a user marks a malloc() block as also a custom block with
+   MALLOCLIKE_BLOCK. */
 extern VgHashTable MC_(malloc_list);
 
 /* For tracking memory pools. */
@@ -227,18 +231,17 @@ HChar* MC_(event_ctr_name)[N_PROF_EVENTS];
 /*--- Leak checking                                        ---*/
 /*------------------------------------------------------------*/
 
-/* A block is either 
-   -- Proper-ly reached; a pointer to its start has been found
-   -- Interior-ly reached; only an interior pointer to it has been found
-   -- Unreached; so far, no pointers to any part of it have been found. 
-   -- IndirectLeak; leaked, but referred to by another leaked block
-*/
 typedef 
    enum { 
-      Unreached    =0, 
-      IndirectLeak =1,
-      Interior     =2, 
-      Proper       =3
+      // Nb: the order is important -- it dictates the order of loss records
+      // of equal sizes.
+      Reachable    =0,  // Definitely reachable from root-set.
+      Possible     =1,  // Possibly reachable from root-set;  involves at
+                        //   least one interior-pointer along the way.
+      IndirectLeak =2,  // Leaked, but reachable from another leaked block
+                        //   (be it Unreached or IndirectLeak).
+      Unreached    =3,  // Not reached, ie. leaked. 
+                        //   (At best, only reachable from itself via a cycle.)
   }
   Reachedness;
 
@@ -249,6 +252,13 @@ extern SizeT MC_(bytes_dubious);
 extern SizeT MC_(bytes_reachable);
 extern SizeT MC_(bytes_suppressed);
 
+/* For VALGRIND_COUNT_LEAK_BLOCKS client request */
+extern SizeT MC_(blocks_leaked);
+extern SizeT MC_(blocks_indirect);
+extern SizeT MC_(blocks_dubious);
+extern SizeT MC_(blocks_reachable);
+extern SizeT MC_(blocks_suppressed);
+
 typedef
    enum {
       LC_Off,
@@ -257,26 +267,30 @@ typedef
    }
    LeakCheckMode;
 
-/* A block record, used for generating err msgs. */
+/* When a LossRecord is put into an OSet, these elements represent the key. */
+typedef
+   struct _LossRecordKey {
+      Reachedness  state;        // LC_Extra.state value shared by all blocks.
+      ExeContext*  allocated_at; // Where they were allocated.
+   } 
+   LossRecordKey;
+
+/* A loss record, used for generating err msgs.  Multiple leaked blocks can be
+ * merged into a single loss record if they have the same state and similar
+ * enough allocation points (controlled by --leak-resolution). */
 typedef
    struct _LossRecord {
-      struct _LossRecord* next;
-      /* Where these lost blocks were allocated. */
-      ExeContext*  allocated_at;
-      /* Their reachability. */
-      Reachedness  loss_mode;
-      /* Number of blocks and total # bytes involved. */
-      SizeT        total_bytes;
-      SizeT        indirect_bytes;
-      UInt         num_blocks;
+      LossRecordKey key;  // Key, when used in an OSet.
+      SizeT szB;          // Sum of all MC_Chunk.szB values.
+      SizeT indirect_szB; // Sum of all LC_Extra.indirect_szB values.
+      UInt  num_blocks;   // Number of blocks represented by the record.
    }
    LossRecord;
 
-void MC_(do_detect_memory_leaks) (
-        ThreadId tid, LeakCheckMode mode,
-        Bool (*is_within_valid_secondary) ( Addr ),
-        Bool (*is_valid_aligned_word)     ( Addr )
-     );
+void MC_(detect_memory_leaks) ( ThreadId tid, LeakCheckMode mode );
+
+Bool MC_(is_valid_aligned_word)     ( Addr a );
+Bool MC_(is_within_valid_secondary) ( Addr a );
 
 void MC_(pp_LeakError)(UInt n_this_record, UInt n_total_records,
                        LossRecord* l);
@@ -294,18 +308,20 @@ extern Bool MC_(any_value_errors);
 
 /* Standard functions for error and suppressions as required by the
    core/tool iface */
-Bool MC_(eq_Error) ( VgRes res, Error* e1, Error* e2 );
-void MC_(pp_Error) ( Error* err );
-UInt MC_(update_Error_extra)( Error* err );
+Bool MC_(eq_Error)           ( VgRes res, Error* e1, Error* e2 );
+void MC_(before_pp_Error)    ( Error* err );
+void MC_(pp_Error)           ( Error* err );
+UInt MC_(update_Error_extra) ( Error* err );
 
 Bool MC_(is_recognised_suppression) ( Char* name, Supp* su );
 
-Bool MC_(read_extra_suppression_info) ( Int fd, Char* buf,
-                                        Int nBuf, Supp *su );
+Bool MC_(read_extra_suppression_info) ( Int fd, Char** buf,
+                                        SizeT* nBuf, Supp *su );
 
 Bool MC_(error_matches_suppression) ( Error* err, Supp* su );
 
-void MC_(print_extra_suppression_info) ( Error* err );
+Bool MC_(get_extra_suppression_info) ( Error* err,
+                                       /*OUT*/Char* buf, Int nBuf );
 
 Char* MC_(get_error_name) ( Error* err );
 
@@ -333,7 +349,8 @@ Bool MC_(record_leak_error)     ( ThreadId tid,
                                   UInt n_this_record,
                                   UInt n_total_records,
                                   LossRecord* lossRecord,
-                                  Bool print_record );
+                                  Bool print_record,
+                                  Bool count_error );
 
 /* Is this address in a user-specified "ignored range" ? */
 Bool MC_(in_ignored_range) ( Addr a );
@@ -377,6 +394,9 @@ extern VgRes MC_(clo_leak_resolution);
 
 /* In leak check, show reachable-but-not-freed blocks?  default: NO */
 extern Bool MC_(clo_show_reachable);
+
+/* In leak check, show possibly-lost blocks?  default: YES */
+extern Bool MC_(clo_show_possibly_lost);
 
 /* Assume accesses immediately below %esp are due to gcc-2.96 bugs.
  * default: NO */

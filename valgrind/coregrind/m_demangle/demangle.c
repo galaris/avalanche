@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -167,7 +167,7 @@ Bool VG_(maybe_Z_demangle) ( const HChar* sym,
          }                                     \
       } while (0)
 
-   Bool error, oflow, valid, fn_is_encoded;
+   Bool error, oflow, valid, fn_is_encoded, is_VG_Z_prefixed;
    Int  soi, fni, i;
 
    vg_assert(soLen > 0 || (soLen == 0 && so == NULL));
@@ -192,6 +192,19 @@ Bool VG_(maybe_Z_demangle) ( const HChar* sym,
    if (isWrap)
       *isWrap = sym[3] == 'w';
 
+   /* Now check the soname prefix isn't "VG_Z_", as described in
+      pub_tool_redir.h. */
+   is_VG_Z_prefixed =
+      sym[ 7] == 'V' &&
+      sym[ 8] == 'G' &&
+      sym[ 9] == '_' &&
+      sym[10] == 'Z' &&
+      sym[11] == '_';
+   if (is_VG_Z_prefixed) {
+      vg_assert2(0, "symbol with a 'VG_Z_' prefix: %s.\n"
+                    "see pub_tool_redir.h for an explanation.", sym);
+   }
+
    /* Now scan the Z-encoded soname. */
    i = 7;
    while (True) {
@@ -215,16 +228,17 @@ Bool VG_(maybe_Z_demangle) ( const HChar* sym,
       i++;
       switch (sym[i]) {
          case 'a': EMITSO('*'); break;
-         case 'p': EMITSO('+'); break;
          case 'c': EMITSO(':'); break;
          case 'd': EMITSO('.'); break;
-         case 'u': EMITSO('_'); break;
          case 'h': EMITSO('-'); break;
+         case 'p': EMITSO('+'); break;
          case 's': EMITSO(' '); break;
-         case 'Z': EMITSO('Z'); break;
+         case 'u': EMITSO('_'); break;
          case 'A': EMITSO('@'); break;
+         case 'D': EMITSO('$'); break;
          case 'L': EMITSO('('); break;
          case 'R': EMITSO(')'); break;
+         case 'Z': EMITSO('Z'); break;
          default: error = True; goto out;
       }
       i++;
@@ -263,16 +277,17 @@ Bool VG_(maybe_Z_demangle) ( const HChar* sym,
       i++;
       switch (sym[i]) {
          case 'a': EMITFN('*'); break;
-         case 'p': EMITFN('+'); break;
          case 'c': EMITFN(':'); break;
          case 'd': EMITFN('.'); break;
-         case 'u': EMITFN('_'); break;
          case 'h': EMITFN('-'); break;
+         case 'p': EMITFN('+'); break;
          case 's': EMITFN(' '); break;
-         case 'Z': EMITFN('Z'); break;
+         case 'u': EMITFN('_'); break;
          case 'A': EMITFN('@'); break;
-         case 'L': EMITSO('('); break;
-         case 'R': EMITSO(')'); break;
+         case 'D': EMITFN('$'); break;
+         case 'L': EMITFN('('); break;
+         case 'R': EMITFN(')'); break;
+         case 'Z': EMITFN('Z'); break;
          default: error = True; goto out;
       }
       i++;
@@ -284,12 +299,14 @@ Bool VG_(maybe_Z_demangle) ( const HChar* sym,
 
    if (error) {
       /* Something's wrong.  Give up. */
-      VG_(message)(Vg_UserMsg, "m_demangle: error Z-demangling: %s", sym);
+      VG_(message)(Vg_UserMsg,
+                   "m_demangle: error Z-demangling: %s\n", sym);
       return False;
    }
    if (oflow) {
       /* It didn't fit.  Give up. */
-      VG_(message)(Vg_UserMsg, "m_demangle: oflow Z-demangling: %s", sym);
+      VG_(message)(Vg_UserMsg,
+                   "m_demangle: oflow Z-demangling: %s\n", sym);
       return False;
    }
 

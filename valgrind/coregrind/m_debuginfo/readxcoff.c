@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2006-2008 OpenWorks LLP
+   Copyright (C) 2006-2010 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -32,6 +32,8 @@
    used to endorse or promote products derived from this software
    without prior written permission.
 */
+
+#if defined(VGO_aix5)
 
 /* This file reads XCOFF symbol tables and debug info.
    Known limitations:
@@ -1519,10 +1521,11 @@ HChar* read_symbol_table (
       /* Actually add the symbol (finallyatlast) */
       if (sane) {
          UInt nlen;
-         dis.addr   = addr;
-         dis.size   = size;
-         dis.tocptr = s->r2known ? s->r2value : 0;
-         dis.isText = True;
+         dis.addr    = addr;
+         dis.size    = size;
+         dis.tocptr  = s->r2known ? s->r2value : 0;
+         dis.isText  = True;
+         dis.isIFunc = False;
          vg_assert(!is_empty_Name(s->name));
          nlen = s->name.len;
          vg_assert(nlen > 0);
@@ -1536,7 +1539,7 @@ HChar* read_symbol_table (
                         "fixme-Name-printing(5)" /*s->name*/ );
 
 	 if (guessed_toc)
-            VG_(message)(Vg_DebugMsg, "WARNING: assuming toc 0x%lx for %s", 
+            VG_(message)(Vg_DebugMsg, "WARNING: assuming toc 0x%lx for %s\n", 
                                       s->r2value, dis.name);
       }
    }
@@ -2422,10 +2425,10 @@ Bool ML_(read_xcoff_debug_info) ( struct _DebugInfo* di,
 
    if (VG_(clo_verbosity) > 1 || VG_(clo_trace_redir)) {
       if (di->memname) {
-         VG_(message)(Vg_DebugMsg, "Reading syms from %s(%s) (%#lx)",
+         VG_(message)(Vg_DebugMsg, "Reading syms from %s(%s) (%#lx)\n",
                       di->filename, di->memname, di->text_avma);
       } else {
-         VG_(message)(Vg_DebugMsg, "Reading syms from %s (%#lx)",
+         VG_(message)(Vg_DebugMsg, "Reading syms from %s (%#lx)\n",
                       di->filename, di->text_avma);
       }
    }
@@ -2480,6 +2483,8 @@ Bool ML_(read_xcoff_debug_info) ( struct _DebugInfo* di,
 
    return ok;
 }
+
+#endif // defined(VGO_aix5)
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

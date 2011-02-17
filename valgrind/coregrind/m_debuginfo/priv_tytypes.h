@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2008-2008 OpenWorks LLP
+   Copyright (C) 2008-2010 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -78,8 +78,13 @@ typedef
          struct {
             UChar* name;  /* in mallocville */
             UWord  typeR; /* should be Te_TyXXXX */
-            UChar* loc;   /* location expr, in mallocville */
-            UWord  nLoc;  /* number of bytes in .loc */
+            union {
+               UChar* loc;   /* location expr, in mallocville */
+               Word offset;  /* or offset from the beginning of containing
+                                entity */
+            } pos;
+            Word  nLoc;  /* number of bytes in .pos.loc if >= 0, or -1
+                            if .pos.offset should be used instead */
             Bool   isStruct;
          } Field;
          struct {

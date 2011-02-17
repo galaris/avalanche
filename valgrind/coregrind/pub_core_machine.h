@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -39,6 +39,7 @@
 
 #include "pub_tool_machine.h"
 
+// XXX: this is *really* the wrong spot for these things
 #if defined(VGP_x86_linux)
 #  define VG_ELF_DATA2XXX     ELFDATA2LSB
 #  define VG_ELF_MACHINE      EM_386
@@ -59,11 +60,21 @@
 #  define VG_ELF_MACHINE      EM_PPC64
 #  define VG_ELF_CLASS        ELFCLASS64
 #  define VG_PLAT_USES_PPCTOC 1
+#elif defined(VGP_arm_linux)
+#  define VG_ELF_DATA2XXX     ELFDATA2LSB
+#  define VG_ELF_MACHINE      EM_ARM
+#  define VG_ELF_CLASS        ELFCLASS32
+#  undef  VG_PLAT_USES_PPCTOC
 #elif defined(VGO_aix5)
 #  undef  VG_ELF_DATA2XXX
 #  undef  VG_ELF_MACHINE
 #  undef  VG_ELF_CLASS
 #  define VG_PLAT_USES_PPCTOC 1
+#elif defined(VGO_darwin)
+#  undef  VG_ELF_DATA2XXX
+#  undef  VG_ELF_MACHINE
+#  undef  VG_ELF_CLASS
+#  undef  VG_PLAT_USES_PPCTOC
 #else
 #  error Unknown platform
 #endif
@@ -84,6 +95,10 @@
 #  define VG_INSTR_PTR        guest_CIA
 #  define VG_STACK_PTR        guest_GPR1
 #  define VG_FRAME_PTR        guest_GPR1   // No frame ptr for PPC
+#elif defined(VGA_arm)
+#  define VG_INSTR_PTR        guest_R15T
+#  define VG_STACK_PTR        guest_R13
+#  define VG_FRAME_PTR        guest_R11
 #else
 #  error Unknown arch
 #endif
@@ -91,6 +106,26 @@
 
 // Offsets for the Vex state
 #define VG_O_STACK_PTR        (offsetof(VexGuestArchState, VG_STACK_PTR))
+#define VG_O_INSTR_PTR        (offsetof(VexGuestArchState, VG_INSTR_PTR))
+
+
+//-------------------------------------------------------------
+// Guest state accessors that are not visible to tools.  The only
+// ones that are visible are get_IP and get_SP.
+
+//Addr VG_(get_IP) ( ThreadId tid );  // in pub_tool_machine.h
+//Addr VG_(get_SP) ( ThreadId tid );  // in pub_tool_machine.h
+Addr VG_(get_FP) ( ThreadId tid );
+
+void VG_(set_IP) ( ThreadId tid, Addr encip );
+void VG_(set_SP) ( ThreadId tid, Addr sp );
+
+
+//-------------------------------------------------------------
+// Get hold of the values needed for a stack unwind, for the specified
+// (client) thread.
+void VG_(get_UnwindStartRegs) ( /*OUT*/UnwindStartRegs* regs,
+                                ThreadId tid );
 
 
 //-------------------------------------------------------------
@@ -123,6 +158,11 @@
 
           then safe to use VG_(machine_get_VexArchInfo) 
                        and VG_(machine_ppc64_has_VMX)
+   -------------
+   arm:   initially:  call VG_(machine_get_hwcaps)
+                      call VG_(machine_arm_set_has_NEON)
+
+          then safe to use VG_(machine_get_VexArchInfo) 
 
    VG_(machine_get_hwcaps) may use signals (although it attempts to
    leave signal state unchanged) and therefore should only be
@@ -145,6 +185,10 @@ extern void VG_(machine_ppc32_set_clszB)( Int );
 
 #if defined(VGA_ppc64)
 extern void VG_(machine_ppc64_set_clszB)( Int );
+#endif
+
+#if defined(VGA_arm)
+extern void VG_(machine_arm_set_has_NEON)( Bool );
 #endif
 
 /* X86: set to 1 if the host is able to do {ld,st}mxcsr (load/store
@@ -173,6 +217,10 @@ extern UInt VG_(machine_ppc32_has_VMX);
    change from a 64-bit int. */
 #if defined(VGA_ppc64)
 extern ULong VG_(machine_ppc64_has_VMX);
+#endif
+
+#if defined(VGA_arm)
+extern Int VG_(machine_arm_archlevel);
 #endif
 
 #endif   // __PUB_CORE_MACHINE_H

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -69,16 +69,16 @@ Int VG_(debugLog_getLevel) ( void );
 /* Send debugging output.  Nothing happens unless 'level' 
    does not exceed the logging threshold level. */
 extern
-__attribute__((format(__printf__, 3, 4)))
 void VG_(debugLog) ( Int level, const HChar* modulename,
-                                const HChar* format, ... );
+                                const HChar* format, ... )
+     __attribute__((format(__printf__, 3, 4)));
 
 
-/* A simple vprintf().  For each emitted byte, (*send) is called with
+/* A simple vprintf().  For each emitted byte, (*send_fn) is called with
    that byte, and 'send_arg2' as its second param. */
 extern
 UInt VG_(debugLog_vprintf) ( 
-        void (*send)(HChar,void*),   /* byte sink */
+        void (*send_fn)(HChar,void*),/* byte sink */
         void* send_arg2,             /* 2nd arg for byte sink */
         const HChar *format, 
         va_list vargs

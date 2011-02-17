@@ -1,7 +1,8 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -33,7 +34,9 @@
 #define __PUB_DRD_BITMAP_H
 
 
+#include "drd_basics.h"      /* DRD_() */
 #include "pub_tool_basics.h" /* Addr, SizeT */
+#include "pub_tool_oset.h"   /* struct _OSet */
 
 
 /* Defines. */
@@ -42,8 +45,8 @@
 #define LHS_W (1<<1)
 #define RHS_R (1<<2)
 #define RHS_W (1<<3)
-#define HAS_RACE(a) ((((a) & RHS_W) && ((a) & (LHS_R | LHS_W))) \
-                  || (((a) & LHS_W) && ((a) & (RHS_R | RHS_W))))
+#define HAS_RACE(a) ((((a) & RHS_W) && ((a) & (LHS_R | LHS_W)))         \
+                     || (((a) & LHS_W) && ((a) & (RHS_R | RHS_W))))
 
 
 /* Forward declarations. */
@@ -55,11 +58,28 @@ struct bitmap;
 
 typedef enum { eLoad, eStore, eStart, eEnd } BmAccessTypeT;
 
+struct bm_cache_elem
+{
+   Addr            a1;
+   struct bitmap2* bm2;
+};
+
+#define DRD_BITMAP_N_CACHE_ELEM 4
+
+/* Complete bitmap. */
+struct bitmap
+{
+   struct bm_cache_elem cache[DRD_BITMAP_N_CACHE_ELEM];
+   OSet*                oset;
+};
+
 
 /* Function declarations. */
 
 struct bitmap* DRD_(bm_new)(void);
 void DRD_(bm_delete)(struct bitmap* const bm);
+void DRD_(bm_init)(struct bitmap* const bm);
+void DRD_(bm_cleanup)(struct bitmap* const bm);
 void DRD_(bm_access_range)(struct bitmap* const bm,
                            const Addr a1, const Addr a2,
                            const BmAccessTypeT access_type);
@@ -111,8 +131,13 @@ Bool DRD_(bm_store_has_conflict_with)(struct bitmap* const bm,
                                       const Addr a1, const Addr a2);
 Bool DRD_(bm_equal)(struct bitmap* const lhs, struct bitmap* const rhs);
 void DRD_(bm_swap)(struct bitmap* const bm1, struct bitmap* const bm2);
-void DRD_(bm_merge2)(struct bitmap* const lhs,
-                     struct bitmap* const rhs);
+void DRD_(bm_merge2)(struct bitmap* const lhs, struct bitmap* const rhs);
+void DRD_(bm_unmark)(struct bitmap* bm);
+Bool DRD_(bm_is_marked)(struct bitmap* bm, const Addr a);
+void DRD_(bm_mark)(struct bitmap* bm1, struct bitmap* bm2);
+void DRD_(bm_clear_marked)(struct bitmap* bm);
+void DRD_(bm_merge2_marked)(struct bitmap* const lhs, struct bitmap* const rhs);
+void DRD_(bm_remove_cleared_marked)(struct bitmap* bm);
 int DRD_(bm_has_races)(struct bitmap* const bm1,
                        struct bitmap* const bm2);
 void DRD_(bm_report_races)(ThreadId const tid1, ThreadId const tid2,
@@ -120,10 +145,10 @@ void DRD_(bm_report_races)(ThreadId const tid1, ThreadId const tid2,
                            struct bitmap* const bm2);
 void DRD_(bm_print)(struct bitmap* bm);
 ULong DRD_(bm_get_bitmap_creation_count)(void);
-ULong DRD_(bm_get_bitmap2_node_creation_count)(void);
 ULong DRD_(bm_get_bitmap2_creation_count)(void);
+ULong DRD_(bm_get_bitmap2_merge_count)(void);
 
-void DRD_(bm_test)(void);
-
+void* DRD_(bm2_alloc_node)(HChar* const ec, const SizeT szB);
+void  DRD_(bm2_free_node)(void* const bm2);
 
 #endif /* __PUB_DRD_BITMAP_H */

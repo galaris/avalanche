@@ -9,7 +9,7 @@
    This file is part of MemCheck, a heavyweight Valgrind tool for
    detecting memory errors.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -50,7 +50,6 @@
 #include "mc_include.h"
 #include "memcheck.h"   /* for client requests */
 
-
 #include <avalanche.h>
 
 VgHashTable basicBlocksTable;
@@ -73,6 +72,7 @@ static Int socketsNum = 0;
 static Int socketsBoundary;
 static replaceData* replace_data;
 static Char* bbFileName = NULL;
+
 
 
 /* Set to 1 to do a little more sanity checking */
@@ -119,8 +119,9 @@ static void ocache_sarp_Clear_Origins ( Addr, UWord ); /* fwds */
 /* Conceptually, every byte value has 8 V bits, which track whether Memcheck
    thinks the corresponding value bit is defined.  And every memory byte
    has an A bit, which tracks whether Memcheck thinks the program can access
-   it safely.   So every N-bit register is shadowed with N V bits, and every
-   memory byte is shadowed with 8 V bits and one A bit.
+   it safely (ie. it's mapped, and has at least one of the RWX permission bits
+   set).  So every N-bit register is shadowed with N V bits, and every memory
+   byte is shadowed with 8 V bits and one A bit.
 
    In the implementation, we use two forms of compression (compressed V bits
    and distinguished secondary maps) to avoid the 9-bit-per-byte overhead
@@ -973,7 +974,7 @@ static void gcSecVBitTable(void)
    if (VG_(clo_verbosity) > 1) {
       Char percbuf[6];
       VG_(percentify)(n_survivors, n_nodes, 1, 6, percbuf);
-      VG_(message)(Vg_DebugMsg, "memcheck GC: %d nodes, %d survivors (%s)",
+      VG_(message)(Vg_DebugMsg, "memcheck GC: %d nodes, %d survivors (%s)\n",
                    n_nodes, n_survivors, percbuf);
    }
 
@@ -981,7 +982,7 @@ static void gcSecVBitTable(void)
    if (n_survivors > (secVBitLimit * MAX_SURVIVOR_PROPORTION)) {
       secVBitLimit *= TABLE_GROWTH_FACTOR;
       if (VG_(clo_verbosity) > 1)
-         VG_(message)(Vg_DebugMsg, "memcheck GC: increase table size to %d",
+         VG_(message)(Vg_DebugMsg, "memcheck GC: increase table size to %d\n",
                       secVBitLimit);
    }
 }
@@ -1083,9 +1084,9 @@ INLINE Bool MC_(in_ignored_range) ( Addr a )
 
 static Bool isHex ( UChar c )
 {
-  return ((c >= '0' && c <= '9')
-	  || (c >= 'a' && c <= 'f')
-	  || (c >= 'A' && c <= 'F'));
+  return ((c >= '0' && c <= '9') ||
+	  (c >= 'a' && c <= 'f') ||
+	  (c >= 'A' && c <= 'F'));
 }
 
 static UInt fromHex ( UChar c )
@@ -1185,7 +1186,7 @@ ULong mc_LOADVn_slow ( Addr a, SizeT nBits, Bool bigendian )
       least. */
    ULong vbits64     = V_BITS64_UNDEFINED;
    SizeT szB         = nBits / 8;
-   SSizeT i          = szB-1;    // Must be signed
+   SSizeT i;                        // Must be signed.
    SizeT n_addrs_bad = 0;
    Addr  ai;
    Bool  partial_load_exemption_applies;
@@ -1378,14 +1379,14 @@ static void set_address_range_perms ( Addr a, SizeT lenT, UWord vabits16,
    if (lenT == 0)
       return;
 
-   if (lenT > 100 * 1000 * 1000) {
+   if (lenT > 256 * 1024 * 1024) {
       if (VG_(clo_verbosity) > 0 && !VG_(clo_xml)) {
          Char* s = "unknown???";
          if (vabits16 == VA_BITS16_NOACCESS ) s = "noaccess";
          if (vabits16 == VA_BITS16_UNDEFINED) s = "undefined";
          if (vabits16 == VA_BITS16_DEFINED  ) s = "defined";
          VG_(message)(Vg_UserMsg, "Warning: set address range perms: "
-                                  "large range [0x%lx, 0x%lx) (%s)",
+                                  "large range [0x%lx, 0x%lx) (%s)\n",
                                   a, a + lenT, s);
       }
    }
@@ -1520,6 +1521,7 @@ static void set_address_range_perms ( Addr a, SizeT lenT, UWord vabits16,
   part2:
    // 64KB-aligned, 64KB steps.
    // Nb: we can reach here with lenB < SM_SIZE
+   tl_assert(0 == lenA);
    while (True) {
       if (lenB < SM_SIZE) break;
       tl_assert(is_start_of_sm(a));
@@ -1661,6 +1663,22 @@ static void make_mem_defined_if_addressable ( Addr a, SizeT len )
    }
 }
 
+/* Similarly (needed for mprotect handling ..) */
+static void make_mem_defined_if_noaccess ( Addr a, SizeT len )
+{
+   SizeT i;
+   UChar vabits2;
+   DEBUG("make_mem_defined_if_noaccess(%p, %llu)\n", a, (ULong)len);
+   for (i = 0; i < len; i++) {
+      vabits2 = get_vabits2( a+i );
+      if (LIKELY(VA_BITS2_NOACCESS == vabits2)) {
+         set_vabits2(a+i, VA_BITS2_DEFINED);
+         if (UNLIKELY(MC_(clo_mc_level) >= 3)) {
+            MC_(helperc_b_store1)( a+i, 0 ); /* clear the origin tag */
+         } 
+      }
+   }
+}
 
 /* --- Block-copy permissions (needed for implementing realloc() and
        sys_mremap). --- */
@@ -3693,6 +3711,10 @@ void check_mem_is_defined ( CorePart part, ThreadId tid, Char* s,
                                       isAddrErr ? 0 : otag );
          break;
       
+      case Vg_CoreSysCallArgInMem:
+         MC_(record_regparam_error) ( tid, s, otag );
+         break;
+
       /* If we're being asked to jump to a silly address, record an error 
          message before potentially crashing the entire system. */
       case Vg_CoreTranslate:
@@ -3722,31 +3744,71 @@ void check_mem_is_defined_asciiz ( CorePart part, ThreadId tid,
    }
 }
 
-static
-void mc_new_mem_startup( Addr a, SizeT len,
-                         Bool rr, Bool ww, Bool xx, ULong di_handle )
-{
-   /* Ignore the permissions, just make it defined.  Seems to work... */
-   // Because code is defined, initialised variables get put in the data
-   // segment and are defined, and uninitialised variables get put in the
-   // bss segment and are auto-zeroed (and so defined).  
-   //
-   // It's possible that there will be padding between global variables.
-   // This will also be auto-zeroed, and marked as defined by Memcheck.  If
-   // a program uses it, Memcheck will not complain.  This is arguably a
-   // false negative, but it's a grey area -- the behaviour is defined (the
-   // padding is zeroed) but it's probably not what the user intended.  And
-   // we can't avoid it.
-   DEBUG("mc_new_mem_startup(%#lx, %llu, rr=%u, ww=%u, xx=%u)\n",
-         a, (ULong)len, rr, ww, xx);
-   MC_(make_mem_defined)(a, len);
-}
+/* Handling of mmap and mprotect is not as simple as it seems.
 
+   The underlying semantics are that memory obtained from mmap is
+   always initialised, but may be inaccessible.  And changes to the
+   protection of memory do not change its contents and hence not its
+   definedness state.  Problem is we can't model
+   inaccessible-but-with-some-definedness state; once we mark memory
+   as inaccessible we lose all info about definedness, and so can't
+   restore that if it is later made accessible again.
+
+   One obvious thing to do is this:
+
+      mmap/mprotect NONE  -> noaccess
+      mmap/mprotect other -> defined
+
+   The problem case here is: taking accessible memory, writing
+   uninitialised data to it, mprotecting it NONE and later mprotecting
+   it back to some accessible state causes the undefinedness to be
+   lost.
+
+   A better proposal is:
+
+     (1) mmap NONE       ->  make noaccess
+     (2) mmap other      ->  make defined
+
+     (3) mprotect NONE   ->  # no change
+     (4) mprotect other  ->  change any "noaccess" to "defined"
+
+   (2) is OK because memory newly obtained from mmap really is defined
+       (zeroed out by the kernel -- doing anything else would
+       constitute a massive security hole.)
+
+   (1) is OK because the only way to make the memory usable is via
+       (4), in which case we also wind up correctly marking it all as
+       defined.
+
+   (3) is the weak case.  We choose not to change memory state.
+       (presumably the range is in some mixture of "defined" and
+       "undefined", viz, accessible but with arbitrary V bits).  Doing
+       nothing means we retain the V bits, so that if the memory is
+       later mprotected "other", the V bits remain unchanged, so there
+       can be no false negatives.  The bad effect is that if there's
+       an access in the area, then MC cannot warn; but at least we'll
+       get a SEGV to show, so it's better than nothing.
+
+   Consider the sequence (3) followed by (4).  Any memory that was
+   "defined" or "undefined" previously retains its state (as
+   required).  Any memory that was "noaccess" before can only have
+   been made that way by (1), and so it's OK to change it to
+   "defined".
+
+   See https://bugs.kde.org/show_bug.cgi?id=205541
+   and https://bugs.kde.org/show_bug.cgi?id=210268
+*/
 static
 void mc_new_mem_mmap ( Addr a, SizeT len, Bool rr, Bool ww, Bool xx,
                        ULong di_handle )
 {
-   MC_(make_mem_defined)(a, len);
+   if (rr || ww || xx) {
+      /* (2) mmap/mprotect other -> defined */
+      MC_(make_mem_defined)(a, len);
+   } else {
+      /* (1) mmap/mprotect NONE  -> noaccess */
+      MC_(make_mem_noaccess)(a, len);
+   }
 }
 
 static
@@ -3798,6 +3860,43 @@ void mc_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
   }
 }
 
+
+static
+void mc_new_mem_mprotect ( Addr a, SizeT len, Bool rr, Bool ww, Bool xx )
+{
+   if (rr || ww || xx) {
+      /* (4) mprotect other  ->  change any "noaccess" to "defined" */
+      make_mem_defined_if_noaccess(a, len);
+   } else {
+      /* (3) mprotect NONE   ->  # no change */
+      /* do nothing */
+   }
+}
+
+
+static
+void mc_new_mem_startup( Addr a, SizeT len,
+                         Bool rr, Bool ww, Bool xx, ULong di_handle )
+{
+   // Because code is defined, initialised variables get put in the data
+   // segment and are defined, and uninitialised variables get put in the
+   // bss segment and are auto-zeroed (and so defined).  
+   //
+   // It's possible that there will be padding between global variables.
+   // This will also be auto-zeroed, and marked as defined by Memcheck.  If
+   // a program uses it, Memcheck will not complain.  This is arguably a
+   // false negative, but it's a grey area -- the behaviour is defined (the
+   // padding is zeroed) but it's probably not what the user intended.  And
+   // we can't avoid it.
+   //
+   // Note: we generally ignore RWX permissions, because we can't track them
+   // without requiring more than one A bit which would slow things down a
+   // lot.  But on Darwin the 0th page is mapped but !R and !W and !X.
+   // So we mark any such pages as "unaddressable".
+   DEBUG("mc_new_mem_startup(%#lx, %llu, rr=%u, ww=%u, xx=%u)\n",
+         a, (ULong)len, rr, ww, xx);
+   mc_new_mem_mmap(a, len, rr, ww, xx, di_handle);
+}
 
 /*------------------------------------------------------------*/
 /*--- Register event handlers                              ---*/
@@ -4529,8 +4628,7 @@ static Int mc_get_or_set_vbits_for_client (
    address space is possibly in use, or not.  If in doubt return
    True.
 */
-static
-Bool mc_is_within_valid_secondary ( Addr a )
+Bool MC_(is_within_valid_secondary) ( Addr a )
 {
    SecMap* sm = maybe_get_secmap_for ( a );
    if (sm == NULL || sm == &sm_distinguished[SM_DIST_NOACCESS]
@@ -4545,35 +4643,16 @@ Bool mc_is_within_valid_secondary ( Addr a )
 
 /* For the memory leak detector, say whether or not a given word
    address is to be regarded as valid. */
-static
-Bool mc_is_valid_aligned_word ( Addr a )
+Bool MC_(is_valid_aligned_word) ( Addr a )
 {
    tl_assert(sizeof(UWord) == 4 || sizeof(UWord) == 8);
-   if (sizeof(UWord) == 4) {
-      tl_assert(VG_IS_4_ALIGNED(a));
-   } else {
-      tl_assert(VG_IS_8_ALIGNED(a));
-   }
+   tl_assert(VG_IS_WORD_ALIGNED(a));
    if (is_mem_defined( a, sizeof(UWord), NULL, NULL) == MC_Ok
        && !MC_(in_ignored_range)(a)) {
       return True;
    } else {
       return False;
    }
-}
-
-
-/* Leak detector for this tool.  We don't actually do anything, merely
-   run the generic leak detector with suitable parameters for this
-   tool. */
-static void mc_detect_memory_leaks ( ThreadId tid, LeakCheckMode mode )
-{
-   MC_(do_detect_memory_leaks) ( 
-      tid, 
-      mode, 
-      mc_is_within_valid_secondary, 
-      mc_is_valid_aligned_word 
-   );
 }
 
 
@@ -4731,10 +4810,11 @@ static Bool mc_expensive_sanity_check ( void )
 /*------------------------------------------------------------*/
 
 Bool          MC_(clo_partial_loads_ok)       = False;
-Long          MC_(clo_freelist_vol)           = 10*1000*1000LL;
+Long          MC_(clo_freelist_vol)           = 20*1000*1000LL;
 LeakCheckMode MC_(clo_leak_check)             = LC_Summary;
-VgRes         MC_(clo_leak_resolution)        = Vg_LowRes;
+VgRes         MC_(clo_leak_resolution)        = Vg_HighRes;
 Bool          MC_(clo_show_reachable)         = False;
+Bool          MC_(clo_show_possibly_lost)     = True;
 Bool          MC_(clo_workaround_gcc296_bugs) = False;
 Int           MC_(clo_malloc_fill)            = -1;
 Int           MC_(clo_free_fill)              = -1;
@@ -4746,8 +4826,6 @@ static Bool mc_process_cmd_line_options(Char* arg)
   Char* dataToReplace;
 
    Char* tmp_str;
-   Char* bad_level_msg =
-      "ERROR: --track-origins=yes has no effect when --undef-value-errors=no";
 
    tl_assert( MC_(clo_mc_level) >= 1 && MC_(clo_mc_level) <= 3 );
 
@@ -4762,8 +4840,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
    */
    if (0 == VG_(strcmp)(arg, "--undef-value-errors=no")) {
       if (MC_(clo_mc_level) == 3) {
-         VG_(message)(Vg_DebugMsg, "%s", bad_level_msg);
-         return False;
+         goto bad_level;
       } else {
          MC_(clo_mc_level) = 1;
          return True;
@@ -4781,8 +4858,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
    }
    if (0 == VG_(strcmp)(arg, "--track-origins=yes")) {
       if (MC_(clo_mc_level) == 1) {
-         VG_(message)(Vg_DebugMsg, "%s", bad_level_msg);
-         return False;
+         goto bad_level;
       } else {
          MC_(clo_mc_level) = 3;
          return True;
@@ -4791,6 +4867,8 @@ static Bool mc_process_cmd_line_options(Char* arg)
 
 	if VG_BOOL_CLO(arg, "--partial-loads-ok", MC_(clo_partial_loads_ok)) {}
    else if VG_BOOL_CLO(arg, "--show-reachable",   MC_(clo_show_reachable))   {}
+   else if VG_BOOL_CLO(arg, "--show-possibly-lost",
+                                            MC_(clo_show_possibly_lost))     {}
    else if VG_BOOL_CLO(arg, "--workaround-gcc296-bugs",
                                             MC_(clo_workaround_gcc296_bugs)) {}
 
@@ -4826,16 +4904,16 @@ static Bool mc_process_cmd_line_options(Char* arg)
          Addr limit = 0x4000000; /* 64M - entirely arbitrary limit */
          if (e <= s) {
             VG_(message)(Vg_DebugMsg, 
-               "ERROR: --ignore-ranges: end <= start in range:");
+               "ERROR: --ignore-ranges: end <= start in range:\n");
             VG_(message)(Vg_DebugMsg, 
-               "       0x%lx-0x%lx", s, e);
+               "       0x%lx-0x%lx\n", s, e);
             return False;
          }
          if (e - s > limit) {
             VG_(message)(Vg_DebugMsg, 
-               "ERROR: --ignore-ranges: suspiciously large range:");
+               "ERROR: --ignore-ranges: suspiciously large range:\n");
             VG_(message)(Vg_DebugMsg, 
-               "       0x%lx-0x%lx (size %ld)", s, e, (UWord)(e-s));
+               "       0x%lx-0x%lx (size %ld)\n", s, e, (UWord)(e-s));
             return False;
 	 }
       }
@@ -4843,7 +4921,6 @@ static Bool mc_process_cmd_line_options(Char* arg)
 
    else if VG_BHEX_CLO(arg, "--malloc-fill", MC_(clo_malloc_fill), 0x00,0xFF) {}
    else if VG_BHEX_CLO(arg, "--free-fill",   MC_(clo_free_fill),   0x00,0xFF) {}
-
 
   else if (VG_INT_CLO(arg, "--alarm", alarm))
   { 
@@ -4873,7 +4950,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
   else if (VG_STR_CLO(arg, "--replace",  dataToReplace))
   { 
     replace = True;
-    Int fd = VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
     VG_(read)(fd, &socketsNum, 4);
     socketsBoundary = socketsNum;
     if (socketsNum > 0)
@@ -4916,31 +4993,38 @@ static Bool mc_process_cmd_line_options(Char* arg)
     return VG_(replacement_malloc_process_cmd_line_option)(arg);
   }
 
-
    return True;
+
+
+  bad_level:
+   VG_(fmsg_bad_option)(arg,
+      "--track-origins=yes has no effect when --undef-value-errors=no.\n");
 }
 
 static void mc_print_usage(void)
 {  
    VG_(printf)(
 "    --leak-check=no|summary|full     search for memory leaks at exit?  [summary]\n"
-"    --leak-resolution=low|med|high   how much bt merging in leak check [low]\n"
+"    --leak-resolution=low|med|high   differentiation of leak stack traces [high]\n"
 "    --show-reachable=no|yes          show reachable blocks in leak check? [no]\n"
+"    --show-possibly-lost=no|yes      show possibly lost blocks in leak check?\n"
+"                                     [yes]\n"
 "    --undef-value-errors=no|yes      check for undefined value errors [yes]\n"
 "    --track-origins=no|yes           show origins of undefined values? [no]\n"
 "    --partial-loads-ok=no|yes        too hard to explain here; see manual [no]\n"
-"    --freelist-vol=<number>          volume of freed blocks queue [10000000]\n"
+"    --freelist-vol=<number>          volume of freed blocks queue [20000000]\n"
 "    --workaround-gcc296-bugs=no|yes  self explanatory [no]\n"
 "    --ignore-ranges=0xPP-0xQQ[,0xRR-0xSS]   assume given addresses are OK\n"
 "    --malloc-fill=<hexnumber>        fill malloc'd areas with given value\n"
 "    --free-fill=<hexnumber>          fill free'd areas with given value\n"
    );
-   VG_(replacement_malloc_print_usage)();
 }
 
 static void mc_print_debug_usage(void)
 {  
-   VG_(replacement_malloc_print_debug_usage)();
+   VG_(printf)(
+"    (none)\n"
+   );
 }
 
 
@@ -5026,7 +5110,7 @@ Int alloc_client_block ( void )
 static void show_client_block_stats ( void )
 {
    VG_(message)(Vg_DebugMsg, 
-      "general CBs: %llu allocs, %llu discards, %llu maxinuse, %llu search",
+      "general CBs: %llu allocs, %llu discards, %llu maxinuse, %llu search\n",
       cgb_allocs, cgb_discards, cgb_used_MAX, cgb_search 
    );
 }
@@ -5076,7 +5160,7 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
       }
 
       case VG_USERREQ__DO_LEAK_CHECK:
-         mc_detect_memory_leaks(tid, arg[1] ? LC_Summary : LC_Full);
+         MC_(detect_memory_leaks)(tid, arg[1] ? LC_Summary : LC_Full);
          *ret = 0; /* return value is meaningless */
          break;
 
@@ -5148,7 +5232,23 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
          *argp[4] = MC_(bytes_suppressed);
          // there is no argp[5]
          //*argp[5] = MC_(bytes_indirect);
-         // XXX need to make *argp[1-4] defined
+         // XXX need to make *argp[1-4] defined;  currently done in the
+         // VALGRIND_COUNT_LEAKS_MACRO by initialising them to zero.
+         *ret = 0;
+         return True;
+      }
+      case VG_USERREQ__COUNT_LEAK_BLOCKS: { /* count leaked blocks */
+         UWord** argp = (UWord**)arg;
+         // MC_(blocks_leaked) et al were set by the last leak check (or zero
+         // if no prior leak checks performed).
+         *argp[1] = MC_(blocks_leaked) + MC_(blocks_indirect);
+         *argp[2] = MC_(blocks_dubious);
+         *argp[3] = MC_(blocks_reachable);
+         *argp[4] = MC_(blocks_suppressed);
+         // there is no argp[5]
+         //*argp[5] = MC_(blocks_indirect);
+         // XXX need to make *argp[1-4] defined;  currently done in the
+         // VALGRIND_COUNT_LEAK_BLOCKS_MACRO by initialising them to zero.
          *ret = 0;
          return True;
       }
@@ -5248,13 +5348,16 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
 
 
       default:
-         VG_(message)(Vg_UserMsg, 
-                      "Warning: unknown memcheck client request code %llx",
-                      (ULong)arg[0]);
+         VG_(message)(
+            Vg_UserMsg, 
+            "Warning: unknown memcheck client request code %llx\n",
+            (ULong)arg[0]
+         );
          return False;
    }
    return True;
 }
+
 
 /*------------------------------------------------------------*/
 /*--- Crude profiling machinery.                           ---*/
@@ -5588,7 +5691,7 @@ static void ocache_sarp_Set_Origins ( Addr a, UWord len, UInt otag ) {
    }
    if (len >= 1) {
       MC_(helperc_b_store1)( a, otag );
-      a++;
+      //a++;
       len--;
    }
    tl_assert(len == 0);
@@ -5620,7 +5723,7 @@ static void ocache_sarp_Clear_Origins ( Addr a, UWord len ) {
    }
    if (len >= 1) {
       MC_(helperc_b_store1)( a, 0 );
-      a++;
+      //a++;
       len--;
    }
    tl_assert(len == 0);
@@ -5694,7 +5797,7 @@ static void mc_post_clo_init ( void )
 static void print_SM_info(char* type, int n_SMs)
 {
    VG_(message)(Vg_DebugMsg,
-      " memcheck: SMs: %s = %d (%ldk, %ldM)",
+      " memcheck: SMs: %s = %d (%ldk, %ldM)\n",
       type,
       n_SMs,
       n_SMs * sizeof(SecMap) / 1024UL,
@@ -5716,61 +5819,64 @@ static void mc_fini ( Int exitcode )
     {
       fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
     }
-    if (fd.res != -1)
+    if (!sr_isError(fd))
     {
       while (n != NULL)
       {
         UInt addr = (UInt) n->key;
-        VG_(write)(fd.res, &addr, sizeof(addr));
+        VG_(write)(sr_Res(fd), &addr, sizeof(addr));
         n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
       }
-      VG_(close)(fd.res);
+      VG_(close)(sr_Res(fd));
     }
   }
 
    MC_(print_malloc_stats)();
 
-   if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
-      if (MC_(clo_leak_check) == LC_Off)
-         VG_(message)(Vg_UserMsg, 
-             "For a detailed leak analysis,  rerun with: --leak-check=yes");
-
-      VG_(message)(Vg_UserMsg, 
-                   "For counts of detected errors, rerun with: -v");
+   if (MC_(clo_leak_check) != LC_Off) {
+      MC_(detect_memory_leaks)(1/*bogus ThreadId*/, MC_(clo_leak_check));
+   } else {
+      if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
+         VG_(umsg)(
+            "For a detailed leak analysis, rerun with: --leak-check=full\n"
+            "\n"
+         );
+      }
    }
 
+   if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
+      VG_(message)(Vg_UserMsg, 
+                   "For counts of detected and suppressed errors, rerun with: -v\n");
+   }
 
    if (MC_(any_value_errors) && !VG_(clo_xml) && VG_(clo_verbosity) >= 1
        && MC_(clo_mc_level) == 2) {
       VG_(message)(Vg_UserMsg,
                    "Use --track-origins=yes to see where "
-                   "uninitialised values come from");
+                   "uninitialised values come from\n");
    }
-
-   if (MC_(clo_leak_check) != LC_Off)
-      mc_detect_memory_leaks(1/*bogus ThreadId*/, MC_(clo_leak_check));
 
    done_prof_mem();
 
-   if (VG_(clo_verbosity) > 1) {
+   if (VG_(clo_stats)) {
       SizeT max_secVBit_szB, max_SMs_szB, max_shmem_szB;
       
       VG_(message)(Vg_DebugMsg,
-         " memcheck: sanity checks: %d cheap, %d expensive",
+         " memcheck: sanity checks: %d cheap, %d expensive\n",
          n_sanity_cheap, n_sanity_expensive );
       VG_(message)(Vg_DebugMsg,
-         " memcheck: auxmaps: %lld auxmap entries (%lldk, %lldM) in use",
+         " memcheck: auxmaps: %lld auxmap entries (%lldk, %lldM) in use\n",
          n_auxmap_L2_nodes, 
          n_auxmap_L2_nodes * 64, 
          n_auxmap_L2_nodes / 16 );
       VG_(message)(Vg_DebugMsg,
-         " memcheck: auxmaps_L1: %lld searches, %lld cmps, ratio %lld:10",
+         " memcheck: auxmaps_L1: %lld searches, %lld cmps, ratio %lld:10\n",
          n_auxmap_L1_searches, n_auxmap_L1_cmps,
          (10ULL * n_auxmap_L1_cmps) 
             / (n_auxmap_L1_searches ? n_auxmap_L1_searches : 1) 
       );   
       VG_(message)(Vg_DebugMsg,
-         " memcheck: auxmaps_L2: %lld searches, %lld nodes",
+         " memcheck: auxmaps_L2: %lld searches, %lld nodes\n",
          n_auxmap_L2_searches, n_auxmap_L2_nodes
       );   
 
@@ -5791,47 +5897,47 @@ static void mc_fini ( Int exitcode )
       max_shmem_szB   = sizeof(primary_map) + max_SMs_szB + max_secVBit_szB;
 
       VG_(message)(Vg_DebugMsg,
-         " memcheck: max sec V bit nodes:    %d (%ldk, %ldM)",
+         " memcheck: max sec V bit nodes:    %d (%ldk, %ldM)\n",
          max_secVBit_nodes, max_secVBit_szB / 1024,
                             max_secVBit_szB / (1024 * 1024));
       VG_(message)(Vg_DebugMsg,
-         " memcheck: set_sec_vbits8 calls: %llu (new: %llu, updates: %llu)",
+         " memcheck: set_sec_vbits8 calls: %llu (new: %llu, updates: %llu)\n",
          sec_vbits_new_nodes + sec_vbits_updates,
          sec_vbits_new_nodes, sec_vbits_updates );
       VG_(message)(Vg_DebugMsg,
-         " memcheck: max shadow mem size:   %ldk, %ldM",
+         " memcheck: max shadow mem size:   %ldk, %ldM\n",
          max_shmem_szB / 1024, max_shmem_szB / (1024 * 1024));
 
       if (MC_(clo_mc_level) >= 3) {
          VG_(message)(Vg_DebugMsg,
-                      " ocacheL1: %'12lu refs   %'12lu misses (%'lu lossage)",
+                      " ocacheL1: %'12lu refs   %'12lu misses (%'lu lossage)\n",
                       stats_ocacheL1_find, 
                       stats_ocacheL1_misses,
                       stats_ocacheL1_lossage );
          VG_(message)(Vg_DebugMsg,
-                      " ocacheL1: %'12lu at 0   %'12lu at 1",
+                      " ocacheL1: %'12lu at 0   %'12lu at 1\n",
                       stats_ocacheL1_find - stats_ocacheL1_misses 
                          - stats_ocacheL1_found_at_1 
                          - stats_ocacheL1_found_at_N,
                       stats_ocacheL1_found_at_1 );
          VG_(message)(Vg_DebugMsg,
-                      " ocacheL1: %'12lu at 2+  %'12lu move-fwds",
+                      " ocacheL1: %'12lu at 2+  %'12lu move-fwds\n",
                       stats_ocacheL1_found_at_N,
                       stats_ocacheL1_movefwds );
          VG_(message)(Vg_DebugMsg,
-                      " ocacheL1: %'12lu sizeB  %'12u useful",
+                      " ocacheL1: %'12lu sizeB  %'12u useful\n",
                       (UWord)sizeof(OCache),
                       4 * OC_W32S_PER_LINE * OC_LINES_PER_SET * OC_N_SETS );
          VG_(message)(Vg_DebugMsg,
-                      " ocacheL2: %'12lu refs   %'12lu misses",
+                      " ocacheL2: %'12lu refs   %'12lu misses\n",
                       stats__ocacheL2_refs, 
                       stats__ocacheL2_misses );
          VG_(message)(Vg_DebugMsg,
-                      " ocacheL2:    %'9lu max nodes %'9lu curr nodes",
+                      " ocacheL2:    %'9lu max nodes %'9lu curr nodes\n",
                       stats__ocacheL2_n_nodes_max,
                       stats__ocacheL2_n_nodes );
          VG_(message)(Vg_DebugMsg,
-                      " niacache: %'12lu refs   %'12lu misses",
+                      " niacache: %'12lu refs   %'12lu misses\n",
                       stats__nia_cache_queries, stats__nia_cache_misses);
       } else {
          tl_assert(ocacheL1 == NULL);
@@ -5841,7 +5947,7 @@ static void mc_fini ( Int exitcode )
 
    if (0) {
       VG_(message)(Vg_DebugMsg, 
-        "------ Valgrind's client block stats follow ---------------" );
+        "------ Valgrind's client block stats follow ---------------\n" );
       show_client_block_stats();
    }
 }
@@ -5860,12 +5966,13 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
   {
     isRead = False;
   }
-  else if ((syscallno == __NR_clone) && !res.isError && (res.res == 0))
+  else if ((syscallno == __NR_clone) && !sr_isError(res) && (sr_Res(res) == 0))
   {
     //VG_(printf)("__NR_clone\n");
     //VG_(exit)(0);
   }
 }
+
 
 static void mc_pre_clo_init(void)
 {
@@ -5873,7 +5980,7 @@ static void mc_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a memory error detector");
    VG_(details_copyright_author)(
-      "Copyright (C) 2002-2008, and GNU GPL'd, by Julian Seward et al.");
+      "Copyright (C) 2002-2010, and GNU GPL'd, by Julian Seward et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
    VG_(details_avg_translation_sizeB) ( 556 );
 
@@ -5886,6 +5993,7 @@ static void mc_pre_clo_init(void)
 
    VG_(needs_core_errors)         ();
    VG_(needs_tool_errors)         (MC_(eq_Error),
+                                   MC_(before_pp_Error),
                                    MC_(pp_Error),
                                    True,/*show TIDs for errors*/
                                    MC_(update_Error_extra),
@@ -5893,7 +6001,7 @@ static void mc_pre_clo_init(void)
                                    MC_(read_extra_suppression_info),
                                    MC_(error_matches_suppression),
                                    MC_(get_error_name),
-                                   MC_(print_extra_suppression_info));
+                                   MC_(get_extra_suppression_info));
    VG_(needs_libc_freeres)        ();
    VG_(needs_command_line_options)(mc_process_cmd_line_options,
                                    mc_print_usage,
@@ -5912,26 +6020,71 @@ static void mc_pre_clo_init(void)
                                    MC_(realloc),
                                    MC_(malloc_usable_size), 
                                    MC_MALLOC_REDZONE_SZB );
+
    VG_(needs_xml_output)          ();
 
    VG_(track_new_mem_startup)     ( mc_new_mem_startup );
    VG_(track_new_mem_stack_signal)( make_mem_undefined_w_tid );
+   // We assume that brk()/sbrk() does not initialise new memory.  Is this
+   // accurate?  John Reiser says:
+   //
+   //   0) sbrk() can *decrease* process address space.  No zero fill is done
+   //   for a decrease, not even the fragment on the high end of the last page
+   //   that is beyond the new highest address.  For maximum safety and
+   //   portability, then the bytes in the last page that reside above [the
+   //   new] sbrk(0) should be considered to be uninitialized, but in practice
+   //   it is exceedingly likely that they will retain their previous
+   //   contents.
+   //
+   //   1) If an increase is large enough to require new whole pages, then
+   //   those new whole pages (like all new pages) are zero-filled by the
+   //   operating system.  So if sbrk(0) already is page aligned, then
+   //   sbrk(PAGE_SIZE) *does* zero-fill the new memory.
+   //
+   //   2) Any increase that lies within an existing allocated page is not
+   //   changed.  So if (x = sbrk(0)) is not page aligned, then
+   //   sbrk(PAGE_SIZE) yields ((PAGE_SIZE -1) & -x) bytes which keep their
+   //   existing contents, and an additional PAGE_SIZE bytes which are zeroed.
+   //   ((PAGE_SIZE -1) & x) of them are "covered" by the sbrk(), and the rest
+   //   of them come along for the ride because the operating system deals
+   //   only in whole pages.  Again, for maximum safety and portability, then
+   //   anything that lives above [the new] sbrk(0) should be considered
+   //   uninitialized, but in practice will retain previous contents [zero in
+   //   this case.]"
+   //
+   // In short: 
+   //
+   //   A key property of sbrk/brk is that new whole pages that are supplied
+   //   by the operating system *do* get initialized to zero.
+   //
+   // As for the portability of all this:
+   //
+   //   sbrk and brk are not POSIX.  However, any system that is a derivative
+   //   of *nix has sbrk and brk because there are too many softwares (such as
+   //   the Bourne shell) which rely on the traditional memory map (.text,
+   //   .data+.bss, stack) and the existence of sbrk/brk.
+   //
+   // So we should arguably observe all this.  However:
+   // - The current inaccuracy has caused maybe one complaint in seven years(?)
+   // - Relying on the zeroed-ness of whole brk'd pages is pretty grotty... I
+   //   doubt most programmers know the above information.
+   // So I'm not terribly unhappy with marking it as undefined. --njn.
+   //
+   // [More:  I think most of what John said only applies to sbrk().  It seems
+   // that brk() always deals in whole pages.  And since this event deals
+   // directly with brk(), not with sbrk(), perhaps it would be reasonable to
+   // just mark all memory it allocates as defined.]
+   //
    VG_(track_new_mem_brk)         ( make_mem_undefined_w_tid );
+
+   // Handling of mmap and mprotect isn't simple (well, it is simple,
+   // but the justification isn't.)  See comments above, just prior to
+   // mc_new_mem_mmap.
    VG_(track_new_mem_mmap)        ( mc_new_mem_mmap );
+   VG_(track_change_mem_mprotect) ( mc_new_mem_mprotect );
    
    VG_(track_copy_mem_remap)      ( MC_(copy_address_range_state) );
 
-   // Nb: we don't do anything with mprotect.  This means that V bits are
-   // preserved if a program, for example, marks some memory as inaccessible
-   // and then later marks it as accessible again.
-   // 
-   // If an access violation occurs (eg. writing to read-only memory) we let
-   // it fault and print an informative termination message.  This doesn't
-   // happen if the program catches the signal, though, which is bad.  If we
-   // had two A bits (for readability and writability) that were completely
-   // distinct from V bits, then we could handle all this properly.
-   VG_(track_change_mem_mprotect) ( NULL );
-      
    VG_(track_die_mem_stack_signal)( MC_(make_mem_noaccess) ); 
    VG_(track_die_mem_brk)         ( MC_(make_mem_noaccess) );
    VG_(track_die_mem_munmap)      ( MC_(make_mem_noaccess) ); 

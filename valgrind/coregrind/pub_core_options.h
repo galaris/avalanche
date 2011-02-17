@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -42,6 +42,12 @@
 /* The max number of suppression files. */
 #define VG_CLO_MAX_SFILES 100
 
+/* The max number of --require-text-symbol= specification strings. */
+#define VG_CLO_MAX_REQ_TSYMS 100
+
+/* The max number of --fullpath-after= parameters. */
+#define VG_CLO_MAX_FULLPATH_AFTER 100
+
 /* Should we stop collecting errors if too many appear?  default: YES */
 extern Bool  VG_(clo_error_limit);
 /* Alternative exit code to hand to parent if errors were found.
@@ -61,44 +67,36 @@ extern Int   VG_(clo_sanity_level);
 extern Bool  VG_(clo_demangle);
 /* Simulate child processes? default: NO */
 extern Bool  VG_(clo_trace_children);
+/* String containing comma-separated patterns for executable names
+   that should not be traced into even when --trace-children=yes */
+extern HChar* VG_(clo_trace_children_skip);
 /* After a fork, the child's output can become confusingly
    intermingled with the parent's output.  This is especially
    problematic when VG_(clo_xml) is True.  Setting
    VG_(clo_child_silent_after_fork) causes children to fall silent
-   after fork() calls. */
+   after fork() calls.  Although note they become un-silent again
+   after the subsequent exec(). */
 extern Bool  VG_(clo_child_silent_after_fork);
 
-/* Where logging output is to be sent to.
-
-   With --log-fd (and by default), clo_log_fd holds the file id, and is
-   taken from the command line.  (fd 2, stderr, is the default.)
-   clo_log_name is irrelevant.
-
-   With --log-file, clo_log_name holds the log-file name, and is taken from
-   the command line (and possibly has process ID/env var contents in it, if
-   the %p or %q format specifiers are used).  clo_log_fd is then made to
-   hold the relevant file id, by opening clo_log_name (concatenated with the
-   process ID) for writing.
-
-   With --log-socket, clo_log_name holds the hostname:portnumber pair,
-   and is taken from the command line.  clo_log_fd is then made to hold
-   the relevant file handle, by opening a connection to that
-   hostname:portnumber pair. 
-
-   Global default is to set log_to == VgLogTo_Fd and log_fd == 2
-   (stderr). */
-extern Int   VG_(clo_log_fd);
-extern Char* VG_(clo_log_name);
+/* If the user specified --log-file=STR and/or --xml-file=STR, these
+   hold STR after expansion of the %p and %q templates. */
+extern Char* VG_(clo_log_fname_expanded);
+extern Char* VG_(clo_xml_fname_expanded);
 
 /* Add timestamps to log messages?  default: NO */
 extern Bool  VG_(clo_time_stamp);
 
 /* The file descriptor to read for input.  default: 0 == stdin */
 extern Int   VG_(clo_input_fd);
+
 /* The number of suppression files specified. */
 extern Int   VG_(clo_n_suppressions);
 /* The names of the suppression files. */
 extern Char* VG_(clo_suppressions)[VG_CLO_MAX_SFILES];
+
+/* An array of strings harvested from --fullpath-after= flags. */
+extern Int   VG_(clo_n_fullpath_after);
+extern Char* VG_(clo_fullpath_after)[VG_CLO_MAX_FULLPATH_AFTER];
 
 /* DEBUG: print generated code?  default: 00000000 ( == NO ) */
 extern UChar VG_(clo_trace_flags);
@@ -137,6 +135,41 @@ extern Char* VG_(clo_sim_hints);
 extern Bool VG_(clo_sym_offsets);
 /* Read DWARF3 variable info even if tool doesn't ask for it? */
 extern Bool VG_(clo_read_var_info);
+/* Which prefix to strip from full source file paths, if any. */
+extern Char* VG_(clo_prefix_to_strip);
+
+/* An array of strings harvested from --require-text-symbol= 
+   flags.
+
+   Each string specifies a pair: a soname pattern and a text symbol
+   name pattern, separated by a colon.  The patterns can be written
+   using the normal "?" and "*" wildcards.  For example:
+   ":*libc.so*:foo?bar".
+
+   These flags take effect when reading debuginfo from objects.  If an
+   object is loaded and the object's soname matches the soname
+   component of one of the specified pairs, then Valgrind will examine
+   all the text symbol names in the object.  If none of them match the
+   symbol name component of that same specification, then the run is
+   aborted, with an error message.
+
+   The purpose of this is to support reliable usage of marked-up
+   libraries.  For example, suppose we have a version of GCC's
+   libgomp.so which has been marked up with annotations to support
+   Helgrind.  It is only too easy and confusing to load the 'wrong'
+   libgomp.so into the application.  So the idea is: add a text symbol
+   in the marked-up library (eg), "annotated_for_helgrind_3_6", and
+   then give the flag
+
+     --require-text-symbol=:*libgomp*so*:annotated_for_helgrind_3_6
+
+   so that when libgomp.so is loaded, we scan the symbol table, and if
+   the symbol isn't present the run is aborted, rather than continuing
+   silently with the un-marked-up library.  Note that you should put
+   the entire flag in quotes to stop shells messing up the * and ?
+   wildcards. */
+extern Int    VG_(clo_n_req_tsyms);
+extern HChar* VG_(clo_req_tsyms)[VG_CLO_MAX_REQ_TSYMS];
 
 /* Track open file descriptors? */
 extern Bool  VG_(clo_track_fds);
@@ -182,18 +215,14 @@ extern VgSmc VG_(clo_smc_check);
    so they can be properly handled by m_syswrap. */
 extern HChar* VG_(clo_kernel_variant);
 
-/* --------- Functions --------- */
+/* Darwin-specific: automatically run /usr/bin/dsymutil to update
+   .dSYM directories as necessary? */
+extern Bool VG_(clo_dsymutil);
 
-/* Call this if the executable is missing.  This function prints an
-   error message, then shuts down the entire system. */
-__attribute__((noreturn))
-extern void VG_(err_missing_prog) ( void );
-
-/* Similarly - complain and stop if there is some kind of config
-   error. */
-__attribute__((noreturn))
-extern void VG_(err_config_error) ( Char* msg );
-
+/* Should we trace into this child executable (across execve etc) ?
+   This involves considering --trace-children=, --trace-children-skip=
+   and the name of the executable. */
+extern Bool VG_(should_we_trace_this_child) ( HChar* child_exe_name );
 
 #endif   // __PUB_CORE_OPTIONS_H
 

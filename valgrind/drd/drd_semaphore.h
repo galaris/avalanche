@@ -1,7 +1,8 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -41,6 +42,10 @@ struct semaphore_info* DRD_(semaphore_init)(const Addr semaphore,
                                             const Word pshared,
                                             const UInt value);
 void DRD_(semaphore_destroy)(const Addr semaphore);
+struct semaphore_info* DRD_(semaphore_open)(const Addr semaphore,
+                                            const Char* name, const Word oflag,
+                                            const Word mode, const UInt value);
+void DRD_(semaphore_close)(const Addr semaphore);
 void DRD_(semaphore_pre_wait)(const Addr semaphore);
 void DRD_(semaphore_post_wait)(const DrdThreadId tid, const Addr semaphore,
                                const Bool waited);

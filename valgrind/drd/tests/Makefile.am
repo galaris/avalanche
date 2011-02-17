@@ -1,35 +1,73 @@
 
 include $(top_srcdir)/Makefile.tool-tests.am
 
-SUBDIRS = .
+dist_noinst_SCRIPTS =		    \
+	compare_error_count_with    \
+	filter_error_summary	    \
+	filter_stderr               \
+	filter_stderr_and_thread_no \
+	run_openmp_test             \
+	supported_libpthread	    \
+	supported_sem_init
 
-DIST_SUBDIRS = .
-
-noinst_SCRIPTS =		\
-	filter_error_summary	\
-	filter_stderr           \
-	run_openmp_test         \
-	supported_libpthread
+noinst_HEADERS =                                    \
+	tsan_thread_wrappers_pthread.h		    \
+	unified_annotations.h
 
 EXTRA_DIST =                                        \
-	$(noinst_SCRIPTS)                           \
-	atomic_var.stderr.exp-with-atomic-builtins-1  \
-	atomic_var.stderr.exp-with-atomic-builtins-2  \
-	atomic_var.stderr.exp-without-atomic-builtins \
+	annotate_barrier.stderr.exp		    \
+	annotate_barrier.vgtest			    \
+	annotate_hb_err.stderr.exp		    \
+	annotate_hb_err.vgtest			    \
+	annotate_hb_race.stderr.exp		    \
+	annotate_hb_race.vgtest			    \
+	annotate_hbefore.stderr.exp		    \
+	annotate_hbefore.vgtest			    \
+	annotate_order_1.stderr.exp		    \
+	annotate_order_1.vgtest			    \
+	annotate_order_2.stderr.exp		    \
+	annotate_order_2.vgtest			    \
+	annotate_order_3.stderr.exp		    \
+	annotate_order_3.vgtest			    \
+	annotate_publish_hg.stderr.exp		    \
+	annotate_publish_hg.vgtest		    \
+	annotate_smart_pointer.stderr.exp	    \
+	annotate_smart_pointer.vgtest		    \
+	annotate_spinlock.stderr.exp		    \
+	annotate_spinlock.vgtest		    \
+	annotate_rwlock.stderr.exp		    \
+	annotate_rwlock.vgtest			    \
+	annotate_rwlock_hg.stderr.exp		    \
+	annotate_rwlock_hg.vgtest		    \
+	annotate_ignore_read.stderr.exp		    \
+	annotate_ignore_read.vgtest		    \
+	annotate_ignore_rw.stderr.exp		    \
+	annotate_ignore_rw.vgtest		    \
+	annotate_ignore_rw2.stderr.exp		    \
+	annotate_ignore_rw2.vgtest		    \
+	annotate_ignore_write.stderr.exp	    \
+	annotate_ignore_write.vgtest		    \
+	annotate_ignore_write2.stderr.exp	    \
+	annotate_ignore_write2.vgtest		    \
+	annotate_trace_memory.stderr.exp	    \
+	annotate_trace_memory.vgtest		    \
+	annotate_static.stderr.exp	            \
+	annotate_static.vgtest		            \
+	atomic_var.stderr.exp			    \
 	atomic_var.vgtest			    \
 	bar_bad.stderr.exp			    \
 	bar_bad.vgtest				    \
-	bar_trivial.stdout.exp			    \
 	bar_trivial.stderr.exp			    \
+	bar_trivial.stdout.exp			    \
 	bar_trivial.vgtest			    \
 	boost_thread.stderr.exp			    \
 	boost_thread.vgtest			    \
-	circular_buffer.stderr.exp-with-atomic-builtins		\
-	circular_buffer.stderr.exp-without-atomic-builtins	\
+	bug-235681.stderr.exp			    \
+	bug-235681.vgtest			    \
+	circular_buffer.stderr.exp		    \
 	circular_buffer.vgtest			    \
-	drd_bitmap_test.stderr.exp                  \
-	drd_bitmap_test.stdout.exp                  \
-	drd_bitmap_test.vgtest                      \
+	custom_alloc.stderr.exp			    \
+	custom_alloc.vgtest			    \
 	fp_race.stderr.exp                          \
 	fp_race.vgtest                              \
 	fp_race2.stderr.exp                         \
@@ -88,7 +126,10 @@ EXTRA_DIST =                                        \
 	pth_broadcast.stderr.exp                    \
 	pth_broadcast.vgtest                        \
 	pth_cancel_locked.stderr.exp		    \
+	pth_cancel_locked.stderr.exp-darwin	    \
 	pth_cancel_locked.vgtest		    \
+	pth_cleanup_handler.stderr.exp		    \
+	pth_cleanup_handler.vgtest		    \
 	pth_cond_race.stderr.exp                    \
 	pth_cond_race.vgtest                        \
 	pth_cond_race2.stderr.exp                   \
@@ -96,8 +137,9 @@ EXTRA_DIST =                                        \
 	pth_cond_race3.stderr.exp                   \
 	pth_cond_race3.vgtest                       \
 	pth_create_chain.stderr.exp                 \
-	pth_create_chain.stderr.exp-ppc             \
 	pth_create_chain.vgtest                     \
+	pth_create_glibc_2_0.stderr.exp             \
+	pth_create_glibc_2_0.vgtest                 \
 	pth_detached.stderr.exp                     \
 	pth_detached.stdout.exp                     \
 	pth_detached.vgtest                         \
@@ -110,28 +152,54 @@ EXTRA_DIST =                                        \
 	pth_inconsistent_cond_wait.stderr.exp1      \
 	pth_inconsistent_cond_wait.stderr.exp2      \
 	pth_inconsistent_cond_wait.vgtest           \
+	pth_mutex_reinit.stderr.exp		    \
+	pth_mutex_reinit.vgtest			    \
+	pth_once.stderr.exp			    \
+	pth_once.vgtest				    \
+	pth_process_shared_mutex.stderr.exp         \
+	pth_process_shared_mutex.vgtest             \
 	pth_spinlock.stderr.exp                     \
 	pth_spinlock.vgtest                         \
+	pth_uninitialized_cond.stderr.exp           \
+	pth_uninitialized_cond.vgtest               \
+	qt4_atomic.stderr.exp                       \
+	qt4_atomic.vgtest                           \
 	qt4_mutex.stderr.exp                        \
 	qt4_mutex.vgtest                            \
 	qt4_rwlock.stderr.exp                       \
 	qt4_rwlock.vgtest                           \
 	qt4_semaphore.stderr.exp                    \
 	qt4_semaphore.vgtest                        \
-	recursive_mutex.stderr.exp	            \
-	recursive_mutex.stdout.exp	            \
+	read_after_free.stderr.exp		    \
+	read_after_free.vgtest			    \
+	recursive_mutex.stderr.exp-linux            \
+	recursive_mutex.stderr.exp-darwin           \
 	recursive_mutex.vgtest                      \
 	rwlock_race.stderr.exp	                    \
 	rwlock_race.stderr.exp2	                    \
 	rwlock_race.vgtest                          \
 	rwlock_test.stderr.exp	                    \
 	rwlock_test.vgtest                          \
+	rwlock_type_checking.stderr.exp	            \
+	rwlock_type_checking.vgtest                 \
 	sem_as_mutex.stderr.exp                     \
 	sem_as_mutex.vgtest                         \
 	sem_as_mutex2.stderr.exp                    \
 	sem_as_mutex2.vgtest                        \
+	sem_as_mutex3.stderr.exp                    \
+	sem_as_mutex3.vgtest                        \
+	sem_open.stderr.exp                         \
+	sem_open.vgtest                             \
+	sem_open2.stderr.exp                        \
+	sem_open2.vgtest                            \
+	sem_open3.stderr.exp                        \
+	sem_open3.vgtest                            \
+	sem_open_traced.stderr.exp                  \
+	sem_open_traced.vgtest                      \
 	sigalrm.stderr.exp                          \
 	sigalrm.vgtest                              \
+	sigaltstack.stderr.exp                      \
+	sigaltstack.vgtest                          \
 	tc01_simple_race.stderr.exp                 \
 	tc01_simple_race.vgtest                     \
 	tc02_simple_tls.stderr.exp                  \
@@ -169,36 +237,40 @@ EXTRA_DIST =                                        \
 	tc17_sembar.vgtest                          \
 	tc18_semabuse.stderr.exp                    \
 	tc18_semabuse.vgtest                        \
-	tc19_shadowmem.stderr.exp                   \
+	tc19_shadowmem.stderr.exp-32bit             \
+	tc19_shadowmem.stderr.exp-64bit             \
 	tc19_shadowmem.vgtest                       \
-	tc20_verifywrap.stderr.exp-glibc2.3         \
-	tc20_verifywrap.stderr.exp-glibc2.5         \
-	tc20_verifywrap.stderr.exp-glibc2.5-ppc     \
-	tc20_verifywrap.stderr.exp-glibc2.8         \
-	tc20_verifywrap.vgtest                      \
-	tc20_verifywrap2.stderr.exp-glibc2.3        \
-	tc20_verifywrap2.stderr.exp-glibc2.3-b      \
-	tc20_verifywrap2.stderr.exp-glibc2.5        \
-	tc20_verifywrap2.stderr.exp-glibc2.5-ppc    \
-	tc20_verifywrap2.stderr.exp-glibc2.8        \
-	tc20_verifywrap2.vgtest                     \
 	tc21_pthonce.stderr.exp                     \
 	tc21_pthonce.stdout.exp                     \
 	tc21_pthonce.vgtest                         \
 	tc22_exit_w_lock.stderr.exp-32bit	    \
 	tc22_exit_w_lock.stderr.exp-64bit           \
 	tc22_exit_w_lock.vgtest                     \
-	tc23_bogus_condwait.stderr.exp              \
+	tc23_bogus_condwait.stderr.exp-linux-x86    \
+	tc23_bogus_condwait.stderr.exp-linux-ppc    \
+	tc23_bogus_condwait.stderr.exp-darwin       \
 	tc23_bogus_condwait.vgtest                  \
 	tc24_nonzero_sem.stderr.exp                 \
 	tc24_nonzero_sem.vgtest                     \
+	thread_name.stderr.exp			    \
+	thread_name.vgtest			    \
 	trylock.stderr.exp                          \
-	trylock.vgtest
+	trylock.vgtest				    \
+	unit_bitmap.stderr.exp                      \
+	unit_bitmap.vgtest                          \
+	unit_vc.stderr.exp                          \
+	unit_vc.vgtest
+
 
 check_PROGRAMS =      \
-  atomic_var          \
-  circular_buffer     \
-  drd_bitmap_test     \
+  annotate_hb_err     \
+  annotate_hb_race    \
+  annotate_ignore_rw  \
+  annotate_ignore_write \
+  annotate_publish_hg \
+  annotate_static     \
+  bug-235681          \
+  custom_alloc        \
   fp_race             \
   hold_lock           \
   linuxthreads_det    \
@@ -207,20 +279,40 @@ check_PROGRAMS =      \
   new_delete          \
   pth_broadcast       \
   pth_cancel_locked   \
+  pth_cleanup_handler \
   pth_cond_race       \
   pth_create_chain    \
   pth_detached        \
   pth_detached_sem    \
   pth_inconsistent_cond_wait \
+  pth_mutex_reinit    \
+  pth_process_shared_mutex   \
+  pth_uninitialized_cond \
   recursive_mutex     \
   rwlock_race         \
   rwlock_test         \
+  rwlock_type_checking \
   sem_as_mutex        \
+  sem_open            \
   sigalrm             \
-  trylock
+  thread_name         \
+  trylock             \
+  unit_bitmap         \
+  unit_vc
 
 if HAVE_BOOST_1_35
 check_PROGRAMS += boost_thread
+endif
+
+if HAVE_BUILTIN_ATOMIC
+check_PROGRAMS +=        \
+  annotate_barrier       \
+  annotate_rwlock        \
+  annotate_smart_pointer \
+  atomic_var             \
+  circular_buffer        \
+  read_after_free        \
+  tsan_unittest
 endif
 
 if HAVE_OPENMP
@@ -231,12 +323,12 @@ if HAVE_PTHREAD_BARRIER
 check_PROGRAMS += matinv pth_barrier pth_barrier_race pth_barrier_reinit
 endif
 
-if HAVE_PTHREAD_SPINLOCK
-check_PROGRAMS += pth_spinlock
+if HAVE_PTHREAD_CREATE_GLIBC_2_0
+check_PROGRAMS += pth_create_glibc_2_0
 endif
 
-if HAVE_QTCORE
-check_PROGRAMS += qt4_mutex qt4_rwlock qt4_semaphore
+if HAVE_PTHREAD_SPINLOCK
+check_PROGRAMS += pth_spinlock
 endif
 
 
@@ -246,19 +338,34 @@ AM_CXXFLAGS += $(AM_FLAG_M3264_PRI) @FLAG_W_EXTRA@ -Wno-inline -Wno-unused-param
 LDADD = -lpthread
 
 
-drd_bitmap_test_CFLAGS      = $(AM_CFLAGS) -O2 \
-                              -DENABLE_DRD_CONSISTENCY_CHECKS\
-                              @FLAG_UNLIMITED_INLINE_UNIT_GROWTH@
-drd_bitmap_test_LDADD       = # nothing, ie. not -lpthread
-
 monitor_example_SOURCES     = monitor_example.cpp
 new_delete_SOURCES          = new_delete.cpp
+
+pth_cleanup_handler_CFLAGS  = $(AM_CFLAGS) @FLAG_W_NO_EMPTY_BODY@
+
+tsan_unittest_SOURCES       = tsan_unittest.cpp
+tsan_unittest_CXXFLAGS      = $(AM_CXXFLAGS) \
+			-DTHREAD_WRAPPERS='"tsan_thread_wrappers_pthread.h"'
+
+unit_bitmap_CFLAGS          = $(AM_CFLAGS) -O2 \
+                              -DENABLE_DRD_CONSISTENCY_CHECKS \
+                              @FLAG_UNLIMITED_INLINE_UNIT_GROWTH@
+unit_bitmap_LDADD           = # nothing, i.e. not -lpthread
+
+unit_vc_CFLAGS              = $(AM_CFLAGS) -DENABLE_DRD_CONSISTENCY_CHECKS
+unit_vc_LDADD               = # nothing, i.e. not -lpthread
 
 if HAVE_BOOST_1_35
 boost_thread_SOURCES        = boost_thread.cpp
 boost_thread_CXXFLAGS       = $(AM_CXXFLAGS) $(BOOST_CFLAGS)
 boost_thread_LDADD          = $(BOOST_LIBS)
 endif
+
+if HAVE_BUILTIN_ATOMIC
+annotate_smart_pointer_SOURCES = annotate_smart_pointer.cpp
+endif
+
+annotate_static_SOURCES     = annotate_static.cpp
 
 if HAVE_OPENMP
 omp_matinv_CFLAGS           = $(AM_CFLAGS) -fopenmp
@@ -276,18 +383,4 @@ endif
 
 if HAVE_PTHREAD_BARRIER
 matinv_LDADD                = $(LDADD) -lm
-endif
-
-if HAVE_QTCORE
-qt4_mutex_SOURCES           = qt4_mutex.cpp
-qt4_mutex_CXXFLAGS          = $(AM_CXXFLAGS) $(QTCORE_CFLAGS)
-qt4_mutex_LDADD             = $(LDADD) $(QTCORE_LIBS)
-
-qt4_rwlock_SOURCES          = qt4_rwlock.cpp
-qt4_rwlock_CXXFLAGS         = $(AM_CXXFLAGS) $(QTCORE_CFLAGS)
-qt4_rwlock_LDADD            = $(LDADD) $(QTCORE_LIBS)
-
-qt4_semaphore_SOURCES       = qt4_semaphore.cpp
-qt4_semaphore_CXXFLAGS      = $(AM_CXXFLAGS) $(QTCORE_CFLAGS)
-qt4_semaphore_LDADD         = $(LDADD) $(QTCORE_LIBS)
 endif

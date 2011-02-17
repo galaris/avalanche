@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2008-2008 OpenWorks LLP and others; see below
+   Copyright (C) 2008-2010 OpenWorks LLP and others; see below
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -104,6 +104,10 @@ typedef enum
     DW_TAG_imported_unit = 0x3d,
     DW_TAG_condition = 0x3f,
     DW_TAG_shared_type = 0x40,
+    /* DWARF 4.  */
+    DW_TAG_type_unit = 0x41,
+    DW_TAG_rvalue_reference_type = 0x42,
+    DW_TAG_template_alias = 0x43,
     /* SGI/MIPS Extensions.  */
     DW_TAG_MIPS_loop = 0x4081,
     /* HP extensions.  See: ftp://ftp.hp.com/pub/lang/tools/WDB/wdb-4.0.tar.gz .  */
@@ -158,6 +162,8 @@ typedef enum dwarf_source_language
     DW_LANG_ObjC_plus_plus = 0x0011,
     DW_LANG_UPC = 0x0012,
     DW_LANG_D = 0x0013,
+    /* DWARF 4.  */
+    DW_LANG_Python = 0x0014,
     /* MIPS.  */
     DW_LANG_Mips_Assembler = 0x8001,
     /* UPC.  */
@@ -188,7 +194,12 @@ typedef enum
     DW_FORM_ref4 = 0x13,
     DW_FORM_ref8 = 0x14,
     DW_FORM_ref_udata = 0x15,
-    DW_FORM_indirect = 0x16
+    DW_FORM_indirect = 0x16,
+    /* DWARF 4 values.  */
+    DW_FORM_sec_offset = 0x17,
+    DW_FORM_exprloc = 0x18,
+    DW_FORM_flag_present = 0x19,
+    DW_FORM_ref_sig8 = 0x20
   }
   DW_FORM;
 
@@ -285,6 +296,13 @@ typedef enum
     DW_AT_elemental     = 0x66,
     DW_AT_pure          = 0x67,
     DW_AT_recursive     = 0x68,
+    /* DWARF 4 values.  */
+    DW_AT_signature       = 0x69,
+    DW_AT_main_subprogram = 0x6a,
+    DW_AT_data_bit_offset = 0x6b,
+    DW_AT_const_expr      = 0x6c,
+    DW_AT_enum_class      = 0x6d,
+    DW_AT_linkage_name    = 0x6e,
     /* SGI/MIPS extensions.  */
     DW_AT_MIPS_fde = 0x2001,
     DW_AT_MIPS_loop_begin = 0x2002,
@@ -354,6 +372,8 @@ typedef enum
     DW_ATE_signed_fixed = 0xd,
     DW_ATE_unsigned_fixed = 0xe,
     DW_ATE_decimal_float = 0xf,
+    /* DWARF 4.  */
+    DW_ATE_UTF = 0x10,
     /* HP extensions.  */
     DW_ATE_HP_float80            = 0x80, /* Floating-point (80 bit).  */
     DW_ATE_HP_complex_float80    = 0x81, /* Complex floating-point (80 bit).  */
@@ -522,6 +542,9 @@ typedef enum
     DW_OP_form_tls_address = 0x9b,
     DW_OP_call_frame_cfa = 0x9c,
     DW_OP_bit_piece = 0x9d,
+    /* DWARF 4 extensions.  */
+    DW_OP_implicit_value = 0x9e,
+    DW_OP_stack_value = 0x9f,
     /* GNU extensions.  */
     DW_OP_GNU_push_tls_address = 0xe0,
     /* HP extensions.  */
@@ -596,12 +619,13 @@ typedef
 
 /* This describes the result of evaluating a DWARF3 expression.
    GXR_Failure: failed; .word is an asciiz string summarising why
+   GXR_Addr:    evaluated to an address of the object, in .word
    GXR_Value:   evaluated to a value, in .word
    GXR_RegNo:   evaluated to a DWARF3 register number, in .word
 */
 typedef
    struct { 
-      enum { GXR_Failure, GXR_Value, GXR_RegNo } kind;
+      enum { GXR_Failure, GXR_Addr, GXR_Value, GXR_RegNo } kind;
       UWord word;
    }
    GXResult;
@@ -643,6 +667,10 @@ GXResult ML_(evaluate_Dwarf3_Expr) ( UChar* expr, UWord exprszB,
    expression is not manifestly a constant.  The range of addresses
    covered by the guard is also ignored. */
 GXResult ML_(evaluate_trivial_GX)( GExpr* gx, const DebugInfo* di );
+
+/* Compute call frame address (CFA) for IP/SP/FP.  */
+Addr ML_(get_CFA) ( Addr ip, Addr sp, Addr fp,
+                    Addr min_accessible, Addr max_accessible );
 
 #endif /* ndef __PRIV_D3BASICS_H */
 

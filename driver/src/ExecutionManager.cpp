@@ -41,6 +41,8 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <stdio.h>
+#include <errno.h>
 #include <string>
 #include <vector>
 #include <set>
@@ -919,13 +921,13 @@ void ExecutionManager::run()
       }
       else
       {
+        tg_depth << "--startdepth=" << fi->startdepth;
+        plugin_opts.push_back(tg_depth.str());
         if (runs > 0)
         {
           plugin_opts.push_back("--check-prediction=yes");
         }
-        tg_depth << "--startdepth=" << fi->startdepth;
       }
-      plugin_opts.push_back(tg_depth.str());
   
       getTracegrindOptions(plugin_opts);
 

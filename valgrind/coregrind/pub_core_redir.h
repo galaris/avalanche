@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -33,12 +33,25 @@
 
 //--------------------------------------------------------------------
 // PURPOSE: This module deals with:
+//
 // - code replacement: intercepting calls to client functions, and
 //   pointing them to a different piece of code.
+//
 // - loading notification: telling the core where certain client-space
 //   functions are when they get loaded.
+//
 // - function wrapping: add calls to code before and after client
 //   functions execute, for inspection and/or modification.
+//
+// - checking of --require-text-symbol= specifications: when a new
+//   object is loaded, its symbol table is examined, and if a symbol
+//   (as required by the specifications) is not found then the run
+//   is aborted.  See comment by VG_(clo_n_req_tsyms) in
+//   pub_core_options.h for background.  This doesn't have anything
+//   to do with function intercepting or wrapping, but it does have
+//   to do with examining all symbols at object load time, so this
+//   module seems like a logical place to put it.
+//
 //--------------------------------------------------------------------
 
 #include "pub_tool_redir.h"
@@ -58,6 +71,8 @@ extern void VG_(redir_notify_delete_DebugInfo)( DebugInfo* );
 /* Initialise the module, and load initial "hardwired" redirects. */
 extern void VG_(redir_initialise)( void );
 
+/* Notify the module of a new target for an indirect function. */
+extern void VG_(redir_add_ifunc_target)( Addr old_from, Addr new_from );
 
 //--------------------------------------------------------------------
 // Queries
