@@ -8,9 +8,9 @@ endif
 
 DIST_SUBDIRS = x86 .
 
-noinst_SCRIPTS = filter_stderr filter_cachesim_discards
+dist_noinst_SCRIPTS = filter_stderr filter_cachesim_discards
 
-EXTRA_DIST = $(noinst_SCRIPTS) \
+EXTRA_DIST = \
 	chdir.vgtest chdir.stderr.exp \
 	clreq.vgtest clreq.stderr.exp \
 	dlclose.vgtest dlclose.stderr.exp dlclose.stdout.exp \
@@ -25,5 +25,10 @@ AM_CXXFLAGS += $(AM_FLAG_M3264_PRI)
 
 # C ones
 dlclose_LDADD		= -ldl
-myprint_so_LDFLAGS	= $(AM_FLAG_M3264_PRI) -shared -fPIC
+if VGCONF_OS_IS_DARWIN
+myprint_so_LDFLAGS	= $(AM_CFLAGS) -dynamic -dynamiclib -all_load -fpic
+else
+myprint_so_LDFLAGS	= $(AM_CFLAGS) -shared -fPIC
+endif
+myprint_so_SOURCES	= myprint.c	# Only needed for automake-1.7.
 myprint_so_CFLAGS	= $(AM_CFLAGS) -fPIC

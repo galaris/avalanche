@@ -1,10 +1,37 @@
 
 /*---------------------------------------------------------------*/
-/*---                                                         ---*/
-/*--- This file (test_main.c) is                              ---*/
-/*--- Copyright (C) 2005 OpenWorks LLP.  All rights reserved. ---*/
-/*---                                                         ---*/
+/*--- begin                                       test_main.c ---*/
 /*---------------------------------------------------------------*/
+
+/*
+   This file is part of Valgrind, a dynamic binary instrumentation
+   framework.
+
+   Copyright (C) 2004-2010 OpenWorks LLP
+      info@open-works.net
+
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+   02110-1301, USA.
+
+   The GNU General Public License is contained in the file COPYING.
+
+   Neither the names of the U.S. Department of Energy nor the
+   University of California nor the names of its contributors may be
+   used to endorse or promote products derived from this software
+   without prior written permission.
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -436,7 +463,7 @@ static void MC_helperc_value_check4_fail( void ) { }
    This file is part of MemCheck, a heavyweight Valgrind tool for
    detecting memory errors.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -1620,13 +1647,21 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
          return binary16Ix8(mce, vatom1, vatom2);
 
       case Iop_Sub32x4:
+      case Iop_QSub32Sx4:
+      case Iop_QSub32Ux4:
       case Iop_CmpGT32Sx4:
       case Iop_CmpEQ32x4:
       case Iop_Add32x4:
+      case Iop_QAdd32Ux4:
+      case Iop_QAdd32Sx4:
          return binary32Ix4(mce, vatom1, vatom2);
 
       case Iop_Sub64x2:
+      case Iop_QSub64Ux2:
+      case Iop_QSub64Sx2:
       case Iop_Add64x2:
+      case Iop_QAdd64Ux2:
+      case Iop_QAdd64Sx2:
          return binary64Ix2(mce, vatom1, vatom2);
 
       case Iop_QNarrow32Sx4:
@@ -2662,5 +2697,5 @@ IRSB* mc_instrument ( void* closureV,
 #endif /* UNUSED */
 
 /*--------------------------------------------------------------------*/
-/*--- end                                           mc_translate.c ---*/
+/*--- end                                              test_main.c ---*/
 /*--------------------------------------------------------------------*/

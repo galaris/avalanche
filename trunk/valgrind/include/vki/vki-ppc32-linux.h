@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2008 Julian Seward
+   Copyright (C) 2005-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -67,6 +67,12 @@ extern unsigned long VKI_PAGE_SHIFT;
 extern unsigned long VKI_PAGE_SIZE;
 #define VKI_MAX_PAGE_SHIFT	16
 #define VKI_MAX_PAGE_SIZE	(1UL << VKI_MAX_PAGE_SHIFT)
+
+//----------------------------------------------------------------------
+// From linux-2.6.35.4/arch/powerpc/include/asm/shmparam.h
+//----------------------------------------------------------------------
+
+#define VKI_SHMLBA  VKI_PAGE_SIZE
 
 //----------------------------------------------------------------------
 // From linux-2.6.9/include/asm-ppc/signal.h
@@ -154,6 +160,10 @@ typedef struct {
 #define VKI_SS_ONSTACK		1
 #define VKI_SS_DISABLE		2
 
+/* These are 'legacy' sigactions in which the size of sa_mask is fixed
+   (cannot be expanded at any future point) because it is sandwiched
+   between two other fields.
+   (there is identical kludgery in vki-x86-linux.h) */
 struct vki_old_sigaction {
         // [[Nb: a 'k' prefix is added to "sa_handler" because
         // bits/sigaction.h (which gets dragged in somehow via signal.h)
@@ -165,13 +175,19 @@ struct vki_old_sigaction {
         __vki_sigrestore_t sa_restorer;
 };
 
-struct vki_sigaction {
+struct vki_sigaction_base {
         // [[See comment about extra 'k' above]]
 	__vki_sighandler_t ksa_handler;
 	unsigned long sa_flags;
 	__vki_sigrestore_t sa_restorer;
 	vki_sigset_t sa_mask;		/* mask last for extensibility */
 };
+
+/* On Linux we use the same type for passing sigactions to
+   and from the kernel.  Hence: */
+typedef  struct vki_sigaction_base  vki_sigaction_toK_t;
+typedef  struct vki_sigaction_base  vki_sigaction_fromK_t;
+
 
 typedef struct vki_sigaltstack {
 	void __user *ss_sp;
@@ -342,9 +358,10 @@ struct vki_sigcontext {
 #define VKI_SOL_SOCKET	1
 #define VKI_SO_TYPE	3
 
-#define VKI_SIOCSPGRP	0x8902
-#define VKI_SIOCGPGRP	0x8904
-#define VKI_SIOCGSTAMP	0x8906          /* Get stamp */
+#define VKI_SIOCSPGRP		0x8902
+#define VKI_SIOCGPGRP		0x8904
+#define VKI_SIOCGSTAMP		0x8906          /* Get stamp (timeval) */
+#define VKI_SIOCGSTAMPNS	0x8907          /* Get stamp (timespec) */
 
 //----------------------------------------------------------------------
 // From linux-2.6.10/include/asm-ppc/stat.h
@@ -503,13 +520,6 @@ struct vki_termios {
          ((type) << _VKI_IOC_TYPESHIFT) | \
          ((nr)   << _VKI_IOC_NRSHIFT) | \
          ((size) << _VKI_IOC_SIZESHIFT))
-
-/* provoke compile error for invalid uses of size argument */
-extern unsigned int __VKI_invalid_size_argument_for_IOC;
-#define _VKI_IOC_TYPECHECK(t) \
-        ((sizeof(t) == sizeof(t[1]) && \
-          sizeof(t) < (1 << _VKI_IOC_SIZEBITS)) ? \
-          sizeof(t) : __VKI_invalid_size_argument_for_IOC)
 
 /* used to create numbers */
 #define _VKI_IO(type,nr)			_VKI_IOC(_VKI_IOC_NONE,(type),(nr),0)

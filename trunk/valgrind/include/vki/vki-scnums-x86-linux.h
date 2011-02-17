@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -367,6 +367,10 @@
 #define __NR_dup3               330
 #define __NR_pipe2              331
 #define __NR_inotify_init1      332
+#define __NR_preadv             333
+#define __NR_pwritev            334
+#define __NR_rt_tgsigqueueinfo  335
+#define __NR_perf_counter_open  336
 
 #endif /* __VKI_SCNUMS_X86_LINUX_H */
 

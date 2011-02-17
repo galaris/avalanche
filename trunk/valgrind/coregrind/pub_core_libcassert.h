@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -63,8 +63,7 @@
 __attribute__ ((__noreturn__))
 extern void  VG_(core_panic)      ( Char* str );
 __attribute__ ((__noreturn__))
-extern void  VG_(core_panic_at)   ( Char* str, 
-                                    Addr ip, Addr sp, Addr fp, Addr lr );
+extern void  VG_(core_panic_at)   ( Char* str, UnwindStartRegs* );
 
 /* Called when some unhandleable client behaviour is detected.
    Prints a msg and aborts. */

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -38,15 +38,31 @@
 
 #include "pub_tool_libcprint.h"
 
-/* Tell the logging mechanism whether we are logging to a file
-   descriptor or a socket descriptor. */
-extern Bool VG_(logging_to_socket);
+/* An output file descriptor wrapped up with a Bool indicating whether
+   or not the fd is a socket. */
+typedef
+   struct { Int fd; Bool is_socket; }
+   OutputSink;
+ 
+/* And the destinations for normal and XML output. */
+extern OutputSink VG_(log_output_sink);
+extern OutputSink VG_(xml_output_sink);
 
 /* Get the elapsed wallclock time since startup into buf, which must
    16 chars long.  This is unchecked.  It also relies on the
    millisecond timer having been set to zero by an initial read in
    m_main during startup. */
 void VG_(elapsed_wallclock_time) ( /*OUT*/HChar* buf );
+
+/* Call this if the executable is missing.  This function prints an
+   error message, then shuts down the entire system. */
+__attribute__((noreturn))
+extern void VG_(err_missing_prog) ( void );
+
+/* Similarly - complain and stop if there is some kind of config
+   error. */
+__attribute__((noreturn))
+extern void VG_(err_config_error) ( Char* msg );
 
 #endif   // __PUB_CORE_LIBCPRINT_H
 

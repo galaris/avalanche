@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2008 Nicholas Nethercote
+   Copyright (C) 2005-2010 Nicholas Nethercote
       njn@valgrind.org
 
    This program is free software; you can redistribute it and/or
@@ -72,12 +72,12 @@
 
 typedef struct _OSet     OSet;
 
-// - Cmp: returns -1, 0 or 1 if key is <, == or > elem.
+// - Cmp:   returns -1, 0 or 1 if key is <, == or > elem.
 // - Alloc: allocates a chunk of memory.
-// - Free: frees a chunk of memory allocated with Alloc.
+// - Free:  frees a chunk of memory allocated with Alloc.
 
 typedef Word  (*OSetCmp_t)         ( const void* key, const void* elem );
-typedef void* (*OSetAlloc_t)       ( HChar* ec, SizeT szB );
+typedef void* (*OSetAlloc_t)       ( HChar* cc, SizeT szB );
 typedef void  (*OSetFree_t)        ( void* p );
 
 /*--------------------------------------------------------------------*/
@@ -87,6 +87,7 @@ typedef void  (*OSetFree_t)        ( void* p );
 // * Create: allocates and initialises the OSet.  Arguments:
 //   - alloc     The allocation function used internally for allocating the
 //               OSet and all its nodes.
+//   - cc        Cost centre string used by 'alloc'.
 //   - free      The deallocation function used internally for freeing nodes
 //               called by VG_(OSetWord_Destroy)().
 //
@@ -98,8 +99,8 @@ typedef void  (*OSetFree_t)        ( void* p );
 //   to allow the destruction of any attached resources;  if NULL it is not
 //   called.
 
-extern OSet* VG_(OSetWord_Create)       ( OSetAlloc_t alloc, HChar* ec, 
-                                          OSetFree_t free );
+extern OSet* VG_(OSetWord_Create)       ( OSetAlloc_t alloc, HChar* cc, 
+                                          OSetFree_t _free );
 extern void  VG_(OSetWord_Destroy)      ( OSet* os );
 
 /*--------------------------------------------------------------------*/
@@ -161,6 +162,7 @@ extern Bool  VG_(OSetWord_Next)         ( OSet* os, /*OUT*/UWord* val );
 //   - alloc     The allocation function used for allocating the OSet itself;
 //               it's also called for each invocation of
 //               VG_(OSetGen_AllocNode)().
+//   - cc        Cost centre string used by 'alloc'.
 //   - free      The deallocation function used by VG_(OSetGen_FreeNode)() and
 //               VG_(OSetGen_Destroy)().
 //
@@ -184,8 +186,8 @@ extern Bool  VG_(OSetWord_Next)         ( OSet* os, /*OUT*/UWord* val );
 //   lead to assertions in Valgrind's allocator.
 
 extern OSet* VG_(OSetGen_Create)    ( PtrdiffT keyOff, OSetCmp_t cmp,
-                                      OSetAlloc_t alloc, HChar* ec,
-                                      OSetFree_t free );
+                                      OSetAlloc_t alloc, HChar* cc,
+                                      OSetFree_t _free );
 extern void  VG_(OSetGen_Destroy)   ( OSet* os );
 extern void* VG_(OSetGen_AllocNode) ( OSet* os, SizeT elemSize );
 extern void  VG_(OSetGen_FreeNode)  ( OSet* os, void* elem );
@@ -219,6 +221,11 @@ extern void  VG_(OSetGen_FreeNode)  ( OSet* os, void* elem );
 // * ResetIter: Each OSet has an iterator.  This resets it to point to the
 //   first element in the OSet.
 // 
+// * ResetIterAt: Like ResetIter, but instead of resetting the iterator to the
+//   smallest element, it resets the iterator to point to the smallest element
+//   in the set whose key is greater-than-or-equal to the given key.  (In many
+//   cases this will be the element whose key equals that of the given key.)
+//
 // * Next: Returns a pointer to the element pointed to by the OSet's
 //   iterator, and advances the iterator by one;  the elements are visited
 //   in order.  Or, returns NULL if the iterator has reached the OSet's end.
@@ -238,19 +245,15 @@ extern void  VG_(OSetGen_FreeNode)  ( OSet* os, void* elem );
 
 extern Word  VG_(OSetGen_Size)         ( const OSet* os );
 extern void  VG_(OSetGen_Insert)       ( OSet* os, void* elem );
-extern Bool  VG_(OSetGen_Contains)     ( const OSet* os, const void* key  );
-extern void* VG_(OSetGen_Lookup)       ( const OSet* os, const void* key  );
+extern Bool  VG_(OSetGen_Contains)     ( const OSet* os, const void* key );
+extern void* VG_(OSetGen_Lookup)       ( const OSet* os, const void* key );
 extern void* VG_(OSetGen_LookupWithCmp)( OSet* os,
                                          const void* key, OSetCmp_t cmp );
-extern void* VG_(OSetGen_Remove)       ( OSet* os, const void* key  );
+extern void* VG_(OSetGen_Remove)       ( OSet* os, const void* key );
 extern void  VG_(OSetGen_ResetIter)    ( OSet* os );
+extern void  VG_(OSetGen_ResetIterAt)  ( OSet* os, const void* key );
 extern void* VG_(OSetGen_Next)         ( OSet* os );
 
-// set up 'oset' for iteration so that the first key subsequently
-// produced VG_(OSetGen_Next) is the smallest key in the map 
-// >= start_at.  Naturally ">=" is defined by the comparison 
-// function supplied to VG_(OSetGen_Create).
-extern void VG_(OSetGen_ResetIterAt) ( OSet* oset, const void* key );
 
 #endif   // __PUB_TOOL_OSET_H
 

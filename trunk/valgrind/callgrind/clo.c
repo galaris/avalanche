@@ -2,7 +2,7 @@
    This file is part of Callgrind, a Valgrind tool for call graph
    profiling programs.
 
-   Copyright (C) 2002-2008, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
+   Copyright (C) 2002-2010, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
 
    This tool is derived from and contains lot of code from Cachegrind
    Copyright (C) 2002 Nicholas Nethercote (njn@valgrind.org)
@@ -98,24 +98,24 @@ static config_node* fn_configs = 0;
 static __inline__ 
 fn_config* new_fnc(void)
 {
-   fn_config* new = (fn_config*) CLG_MALLOC("cl.clo.nf.1",
+   fn_config* fnc = (fn_config*) CLG_MALLOC("cl.clo.nf.1",
                                             sizeof(fn_config));
 
-   new->dump_before  = CONFIG_DEFAULT;
-   new->dump_after   = CONFIG_DEFAULT;
-   new->zero_before  = CONFIG_DEFAULT;
-   new->toggle_collect = CONFIG_DEFAULT;
-   new->skip         = CONFIG_DEFAULT;
-   new->pop_on_jump  = CONFIG_DEFAULT;
-   new->group        = CONFIG_DEFAULT;
-   new->separate_callers    = CONFIG_DEFAULT;
-   new->separate_recursions = CONFIG_DEFAULT;
+   fnc->dump_before  = CONFIG_DEFAULT;
+   fnc->dump_after   = CONFIG_DEFAULT;
+   fnc->zero_before  = CONFIG_DEFAULT;
+   fnc->toggle_collect = CONFIG_DEFAULT;
+   fnc->skip         = CONFIG_DEFAULT;
+   fnc->pop_on_jump  = CONFIG_DEFAULT;
+   fnc->group        = CONFIG_DEFAULT;
+   fnc->separate_callers    = CONFIG_DEFAULT;
+   fnc->separate_recursions = CONFIG_DEFAULT;
 
 #if CLG_ENABLE_DEBUG
-   new->verbosity    = CONFIG_DEFAULT;
+   fnc->verbosity    = CONFIG_DEFAULT;
 #endif
 
-   return new;
+   return fnc;
 }
 
 
@@ -264,13 +264,13 @@ static fn_config* get_fnc2(config_node* node, Char* name)
   while(name[offset] && (!is_wild(name[offset]))) offset++;
 
   new_sub = new_config(name, offset);
-  new_sub->next = n->sub_node[ name[offset]%NODE_DEGREE ];
-  n->sub_node[ name[offset]%NODE_DEGREE ] = new_sub;	
+  new_sub->next = n->sub_node[ name[0]%NODE_DEGREE ];
+  n->sub_node[ name[0]%NODE_DEGREE ] = new_sub;
 
   return get_fnc2(new_sub, name+offset);
 }
 
-static void print_config_node(int s, config_node* node)
+static void print_config_node(int depth, int hash, config_node* node)
 {
   config_node* n;
   int i;
@@ -278,19 +278,22 @@ static void print_config_node(int s, config_node* node)
   if (node != fn_configs) {
     char sp[] = "                                        ";
 
-    if (s>40) s=40;
-    VG_(printf)("%s", sp+40-s);
-    VG_(printf)("'%s'/%d\n", node->name, node->length);
+    if (depth>40) depth=40;
+    VG_(printf)("%s", sp+40-depth);
+    if (hash >=0) VG_(printf)(" [hash %2d]", hash);
+    else if (hash == -2) VG_(printf)(" [wildc ?]");
+    else if (hash == -3) VG_(printf)(" [wildc *]");
+    VG_(printf)(" '%s' (len %d)\n", node->name, node->length);
   }
   for(i=0;i<NODE_DEGREE;i++) {
     n = node->sub_node[i];
     while(n) {
-      print_config_node(s+1, n);
+      print_config_node(depth+1, i, n);
       n = n->next;
     }
   }
-  if (node->wild_char) print_config_node(s+1, node->wild_char);
-  if (node->wild_star) print_config_node(s+1, node->wild_star);
+  if (node->wild_char) print_config_node(depth+1, -2, node->wild_char);
+  if (node->wild_star) print_config_node(depth+1, -3, node->wild_star);
 }
 
 /* get a function config for a name pattern (from command line) */
@@ -305,7 +308,7 @@ static fn_config* get_fnc(Char* name)
 
   CLG_DEBUGIF(3) {
     CLG_DEBUG(3, " -get_fnc(%s):\n", name);
-    print_config_node(3, fn_configs);
+    print_config_node(3, -1, fn_configs);
   }
   return fnc;
 }
@@ -358,7 +361,7 @@ static void update_fn_config2(fn_node* fn, Char* name, config_node* node)
     CLG_DEBUG(3, "  update_fn_config2('%s', node '%s'): \n",
 	     name, node->name);
     if ((*name == 0) && node->config) {
-      CLG_DEBUG(3, "Found!\n");
+      CLG_DEBUG(3, "   found!\n");
       update_fn_config1(fn, node->config);
       return;
     }
@@ -368,12 +371,19 @@ static void update_fn_config2(fn_node* fn, Char* name, config_node* node)
       if (VG_(strncmp)(name, n->name, n->length)==0) break;
       n = n->next;
     }
-    if (n) update_fn_config2(fn, name+n->length, n);
+    if (n) {
+	CLG_DEBUG(3, "   '%s' matching at hash %d\n",
+		  n->name, name[0]%NODE_DEGREE);
+	update_fn_config2(fn, name+n->length, n);
+    }
     
-    if (node->wild_char)
-      update_fn_config2(fn, name+1, node->wild_char);
+    if (node->wild_char) {
+	CLG_DEBUG(3, "   skip '%c' for wildcard '?'\n", *name);
+	update_fn_config2(fn, name+1, node->wild_char);
+    }
 
     if (node->wild_star) {
+      CLG_DEBUG(3, "   wildcard '*'\n");
       while(*name) {
 	update_fn_config2(fn, name, node->wild_star);
 	name++;
@@ -515,8 +525,13 @@ Bool CLG_(process_cmd_line_option)(Char* arg)
 
    else if VG_BOOL_CLO(arg, "--collect-alloc",   CLG_(clo).collect_alloc) {}
    else if VG_BOOL_CLO(arg, "--collect-systime", CLG_(clo).collect_systime) {}
+   else if VG_BOOL_CLO(arg, "--collect-bus",     CLG_(clo).collect_bus) {}
+   /* for option compatibility with cachegrind */
+   else if VG_BOOL_CLO(arg, "--cache-sim",       CLG_(clo).simulate_cache) {}
+   /* compatibility alias, deprecated option */
    else if VG_BOOL_CLO(arg, "--simulate-cache",  CLG_(clo).simulate_cache) {}
-
+   /* for option compatibility with cachegrind */
+   else if VG_BOOL_CLO(arg, "--branch-sim",      CLG_(clo).simulate_branch) {}
    else {
        Bool isCachesimOption = (*CLG_(cachesim).parse_opt)(arg);
 
@@ -562,6 +577,7 @@ void CLG_(print_usage)(void)
 "    --collect-atstart=no|yes  Collect at process/thread start [yes]\n"
 "    --toggle-collect=<func>   Toggle collection on enter/leave function\n"
 "    --collect-jumps=no|yes    Collect jumps? [no]\n"
+"    --collect-bus=no|yes      Collect global bus events? [no]\n"
 #if CLG_EXPERIMENTAL
 "    --collect-alloc=no|yes    Collect memory allocation info? [no]\n"
 #endif
@@ -570,15 +586,18 @@ void CLG_(print_usage)(void)
 "\n   cost entity separation options:\n"
 "    --separate-threads=no|yes Separate data per thread [no]\n"
 "    --separate-callers=<n>    Separate functions by call chain length [0]\n"
-"    --separate-recs=<n>       Separate function recursions upto level [2]\n"
-"    --skip-plt=no|yes         Ignore calls to/from PLT sections? [yes]\n"
-"    --separate-recs<n>=<f>    Separate <n> recursions for function <f>\n"
 "    --separate-callers<n>=<f> Separate <n> callers for function <f>\n"
+"    --separate-recs=<n>       Separate function recursions up to level [2]\n"
+"    --separate-recs<n>=<f>    Separate <n> recursions for function <f>\n"
+"    --skip-plt=no|yes         Ignore calls to/from PLT sections? [yes]\n"
 "    --skip-direct-rec=no|yes  Ignore direct recursions? [yes]\n"
 "    --fn-skip=<function>      Ignore calls to/from function?\n"
 #if CLG_EXPERIMENTAL
 "    --fn-group<no>=<func>     Put function into separation group <no>\n"
 #endif
+"\n   simulation options:\n"
+"    --branch-sim=no|yes       Do branch prediction simulation [no]\n"
+"    --cache-sim=no|yes        Do cache simulation [no]\n"
     );
 
    (*CLG_(cachesim).print_opts)();
@@ -629,6 +648,7 @@ void CLG_(set_clo_defaults)(void)
   CLG_(clo).collect_jumps    = False;
   CLG_(clo).collect_alloc    = False;
   CLG_(clo).collect_systime  = False;
+  CLG_(clo).collect_bus      = False;
 
   CLG_(clo).skip_plt         = True;
   CLG_(clo).separate_callers = 0;
@@ -638,6 +658,7 @@ void CLG_(set_clo_defaults)(void)
   /* Instrumentation */
   CLG_(clo).instrument_atstart = True;
   CLG_(clo).simulate_cache = False;
+  CLG_(clo).simulate_branch = False;
 
   /* Call graph */
   CLG_(clo).pop_on_jump = False;

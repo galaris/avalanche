@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -37,6 +37,7 @@
 
 extern Bool VG_(isspace) ( Char c );
 extern Bool VG_(isdigit) ( Char c );
+extern Char VG_(tolower) ( Char c );
 
 /* ---------------------------------------------------------------------
    Converting strings to numbers
@@ -86,11 +87,14 @@ extern Char* VG_(strpbrk)        ( const Char* s, const Char* accpt );
 extern Char* VG_(strcpy)         ( Char* dest, const Char* src );
 extern Char* VG_(strncpy)        ( Char* dest, const Char* src, SizeT ndest );
 extern Int   VG_(strcmp)         ( const Char* s1, const Char* s2 );
+extern Int   VG_(strcasecmp)     ( const Char* s1, const Char* s2 );
 extern Int   VG_(strncmp)        ( const Char* s1, const Char* s2, SizeT nmax );
+extern Int   VG_(strncasecmp)    ( const Char* s1, const Char* s2, SizeT nmax );
 extern Char* VG_(strstr)         ( const Char* haystack, Char* needle );
+extern Char* VG_(strcasestr)     ( const Char* haystack, Char* needle );
 extern Char* VG_(strchr)         ( const Char* s, Char c );
 extern Char* VG_(strrchr)        ( const Char* s, Char c );
-extern SizeT VG_(strspn)         ( const Char* s, const Char* accept );
+extern SizeT VG_(strspn)         ( const Char* s, const Char* accpt );
 extern SizeT VG_(strcspn)        ( const Char* s, const char* reject );
 
 /* Like strncpy(), but if 'src' is longer than 'ndest' inserts a '\0' as the
@@ -106,6 +110,36 @@ extern void* VG_(memmove)( void *d, const void *s, SizeT sz );
 extern void* VG_(memset) ( void *s, Int c, SizeT sz );
 extern Int   VG_(memcmp) ( const void* s1, const void* s2, SizeT n );
 
+/* Zero out up to 8 words quickly in-line.  Do not use this for blocks
+   of size which are unknown at compile time, since the whole point is
+   for it to be inlined, and then for gcc to remove all code except
+   for the relevant 'sz' case. */
+inline __attribute__((always_inline))
+static void VG_(bzero_inline) ( void* s, SizeT sz )
+{
+   if (LIKELY(0 == (((Addr)sz) & (Addr)(sizeof(UWord)-1)))
+       && LIKELY(0 == (((Addr)s) & (Addr)(sizeof(UWord)-1)))) {
+      UWord* p = (UWord*)s;
+      switch (sz / (SizeT)sizeof(UWord)) {
+          case 8: p[0] = p[1] = p[2] = p[3]
+                  = p[4] = p[5] = p[6] = p[7] = 0UL; return;
+          case 7: p[0] = p[1] = p[2] = p[3]
+                  = p[4] = p[5] = p[6] = 0UL; return;
+          case 6: p[0] = p[1] = p[2] = p[3]
+                  = p[4] = p[5] = 0UL; return;
+          case 5: p[0] = p[1] = p[2] = p[3] = p[4] = 0UL; return;
+          case 4: p[0] = p[1] = p[2] = p[3] = 0UL; return;
+          case 3: p[0] = p[1] = p[2] = 0UL; return;
+          case 2: p[0] = p[1] = 0UL; return;
+          case 1: p[0] = 0UL; return;
+          case 0: return;
+          default: break;
+      }
+   }
+   VG_(memset)(s, 0, sz);
+}
+
+
 /* ---------------------------------------------------------------------
    Address computation helpers
    ------------------------------------------------------------------ */
@@ -115,6 +149,7 @@ extern Int   VG_(memcmp) ( const void* s1, const void* s2, SizeT n );
 #define VG_IS_4_ALIGNED(aaa_p)    (0 == (((Addr)(aaa_p)) & ((Addr)0x3)))
 #define VG_IS_8_ALIGNED(aaa_p)    (0 == (((Addr)(aaa_p)) & ((Addr)0x7)))
 #define VG_IS_16_ALIGNED(aaa_p)   (0 == (((Addr)(aaa_p)) & ((Addr)0xf)))
+#define VG_IS_32_ALIGNED(aaa_p)   (0 == (((Addr)(aaa_p)) & ((Addr)0x1f)))
 #define VG_IS_WORD_ALIGNED(aaa_p) (0 == (((Addr)(aaa_p)) & ((Addr)(sizeof(Addr)-1))))
 #define VG_IS_PAGE_ALIGNED(aaa_p) (0 == (((Addr)(aaa_p)) & ((Addr)(VKI_PAGE_SIZE-1))))
 

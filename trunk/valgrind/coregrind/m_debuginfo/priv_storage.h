@@ -9,7 +9,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -48,11 +48,16 @@
 /* A structure to hold an ELF/XCOFF symbol (very crudely). */
 typedef 
    struct { 
-      Addr  addr;   /* lowest address of entity */
-      Addr  tocptr; /* ppc64-linux only: value that R2 should have */
-      UChar *name;  /* name */
-      UInt  size;   /* size in bytes */
+      Addr  addr;    /* lowest address of entity */
+      Addr  tocptr;  /* ppc64-linux only: value that R2 should have */
+      UChar *name;   /* name */
+      // XXX: this could be shrunk (on 32-bit platforms) by using 31 bits for
+      // the size and 1 bit for the isText.  If you do this, make sure that
+      // all assignments to isText use 0 or 1 (or True or False), and that a
+      // positive number larger than 1 is never used to represent True.
+      UInt  size;    /* size in bytes */
       Bool  isText;
+      Bool  isIFunc; /* symbol is an indirect function? */
    }
    DiSym;
 
@@ -92,55 +97,120 @@ typedef
 
 /* --------------------- CF INFO --------------------- */
 
-/* A structure to summarise DWARF2/3 CFA info for the code address
-   range [base .. base+len-1].  In short, if you know (sp,fp,ip) at
-   some point and ip is in the range [base .. base+len-1], it tells
-   you how to calculate (sp,fp) for the caller of the current frame
-   and also ra, the return address of the current frame.
+/* DiCfSI: a structure to summarise DWARF2/3 CFA info for the code
+   address range [base .. base+len-1].
+
+   On x86 and amd64 ("IA"), if you know ({e,r}sp, {e,r}bp, {e,r}ip) at
+   some point and {e,r}ip is in the range [base .. base+len-1], it
+   tells you how to calculate ({e,r}sp, {e,r}bp) for the caller of the
+   current frame and also ra, the return address of the current frame.
 
    First off, calculate CFA, the Canonical Frame Address, thusly:
 
      cfa = case cfa_how of
-              CFIC_SPREL -> sp + cfa_off
-              CFIC_FPREL -> fp + cfa_off
-              CFIR_EXPR  -> expr whose index is in cfa_off
+              CFIC_IA_SPREL -> {e,r}sp + cfa_off
+              CFIC_IA_BPREL -> {e,r}bp + cfa_off
+              CFIR_IA_EXPR  -> expr whose index is in cfa_off
 
-   Once that is done, the previous frame's sp/fp values and this
-   frame's ra value can be calculated like this:
+   Once that is done, the previous frame's {e,r}sp/{e,r}bp values and
+   this frame's {e,r}ra value can be calculated like this:
 
-      old_sp/fp/ra
-         = case sp/fp/ra_how of
+     old_{e,r}sp/{e,r}bp/ra
+         = case {e,r}sp/{e,r}bp/ra_how of
               CFIR_UNKNOWN   -> we don't know, sorry
               CFIR_SAME      -> same as it was before (sp/fp only)
-              CFIR_CFAREL    -> cfa + sp/fp/ra_off
-              CFIR_MEMCFAREL -> *( cfa + sp/fp/ra_off )
-              CFIR_EXPR      -> expr whose index is in sp/fp/ra_off
+              CFIR_CFAREL    -> cfa + sp/bp/ra_off
+              CFIR_MEMCFAREL -> *( cfa + sp/bp/ra_off )
+              CFIR_EXPR      -> expr whose index is in sp/bp/ra_off
+
+   On ARM it's pretty much the same, except we have more registers to
+   keep track of:
+
+     cfa = case cfa_how of
+              CFIC_R13REL -> r13 + cfa_off
+              CFIC_R12REL -> r12 + cfa_off
+              CFIC_R11REL -> r11 + cfa_off
+              CFIC_R7REL  -> r7  + cfa_off
+              CFIR_EXPR   -> expr whose index is in cfa_off
+
+     old_r14/r13/r12/r11/r7/ra
+         = case r14/r13/r12/r11/r7/ra_how of
+              CFIR_UNKNOWN   -> we don't know, sorry
+              CFIR_SAME      -> same as it was before (r14/r13/r12/r11/r7 only)
+              CFIR_CFAREL    -> cfa + r14/r13/r12/r11/r7/ra_off
+              CFIR_MEMCFAREL -> *( cfa + r14/r13/r12/r11/r7/ra_off )
+              CFIR_EXPR      -> expr whose index is in r14/r13/r12/r11/r7/ra_off
 */
 
-#define CFIC_SPREL     ((UChar)1)
-#define CFIC_FPREL     ((UChar)2)
-#define CFIC_EXPR      ((UChar)3)
+#define CFIC_IA_SPREL     ((UChar)1)
+#define CFIC_IA_BPREL     ((UChar)2)
+#define CFIC_IA_EXPR      ((UChar)3)
+#define CFIC_ARM_R13REL   ((UChar)4)
+#define CFIC_ARM_R12REL   ((UChar)5)
+#define CFIC_ARM_R11REL   ((UChar)6)
+#define CFIC_ARM_R7REL    ((UChar)7)
+#define CFIC_EXPR         ((UChar)8)  /* all targets */
 
-#define CFIR_UNKNOWN   ((UChar)4)
-#define CFIR_SAME      ((UChar)5)
-#define CFIR_CFAREL    ((UChar)6)
-#define CFIR_MEMCFAREL ((UChar)7)
-#define CFIR_EXPR      ((UChar)8)
+#define CFIR_UNKNOWN      ((UChar)64)
+#define CFIR_SAME         ((UChar)65)
+#define CFIR_CFAREL       ((UChar)66)
+#define CFIR_MEMCFAREL    ((UChar)67)
+#define CFIR_EXPR         ((UChar)68)
 
+#if defined(VGA_x86) || defined(VGA_amd64)
+typedef
+   struct {
+      Addr  base;
+      UInt  len;
+      UChar cfa_how; /* a CFIC_IA value */
+      UChar ra_how;  /* a CFIR_ value */
+      UChar sp_how;  /* a CFIR_ value */
+      UChar bp_how;  /* a CFIR_ value */
+      Int   cfa_off;
+      Int   ra_off;
+      Int   sp_off;
+      Int   bp_off;
+   }
+   DiCfSI;
+#elif defined(VGA_arm)
 typedef
    struct {
       Addr  base;
       UInt  len;
       UChar cfa_how; /* a CFIC_ value */
       UChar ra_how;  /* a CFIR_ value */
-      UChar sp_how;  /* a CFIR_ value */
-      UChar fp_how;  /* a CFIR_ value */
+      UChar r14_how; /* a CFIR_ value */
+      UChar r13_how; /* a CFIR_ value */
+      UChar r12_how; /* a CFIR_ value */
+      UChar r11_how; /* a CFIR_ value */
+      UChar r7_how;  /* a CFIR_ value */
       Int   cfa_off;
       Int   ra_off;
-      Int   sp_off;
-      Int   fp_off;
+      Int   r14_off;
+      Int   r13_off;
+      Int   r12_off;
+      Int   r11_off;
+      Int   r7_off;
    }
    DiCfSI;
+#elif defined(VGA_ppc32) || defined(VGA_ppc64)
+/* Just have a struct with the common fields in, so that code that
+   processes the common fields doesn't have to be ifdef'd against
+   VGP_/VGA_ symbols.  These are not used in any way on ppc32/64-linux
+   at the moment. */
+typedef
+   struct {
+      Addr  base;
+      UInt  len;
+      UChar cfa_how; /* a CFIC_ value */
+      UChar ra_how;  /* a CFIR_ value */
+      Int   cfa_off;
+      Int   ra_off;
+   }
+   DiCfSI;
+#else
+#  error "Unknown arch"
+#endif
 
 
 typedef
@@ -154,9 +224,13 @@ typedef
 
 typedef
    enum {
-      Creg_SP=0x213,
-      Creg_FP,
-      Creg_IP
+      Creg_IA_SP=0x213,
+      Creg_IA_BP,
+      Creg_IA_IP,
+      Creg_ARM_R13,
+      Creg_ARM_R12,
+      Creg_ARM_R15,
+      Creg_ARM_R14
    }
    CfiReg;
 
@@ -207,6 +281,29 @@ extern Int ML_(CfiExpr_CfiReg)( XArray* dst, CfiReg reg );
 extern Int ML_(CfiExpr_DwReg) ( XArray* dst, Int reg );
 
 extern void ML_(ppCfiExpr)( XArray* src, Int ix );
+
+/* ---------------- FPO INFO (Windows PE) -------------- */
+
+/* for apps using Wine: MSVC++ PDB FramePointerOmitted: somewhat like
+   a primitive CFI */
+typedef
+   struct _FPO_DATA {  /* 16 bytes */
+      UInt   ulOffStart; /* offset of 1st byte of function code */
+      UInt   cbProcSize; /* # bytes in function */
+      UInt   cdwLocals;  /* # bytes/4 in locals */
+      UShort cdwParams;  /* # bytes/4 in params */
+      UChar  cbProlog;   /* # bytes in prolog */
+      UChar  cbRegs :3;  /* # regs saved */
+      UChar  fHasSEH:1;  /* Structured Exception Handling */
+      UChar  fUseBP :1;  /* EBP has been used */
+      UChar  reserved:1;
+      UChar  cbFrame:2;  /* frame type */
+   }
+   FPO_DATA;
+
+#define PDB_FRAME_FPO  0
+#define PDB_FRAME_TRAP 1
+#define PDB_FRAME_TSS  2
 
 /* --------------------- VARIABLES --------------------- */
 
@@ -310,6 +407,8 @@ struct _DebugInfo {
       Certainly text_ is mandatory on all platforms; not sure about
       the rest though. 
 
+      --------------------------------------------------------
+
       Comment_on_IMPORTANT_CFSI_REPRESENTATIONAL_INVARIANTS: we require that
  
       either (rx_map_size == 0 && cfsi == NULL) (the degenerate case)
@@ -347,6 +446,89 @@ struct _DebugInfo {
       (2) follows from (4) and (3).  It is ensured by canonicaliseCFI.
       (3) is ensured by ML_(addDiCfSI).
       (4) is ensured by canonicaliseCFI.
+
+      --------------------------------------------------------
+
+      Comment_on_DEBUG_SVMA_and_DEBUG_BIAS_fields:
+
+      The _debug_{svma,bias} fields were added as part of a fix to
+      #185816.  The problem encompassed in that bug report was that it
+      wasn't correct to use apply the bias values deduced for a
+      primary object to its associated debuginfo object, because the
+      debuginfo object (or the primary) could have been prelinked to a
+      different SVMA.  Hence debuginfo and primary objects need to
+      have their own biases.
+
+      ------ JRS: (referring to r9329): ------
+      Let me see if I understand the workings correctly.  Initially
+      the _debug_ values are set to the same values as the "normal"
+      ones, as there's a bunch of bits of code like this (in
+      readelf.c)
+
+         di->text_svma = svma;
+         ...
+         di->text_bias = rx_bias;
+         di->text_debug_svma = svma;
+         di->text_debug_bias = rx_bias;
+
+      If a debuginfo object subsequently shows up then the
+      _debug_svma/bias are set for the debuginfo object.  Result is
+      that if there's no debuginfo object then the values are the same
+      as the primary-object values, and if there is a debuginfo object
+      then they will (or at least may) be different.
+
+      Then when we need to actually bias something, we'll have to
+      decide whether to use the primary bias or the debuginfo bias.
+      And the strategy is to use the primary bias for ELF symbols but
+      the debuginfo bias for anything pulled out of Dwarf.
+
+      ------ THH: ------
+      Correct - the debug_svma and bias values apply to any address
+      read from the debug data regardless of where that debug data is
+      stored and the other values are used for addresses from other
+      places (primarily the symbol table).
+
+      ------ JRS: ------ 
+      Ok; so this was my only area of concern.  Are there any
+      corner-case scenarios where this wouldn't be right?  It sounds
+      like we're assuming the ELF symbols come from the primary object
+      and, if there is a debug object, then all the Dwarf comes from
+      there.  But what if (eg) both symbols and Dwarf come from the
+      debug object?  Is that even possible or allowable?
+
+      ------ THH: ------
+      You may have a point...
+
+      The current logic is to try and take any one set of data from
+      either the base object or the debug object. There are four sets
+      of data we consider:
+
+         - Symbol Table
+         - Stabs
+         - DWARF1
+         - DWARF2
+
+      If we see the primary section for a given set in the base object
+      then we ignore all sections relating to that set in the debug
+      object.
+
+      Now in principle if we saw a secondary section (like debug_line
+      say) in the base object, but not the main section (debug_info in
+      this case) then we would take debug_info from the debug object
+      but would use the debug_line from the base object unless we saw
+      a replacement copy in the debug object. That's probably unlikely
+      however.
+
+      A bigger issue might be, as you say, the symbol table as we will
+      pick that up from the debug object if it isn't in the base. The
+      dynamic symbol table will always have to be in the base object
+      though so we will have to be careful when processing symbols to
+      know which table we are reading in that case.
+
+      What we probably need to do is tell read_elf_symtab which object
+      the symbols it is being asked to read came from.
+
+      (A followup patch to deal with this was committed in r9469).
    */
    /* .text */
    Bool     text_present;
@@ -354,36 +536,48 @@ struct _DebugInfo {
    Addr     text_svma;
    SizeT    text_size;
    PtrdiffT text_bias;
+   Addr     text_debug_svma;
+   PtrdiffT text_debug_bias;
    /* .data */
    Bool     data_present;
    Addr     data_svma;
    Addr     data_avma;
    SizeT    data_size;
    PtrdiffT data_bias;
+   Addr     data_debug_svma;
+   PtrdiffT data_debug_bias;
    /* .sdata */
    Bool     sdata_present;
    Addr     sdata_svma;
    Addr     sdata_avma;
    SizeT    sdata_size;
    PtrdiffT sdata_bias;
+   Addr     sdata_debug_svma;
+   PtrdiffT sdata_debug_bias;
    /* .rodata */
    Bool     rodata_present;
    Addr     rodata_svma;
    Addr     rodata_avma;
    SizeT    rodata_size;
    PtrdiffT rodata_bias;
+   Addr     rodata_debug_svma;
+   PtrdiffT rodata_debug_bias;
    /* .bss */
    Bool     bss_present;
    Addr     bss_svma;
    Addr     bss_avma;
    SizeT    bss_size;
    PtrdiffT bss_bias;
+   Addr     bss_debug_svma;
+   PtrdiffT bss_debug_bias;
    /* .sbss */
    Bool     sbss_present;
    Addr     sbss_svma;
    Addr     sbss_avma;
    SizeT    sbss_size;
    PtrdiffT sbss_bias;
+   Addr     sbss_debug_svma;
+   PtrdiffT sbss_debug_bias;
    /* .plt */
    Bool   plt_present;
    Addr	  plt_avma;
@@ -428,6 +622,13 @@ struct _DebugInfo {
    Addr    cfsi_minavma;
    Addr    cfsi_maxavma;
    XArray* cfsi_exprs; /* XArray of CfiExpr */
+
+   /* Optimized code under Wine x86: MSVC++ PDB FramePointerOmitted
+      data.  Non-expandable array, hence .size == .used. */
+   FPO_DATA* fpo;
+   UWord     fpo_size;
+   Addr      fpo_minavma;
+   Addr      fpo_maxavma;
 
    /* Expandable arrays of characters -- the string table.  Pointers
       into this are stable (the arrays are not reallocated). */
@@ -488,6 +689,12 @@ void ML_(addLineInfo) ( struct _DebugInfo* di,
                         UChar*   dirname,  /* NULL is allowable */
                         Addr this, Addr next, Int lineno, Int entry);
 
+/* Shrink completed tables to save memory. */
+extern 
+void ML_(shrinkSym) ( struct _DebugInfo *di );
+extern 
+void ML_(shrinkLineInfo) ( struct _DebugInfo *di );
+
 /* Add a CFI summary record.  The supplied DiCfSI is copied. */
 extern void ML_(addDiCfSI) ( struct _DebugInfo* di, DiCfSI* cfsi );
 
@@ -511,6 +718,11 @@ extern void ML_(addVar)( struct _DebugInfo* di,
    this after finishing adding entries to these tables. */
 extern void ML_(canonicaliseTables) ( struct _DebugInfo* di );
 
+/* Canonicalise the call-frame-info table held by 'di', in preparation
+   for use. This is called by ML_(canonicaliseTables) but can also be
+   called on it's own to sort just this table. */
+extern void ML_(canonicaliseCFI) ( struct _DebugInfo* di );
+
 /* ------ Searching ------ */
 
 /* Find a symbol-table index containing the specified pointer, or -1
@@ -526,6 +738,10 @@ extern Word ML_(search_one_loctab) ( struct _DebugInfo* di, Addr ptr );
 /* Find a CFI-table index containing the specified pointer, or -1 if
    not found.  Binary search.  */
 extern Word ML_(search_one_cfitab) ( struct _DebugInfo* di, Addr ptr );
+
+/* Find a FPO-table index containing the specified pointer, or -1
+   if not found.  Binary search.  */
+extern Word ML_(search_one_fpotab) ( struct _DebugInfo* di, Addr ptr );
 
 /* ------ Misc ------ */
 

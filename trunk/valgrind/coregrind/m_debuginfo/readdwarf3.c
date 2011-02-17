@@ -1,6 +1,6 @@
 
 /*--------------------------------------------------------------------*/
-/*--- Read DWARF3 ".debug_info" sections (DIE trees).              ---*/
+/*--- Read DWARF3/4 ".debug_info" sections (DIE trees).            ---*/
 /*---                                                 readdwarf3.c ---*/
 /*--------------------------------------------------------------------*/
 
@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2008-2008 OpenWorks LLP
+   Copyright (C) 2008-2010 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -33,6 +33,8 @@
    used to endorse or promote products derived from this software
    without prior written permission.
 */
+
+#if defined(VGO_linux) || defined(VGO_darwin)
 
 /* REFERENCE (without which this code will not make much sense):
 
@@ -138,6 +140,7 @@
 #include "pub_core_libcassert.h"
 #include "pub_core_libcprint.h"
 #include "pub_core_options.h"
+#include "pub_core_tooliface.h"    /* VG_(needs) */
 #include "pub_core_xarray.h"
 #include "pub_core_wordfm.h"
 #include "priv_misc.h"             /* dinfo_zalloc/free */
@@ -215,15 +218,6 @@ static /*signed*/Word get_remaining_length_Cursor ( Cursor* c ) {
 static UChar* get_address_of_Cursor ( Cursor* c ) {
    vg_assert(is_sane_Cursor(c));
    return &c->region_start_img[ c->region_next ];
-}
-
-__attribute__((noreturn)) 
-static void failWith ( Cursor* c, HChar* str ) {
-   vg_assert(c);
-   vg_assert(c->barf);
-   c->barf(str);
-   /*NOTREACHED*/
-   vg_assert(0);
 }
 
 /* FIXME: document assumptions on endianness for
@@ -344,7 +338,6 @@ static UWord get_UWord ( Cursor* c ) {
    vg_assert(0);
 }
 
-
 /* Read a DWARF3 'Initial Length' field */
 static ULong get_Initial_Length ( /*OUT*/Bool* is64,
                                   Cursor* c, 
@@ -385,7 +378,7 @@ typedef
       void (*barf)( HChar* ) __attribute__((noreturn));
       /* Is this 64-bit DWARF ? */
       Bool   is_dw64;
-      /* Which DWARF version ?  (2 or 3) */
+      /* Which DWARF version ?  (2, 3 or 4) */
       UShort version;
       /* Length of this Compilation Unit, as stated in the
          .unit_length :: InitialLength field of the CU Header.
@@ -474,97 +467,8 @@ typedef
    it more logically belongs. */
 
 
-/* "Comment_Regarding_DWARF3_Text_Biasing" (is referred to elsewhere)
-    -----------------------------------------------------------------
-    apply_kludgey_text_bias() is our mechanism for biasing text
-    addresses found in DWARF3 .debug_info, .debug_ranges, .debug_loc
-    sections.  This is a nasty and unprincipled hack.
-
-    Biasing the text svmas, so as to obtain text avmas, should be
-    straightforward, right?  We just add on di->text_bias, as
-    carefully computed by readelf.c.
-
-    That works OK most of the time.  But in the following case it fails:
-    1. The object is made in the usual way (gcc -g, etc)
-    2. The DWARF3 stuff removed from it and parked in a .debuginfo object
-    3. The remaining (base) object is then prelinked.
-
-    Prelinking changes the text svmas throughout an object by some
-    constant amount, including the DWARF3 stuff.  So if the DWARF3
-    stuff remains attached to the original object, then there is no
-    problem.  However, if the DWARF3 stuff is detached, and the
-    remaining object is prelinked and the debuginfo object isn't, then
-    we have a problem: the text bias computed for the main object
-    isn't correct for the debuginfo object.
-
-    So the following kludged is used to bias text svmas.
-
-    1. First, try with the text bias computed for the main object.  If
-       that gives an avma inside the area in which the text segment is
-       known to have been mapped, then all well and good.
-
-    2. If not, try using the avma of the text mapped area as a bias.
-       Again, if that works out, fine.  This is the heart of the
-       kludge.  It implicitly treats the svma-s to be biased as if
-       they had been prelinked to zero.
-
-    3. If even that doesn't work, just return the avma unchanged.
-
-    For each object/object-pair, we count the number of times each
-    case occurs.  We flag an error (which the user gets to see) if (3)
-    ever occurs, or if a mixture of (1) and (2) occurs.  That should
-    at least catch the most obvious snafus.
-
-    Caveats: the main remaining worry is whether this problem somehow
-    also affects the data-biasing done for case DW_OP_addr in
-    ML_(evaluate_Dwarf3_Expr) in d3basics.c.  This is currently
-    unknown.
-
-    Possible sources of info: canonical description seems to be:
-
-       http://people.redhat.com/jakub/prelink.pdf
-
-    See para at line 337 starting "DWARF 2 debugging information ..."
-
-    This thread looks like the gdb people hitting the same issue:
-
-       http://sourceware.org/ml/gdb-patches/2007-01/msg00278.html
-*/
-typedef
-   struct {
-      /* FIXED */
-      Addr     rx_map_avma;
-      SizeT    rx_map_size;
-      PtrdiffT text_bias;
-      /* VARIABLE -- count stats */
-      UWord n_straightforward_biasings;
-      UWord n_kludgey_biasings;
-      UWord n_failed_biasings;
-   }
-   KludgeyTextBiaser;
-
-static Addr apply_kludgey_text_bias ( KludgeyTextBiaser* ktb,
-                                      Addr allegedly_text_svma ) {
-   Addr res;
-   res = allegedly_text_svma + ktb->text_bias;
-   if (res >= ktb->rx_map_avma 
-       && res < ktb->rx_map_avma + ktb->rx_map_size) {
-      ktb->n_straightforward_biasings++;
-      return res;
-   }
-   res = allegedly_text_svma + ktb->rx_map_avma;
-   if (res >= ktb->rx_map_avma 
-       && res < ktb->rx_map_avma + ktb->rx_map_size) {
-      ktb->n_kludgey_biasings++;
-      return res;
-   }
-   ktb->n_failed_biasings++;
-   return allegedly_text_svma; /* this svma is a luzer */
-}
-
-
-/* Apply a text bias to a GX.  Kludgily :-( */
-static void bias_GX ( /*MOD*/GExpr* gx, KludgeyTextBiaser* ktb )
+/* Apply a text bias to a GX. */
+static void bias_GX ( /*MOD*/GExpr* gx, struct _DebugInfo* di )
 {
    UShort nbytes;
    Addr*  pA;
@@ -582,11 +486,11 @@ static void bias_GX ( /*MOD*/GExpr* gx, KludgeyTextBiaser* ktb )
       vg_assert(uc == 0);
       /* t-bias aMin */
       pA = (Addr*)p;
-      *pA = apply_kludgey_text_bias( ktb, *pA );
+      *pA += di->text_debug_bias;
       p += sizeof(Addr);
       /* t-bias aMax */
       pA = (Addr*)p;
-      *pA = apply_kludgey_text_bias( ktb, *pA );
+      *pA += di->text_debug_bias;
       p += sizeof(Addr);
       /* nbytes, and actual expression */
       nbytes = * (UShort*)p; p += sizeof(UShort);
@@ -892,8 +796,8 @@ void parse_CU_Header ( /*OUT*/CUConst* cc,
 
    /* version */
    cc->version = get_UShort( c );
-   if (cc->version != 2 && cc->version != 3)
-      cc->barf( "parse_CU_Header: is neither DWARF2 nor DWARF3" );
+   if (cc->version != 2 && cc->version != 3 && cc->version != 4)
+      cc->barf( "parse_CU_Header: is neither DWARF2 nor DWARF3 nor DWARF4" );
    TRACE_D3("   Version:       %d\n", (Int)cc->version );
 
    /* debug_abbrev_offset */
@@ -987,13 +891,13 @@ void set_abbv_Cursor ( /*OUT*/Cursor* c, Bool td3,
    /* Now iterate though the table until we find the requested
       entry. */
    while (True) {
-      ULong atag;
-      UInt  has_children;
+      //ULong atag;
+      //UInt  has_children;
       acode = get_ULEB128( c );
       if (acode == 0) break; /* end of the table */
       if (acode == abbv_code) break; /* found it */
-      atag         = get_ULEB128( c );
-      has_children = get_UChar( c );
+      /*atag         = */ get_ULEB128( c );
+      /*has_children = */ get_UChar( c );
       //TRACE_D3("   %llu      %s    [%s]\n", 
       //         acode, pp_DW_TAG(atag), pp_DW_children(has_children));
       while (True) {
@@ -1071,10 +975,20 @@ void get_Form_contents ( /*OUT*/ULong* cts,
          *ctsSzB = 8;
          TRACE_D3("%llu", *cts);
          break;
+      case DW_FORM_sec_offset:
+         *cts = (ULong)get_Dwarfish_UWord( c, cc->is_dw64 );
+         *ctsSzB = cc->is_dw64 ? 8 : 4;
+         TRACE_D3("%llu", *cts);
+         break;
       case DW_FORM_sdata:
          *cts = (ULong)(Long)get_SLEB128(c);
          *ctsSzB = 8;
          TRACE_D3("%lld", (Long)*cts);
+         break;
+      case DW_FORM_udata:
+         *cts = (ULong)(Long)get_ULEB128(c);
+         *ctsSzB = 8;
+         TRACE_D3("%llu", (Long)*cts);
          break;
       case DW_FORM_addr:
          /* note, this is a hack.  DW_FORM_addr is defined as getting
@@ -1142,9 +1056,41 @@ void get_Form_contents ( /*OUT*/ULong* cts,
          *ctsMemSzB = 1 + (ULong)VG_(strlen)(str);
          break;
       }
+      case DW_FORM_ref1: {
+         UChar  u8 = get_UChar(c);
+         UWord res = cc->cu_start_offset + (UWord)u8;
+         *cts = (ULong)res;
+         *ctsSzB = sizeof(UWord);
+         TRACE_D3("<%lx>", res);
+         break;
+      }
+      case DW_FORM_ref2: {
+         UShort  u16 = get_UShort(c);
+         UWord res = cc->cu_start_offset + (UWord)u16;
+         *cts = (ULong)res;
+         *ctsSzB = sizeof(UWord);
+         TRACE_D3("<%lx>", res);
+         break;
+      }
       case DW_FORM_ref4: {
          UInt  u32 = get_UInt(c);
          UWord res = cc->cu_start_offset + (UWord)u32;
+         *cts = (ULong)res;
+         *ctsSzB = sizeof(UWord);
+         TRACE_D3("<%lx>", res);
+         break;
+      }
+      case DW_FORM_ref8: {
+         ULong  u64 = get_ULong(c);
+         UWord res = cc->cu_start_offset + (UWord)u64;
+         *cts = (ULong)res;
+         *ctsSzB = sizeof(UWord);
+         TRACE_D3("<%lx>", res);
+         break;
+      }
+      case DW_FORM_ref_udata: {
+         ULong  u64 = get_ULEB128(c);
+         UWord res = cc->cu_start_offset + (UWord)u64;
          *cts = (ULong)res;
          *ctsSzB = sizeof(UWord);
          TRACE_D3("<%lx>", res);
@@ -1157,6 +1103,11 @@ void get_Form_contents ( /*OUT*/ULong* cts,
          *ctsSzB = 1;
          break;
       }
+      case DW_FORM_flag_present:
+         TRACE_D3("1");
+         *cts = 1;
+         *ctsSzB = 1;
+         break;
       case DW_FORM_block1: {
          ULong  u64b;
          ULong  u64 = (ULong)get_UChar(c);
@@ -1183,6 +1134,50 @@ void get_Form_contents ( /*OUT*/ULong* cts,
          *ctsMemSzB = (UWord)u64;
          break;
       }
+      case DW_FORM_block4: {
+         ULong  u64b;
+         ULong  u64 = (ULong)get_UInt(c);
+         UChar* block = get_address_of_Cursor(c);
+         TRACE_D3("%llu byte block: ", u64);
+         for (u64b = u64; u64b > 0; u64b--) {
+            UChar u8 = get_UChar(c);
+            TRACE_D3("%x ", (UInt)u8);
+         }
+         *cts = (ULong)(UWord)block;
+         *ctsMemSzB = (UWord)u64;
+         break;
+      }
+      case DW_FORM_exprloc:
+      case DW_FORM_block: {
+         ULong  u64b;
+         ULong  u64 = (ULong)get_ULEB128(c);
+         UChar* block = get_address_of_Cursor(c);
+         TRACE_D3("%llu byte block: ", u64);
+         for (u64b = u64; u64b > 0; u64b--) {
+            UChar u8 = get_UChar(c);
+            TRACE_D3("%x ", (UInt)u8);
+         }
+         *cts = (ULong)(UWord)block;
+         *ctsMemSzB = (UWord)u64;
+         break;
+      }
+      case DW_FORM_ref_sig8: {
+         ULong  u64b;
+         UChar* block = get_address_of_Cursor(c);
+         TRACE_D3("8 byte signature: ");
+         for (u64b = 8; u64b > 0; u64b--) {
+            UChar u8 = get_UChar(c);
+            TRACE_D3("%x ", (UInt)u8);
+         }
+         *cts = (ULong)(UWord)block;
+         *ctsMemSzB = 8;
+         break;
+      }
+      case DW_FORM_indirect:
+         get_Form_contents (cts, ctsSzB, ctsMemSzB, cc, c, td3,
+                            (DW_FORM)get_ULEB128(c));
+         return;
+
       default:
          VG_(printf)(
             "get_Form_contents: unhandled %d (%s) at <%lx>\n",
@@ -1392,13 +1387,7 @@ void read_filename_table( /*MOD*/D3VarParser* parser,
    Bool   is_dw64;
    Cursor c;
    Word   i;
-   ULong  unit_length;
    UShort version;
-   ULong  header_length;
-   UChar  minimum_instruction_length;
-   UChar  default_is_stmt;
-   Char   line_base;
-   UChar  line_range;
    UChar  opcode_base;
    UChar* str;
 
@@ -1411,18 +1400,20 @@ void read_filename_table( /*MOD*/D3VarParser* parser,
                 cc->debug_line_sz, debug_line_offset, cc->barf, 
                 "Overrun whilst reading .debug_line section(1)" );
 
-   unit_length 
-      = get_Initial_Length( &is_dw64, &c,
+   /* unit_length = */
+      get_Initial_Length( &is_dw64, &c,
            "read_filename_table: invalid initial-length field" );
    version = get_UShort( &c );
-   if (version != 2)
-     cc->barf("read_filename_table: Only DWARF version 2 line info "
+   if (version != 2 && version != 3 && version != 4)
+     cc->barf("read_filename_table: Only DWARF version 2, 3 and 4 line info "
               "is currently supported.");
-   header_length = (ULong)get_Dwarfish_UWord( &c, is_dw64 );
-   minimum_instruction_length = get_UChar( &c );
-   default_is_stmt            = get_UChar( &c );
-   line_base                  = (Char)get_UChar( &c );
-   line_range                 = get_UChar( &c );
+   /*header_length              = (ULong)*/ get_Dwarfish_UWord( &c, is_dw64 );
+   /*minimum_instruction_length = */ get_UChar( &c );
+   if (version >= 4)
+      /*maximum_operations_per_insn = */ get_UChar( &c );
+   /*default_is_stmt            = */ get_UChar( &c );
+   /*line_base                  = (Char)*/ get_UChar( &c );
+   /*line_range                 = */ get_UChar( &c );
    opcode_base                = get_UChar( &c );
    /* skip over "standard_opcode_lengths" */
    for (i = 1; i < (Word)opcode_base; i++)
@@ -1673,7 +1664,6 @@ static void parse_var_DIE (
       GExpr* gexpr       = NULL;
       Int    n_attrs     = 0;
       UWord  abs_ori     = (UWord)D3_INVALID_CUOFF;
-      Bool   declaration = False;
       Int    lineNo      = 0;
       UChar* fileName    = NULL;
       while (True) {
@@ -1703,7 +1693,7 @@ static void parse_var_DIE (
             abs_ori = (UWord)cts;
          }
          if (attr == DW_AT_declaration && ctsSzB > 0 && cts > 0) {
-            declaration = True;
+            /*declaration = True;*/
          }
          if (attr == DW_AT_decl_line && ctsSzB > 0) {
             lineNo = (Int)cts;
@@ -1769,7 +1759,7 @@ static void parse_var_DIE (
                if (0 && VG_(clo_verbosity) >= 0) {
                   VG_(message)(Vg_DebugMsg, 
                      "warning: parse_var_DIE: non-external variable "
-                     "outside DW_TAG_subprogram");
+                     "outside DW_TAG_subprogram\n");
                }
                /* goto bad_DIE; */
                /* This seems to happen a lot.  Just ignore it -- if,
@@ -2119,7 +2109,7 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
             case DW_LANG_C89: case DW_LANG_C:
             case DW_LANG_C_plus_plus: case DW_LANG_ObjC:
             case DW_LANG_ObjC_plus_plus: case DW_LANG_UPC:
-            case DW_LANG_Upc:
+            case DW_LANG_Upc: case DW_LANG_C99:
                parser->language = 'C'; break;
             case DW_LANG_Fortran77: case DW_LANG_Fortran90:
             case DW_LANG_Fortran95:
@@ -2127,8 +2117,8 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
             case DW_LANG_Ada83: case DW_LANG_Cobol74:
             case DW_LANG_Cobol85: case DW_LANG_Pascal83:
             case DW_LANG_Modula2: case DW_LANG_Java:
-            case DW_LANG_C99: case DW_LANG_Ada95:
-            case DW_LANG_PLI: case DW_LANG_D:
+            case DW_LANG_Ada95: case DW_LANG_PLI:
+            case DW_LANG_D: case DW_LANG_Python:
             case DW_LANG_Mips_Assembler:
                parser->language = '?'; break;
             default:
@@ -2159,6 +2149,7 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
          if (attr == DW_AT_encoding && ctsSzB > 0) {
             switch (cts) {
                case DW_ATE_unsigned: case DW_ATE_unsigned_char:
+               case DW_ATE_UTF: /* since DWARF4, e.g. char16_t from C++ */
                case DW_ATE_boolean:/* FIXME - is this correct? */
                   typeE.Te.TyBase.enc = 'U'; break;
                case DW_ATE_signed: case DW_ATE_signed_char:
@@ -2401,6 +2392,14 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
          if (typeE.Te.TyStOrUn.name == NULL)
             goto bad_DIE;
          typeE.Te.TyStOrUn.complete = False;
+         /* JRS 2009 Aug 10: <possible kludge>? */
+         /* Push this tyent on the stack, even though it's incomplete.
+            It appears that gcc-4.4 on Fedora 11 will sometimes create
+            DW_TAG_member entries for it, and so we need to have a
+            plausible parent present in order for that to work.  See
+            #200029 comments 8 and 9. */
+         typestack_push( cc, parser, td3, &typeE, level );
+         /* </possible kludge> */
          goto acquire_Type;
       }
       if ((!is_decl) /* && (!is_spec) */) {
@@ -2442,9 +2441,16 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
          if (attr == DW_AT_type && ctsSzB > 0) {
             fieldE.Te.Field.typeR = (UWord)cts;
          }
-         if (attr == DW_AT_data_member_location && ctsMemSzB > 0) {
+         /* There are 2 different cases for DW_AT_data_member_location.
+            If it is a constant class attribute, it contains byte offset
+            from the beginning of the containing entity.
+            Otherwise it is a location expression.  */
+         if (attr == DW_AT_data_member_location && ctsSzB > 0) {
+            fieldE.Te.Field.nLoc = -1;
+            fieldE.Te.Field.pos.offset = cts;
+         } else if (attr == DW_AT_data_member_location && ctsMemSzB > 0) {
             fieldE.Te.Field.nLoc = (UWord)ctsMemSzB;
-            fieldE.Te.Field.loc
+            fieldE.Te.Field.pos.loc
                = ML_(dinfo_memdup)( "di.readdwarf3.ptD.member.2",
                                     (UChar*)(UWord)cts, 
                                     (SizeT)fieldE.Te.Field.nLoc );
@@ -2471,23 +2477,29 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
       vg_assert(fieldE.Te.Field.name);
       if (fieldE.Te.Field.typeR == D3_INVALID_CUOFF)
          goto bad_DIE;
-      if (parent_is_struct && (!fieldE.Te.Field.loc))
-         goto bad_DIE;
-      if ((!parent_is_struct) && fieldE.Te.Field.loc) {
-         /* If this is a union type, pretend we haven't seen the data
-            member location expression, as it is by definition
-            redundant (it must be zero). */
-         ML_(dinfo_free)(fieldE.Te.Field.loc);
-         fieldE.Te.Field.loc  = NULL;
-         fieldE.Te.Field.nLoc = 0;
+      if (fieldE.Te.Field.nLoc) {
+         if (!parent_is_struct) {
+            /* If this is a union type, pretend we haven't seen the data
+               member location expression, as it is by definition
+               redundant (it must be zero). */
+            if (fieldE.Te.Field.nLoc > 0)
+               ML_(dinfo_free)(fieldE.Te.Field.pos.loc);
+            fieldE.Te.Field.pos.loc = NULL;
+            fieldE.Te.Field.nLoc = 0;
+         }
+         /* Record this child in the parent */
+         fieldE.Te.Field.isStruct = parent_is_struct;
+         vg_assert(parser->qparentE[parser->sp].Te.TyStOrUn.fieldRs);
+         VG_(addToXA)( parser->qparentE[parser->sp].Te.TyStOrUn.fieldRs,
+                       &posn );
+         /* And record the child itself */
+         goto acquire_Field;
+      } else {
+         /* Member with no location - this can happen with static
+            const members in C++ code which are compile time constants
+            that do no exist in the class. They're not of any interest
+            to us so we ignore them. */
       }
-      /* Record this child in the parent */
-      fieldE.Te.Field.isStruct = parent_is_struct;
-      vg_assert(parser->qparentE[parser->sp].Te.TyStOrUn.fieldRs);
-      VG_(addToXA)( parser->qparentE[parser->sp].Te.TyStOrUn.fieldRs,
-                    &posn );
-      /* And record the child itself */
-      goto acquire_Field;
    }
 
    if (dtag == DW_TAG_array_type) {
@@ -2522,7 +2534,6 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
       Bool have_count = False;
       Long lower = 0;
       Long upper = 0;
-      Long count = 0;
 
       switch (parser->language) {
          case 'C': have_lower = True;  lower = 0; break;
@@ -2550,7 +2561,7 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
             have_upper = True;
          }
          if (attr == DW_AT_count && ctsSzB > 0) {
-            count      = cts;
+            /*count    = (Long)cts;*/
             have_count = True;
          }
       }
@@ -2571,11 +2582,23 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
          boundE.Te.Bound.knownU = True;
          boundE.Te.Bound.boundL = lower;
          boundE.Te.Bound.boundU = upper;
-      } 
+      }
       else if (have_lower && (!have_upper) && (!have_count)) {
          boundE.Te.Bound.knownL = True;
          boundE.Te.Bound.knownU = False;
          boundE.Te.Bound.boundL = lower;
+         boundE.Te.Bound.boundU = 0;
+      }
+      else if ((!have_lower) && have_upper && (!have_count)) {
+         boundE.Te.Bound.knownL = False;
+         boundE.Te.Bound.knownU = True;
+         boundE.Te.Bound.boundL = 0;
+         boundE.Te.Bound.boundU = upper;
+      }
+      else if ((!have_lower) && (!have_upper) && (!have_count)) {
+         boundE.Te.Bound.knownL = False;
+         boundE.Te.Bound.knownU = False;
+         boundE.Te.Bound.boundL = 0;
          boundE.Te.Bound.boundU = 0;
       } else {
          /* FIXME: handle more cases */
@@ -2686,10 +2709,10 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
    /* For union members, Expr should be absent */
    if (0) VG_(printf)("YYYY Acquire Field\n");
    vg_assert(fieldE.tag == Te_Field);
-   vg_assert( (fieldE.Te.Field.nLoc > 0 && fieldE.Te.Field.loc != NULL)
-              || (fieldE.Te.Field.nLoc == 0 && fieldE.Te.Field.loc == NULL) );
+   vg_assert(fieldE.Te.Field.nLoc <= 0 || fieldE.Te.Field.pos.loc != NULL);
+   vg_assert(fieldE.Te.Field.nLoc != 0 || fieldE.Te.Field.pos.loc == NULL);
    if (fieldE.Te.Field.isStruct) {
-      vg_assert(fieldE.Te.Field.nLoc > 0);
+      vg_assert(fieldE.Te.Field.nLoc != 0);
    } else {
       vg_assert(fieldE.Te.Field.nLoc == 0);
    }
@@ -3206,8 +3229,6 @@ void new_dwarf3_reader_wrk (
    Word  i, j, n;
    Bool td3 = di->trace_symtab;
    XArray* /* of TempVar* */ dioff_lookup_tab;
-   Bool text_biasing_borked;
-   KludgeyTextBiaser ktb;
 #if 0
    /* This doesn't work properly because it assumes all entries are
       packed end to end, with no holes.  But that doesn't always
@@ -3628,19 +3649,14 @@ void new_dwarf3_reader_wrk (
    vg_assert(!di->admin_tyents);
    di->admin_tyents = tyents_to_keep;
 
-   /* Bias all the location expressions.  See
-      "Comment_Regarding_DWARF3_Text_Biasing" above. */
+   /* Bias all the location expressions. */
    TRACE_D3("\n");
    TRACE_D3("------ Biasing the location expressions ------\n" );
-   VG_(memset)( &ktb, 0, sizeof(ktb ));
-   ktb.rx_map_avma = di->rx_map_avma;
-   ktb.rx_map_size = di->rx_map_size;
-   ktb.text_bias   = di->text_bias;
 
    n = VG_(sizeXA)( gexprs );
    for (i = 0; i < n; i++) {
       gexpr = *(GExpr**)VG_(indexXA)( gexprs, i );
-      bias_GX( gexpr, &ktb );
+      bias_GX( gexpr, di );
    }
 
    TRACE_D3("\n");
@@ -3735,8 +3751,11 @@ void new_dwarf3_reader_wrk (
          key.dioff = varp->absOri; /* this is what we want to find */
          found = VG_(lookupXA)( dioff_lookup_tab, &keyp,
                                 &ixFirst, &ixLast );
-         if (!found)
-            barf("DW_AT_abstract_origin can't be resolved");
+         if (!found) {
+            /* barf("DW_AT_abstract_origin can't be resolved"); */
+            TRACE_D3("  SKIP (DW_AT_abstract_origin can't be resolved)\n\n");
+            continue;
+         }
          /* If the following fails, there is more than one entry with
             the same dioff.  Which can't happen. */
          vg_assert(ixFirst == ixLast);
@@ -3830,8 +3849,8 @@ void new_dwarf3_reader_wrk (
 
            /* Apply text biasing, for non-global variables. */
            if (varp->level > 0) {
-              pcMin = apply_kludgey_text_bias( &ktb, pcMin );
-              pcMax = apply_kludgey_text_bias( &ktb, pcMax );
+              pcMin += di->text_debug_bias;
+              pcMax += di->text_debug_bias;
            } 
 
            if (i > 0 && (i%2) == 0) 
@@ -3851,27 +3870,6 @@ void new_dwarf3_reader_wrk (
       TRACE_D3("\n\n");
       /* and move on to the next var */
    }
-
-   /* For the text biasing to work out, we expect that:
-      - there were no failures, and
-      - either all were done straightforwardly, or all kludgily,
-        but not with a mixture
-   */ 
-   text_biasing_borked 
-      = ktb.n_failed_biasings > 0 
-        || (ktb.n_straightforward_biasings > 0 && ktb.n_kludgey_biasings > 0);
-
-   if (td3 || text_biasing_borked) {
-      VG_(printf)("TEXT SVMA BIASING STATISTICS:\n");
-      VG_(printf)("   straightforward biasings: %lu\n",
-                  ktb.n_straightforward_biasings );
-      VG_(printf)("           kludgey biasings: %lu\n",
-                  ktb.n_kludgey_biasings );
-      VG_(printf)("            failed biasings: %lu\n\n",
-                  ktb.n_failed_biasings );
-   }
-   if (text_biasing_borked)
-      barf("couldn't make sense of DWARF3 text-svma biasing; details above");
 
    /* Now free all the TempVars */
    n = VG_(sizeXA)( tempvars );
@@ -4029,6 +4027,8 @@ ML_(new_dwarf3_reader) (
    TRACE_SYMTAB("\n");
 #endif
 
+#endif // defined(VGO_linux) || defined(VGO_darwin)
+
 /*--------------------------------------------------------------------*/
-/*--- end                                             readdwarf3.c ---*/
+/*--- end                                                          ---*/
 /*--------------------------------------------------------------------*/

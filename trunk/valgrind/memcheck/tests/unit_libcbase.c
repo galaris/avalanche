@@ -4,11 +4,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "pub_tool_basics.h"  /* UInt et al, needed for pub_tool_vki.h */
 #include "pub_tool_vki.h"
 #include "m_libcbase.c"
 
 #define  CHECK(x) \
    if (!x) { fprintf(stderr, "failure: %s:%d\n", __FILE__, __LINE__); }
+
 
 void test_VG_STREQ(void)
 {
@@ -52,6 +54,11 @@ void test_VG_STREQN(void)
    CHECK( VG_STREQN(1, "ab",   "ac"));
    CHECK( VG_STREQN(3, "abcd", "abce"));
 }
+
+// On PPC/Linux VKI_PAGE_SIZE is a variable, not a macro.
+#if defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
+unsigned long VKI_PAGE_SIZE  = 1UL << 12;
+#endif
 
 void test_VG_IS_XYZ_ALIGNED(void)
 {

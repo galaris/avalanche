@@ -85,7 +85,7 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
   {
     isRead = False;
   }
-  else if ((syscallno == __NR_clone) && !res.isError && (res.res == 0))
+  else if ((syscallno == __NR_clone) && !sr_isError(res) && (sr_Res(res) == 0))
   {
     //VG_(printf)("__NR_clone\n");
     //VG_(exit)(0);
@@ -124,7 +124,7 @@ static void cv_fini(Int exitcode)
     {
       fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
     }
-    if (fd.res != -1)
+    if (sr_Res(fd) != -1)
     {
       while (n != NULL)
       {
@@ -135,10 +135,10 @@ static void cv_fini(Int exitcode)
 #else
 #  error Unknown arch
 #endif
-        VG_(write)(fd.res, &addr, sizeof(addr));
+        VG_(write)(sr_Res(fd), &addr, sizeof(addr));
         n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
       }
-      VG_(close)(fd.res);
+      VG_(close)(sr_Res(fd));
     }
   }
 }
@@ -175,7 +175,7 @@ static Bool cv_process_cmd_line_option(Char* arg)
   else if (VG_STR_CLO(arg, "--replace",  dataToReplace))
   { 
     replace = True;
-    Int fd = VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
     VG_(read)(fd, &socketsNum, 4);
     socketsBoundary = socketsNum;
     if (socketsNum > 0)

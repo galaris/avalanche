@@ -8,7 +8,7 @@
    This file is part of Helgrind, a Valgrind tool for detecting errors
    in threaded programs.
 
-   Copyright (C) 2007-2008 OpenWorks Ltd
+   Copyright (C) 2007-2010 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -74,7 +74,7 @@ Bool  HG_(clo_track_lockorders) = True;
 
 Bool  HG_(clo_cmp_race_err_addrs) = False;
 
-Bool  HG_(clo_show_conflicts) = True;
+UWord HG_(clo_history_level) = 2;
 
 UWord HG_(clo_conflict_cache_size) = 1000000;
 

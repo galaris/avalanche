@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -46,6 +46,11 @@
 /* This module is also notable because it is linked into both 
    stage1 and stage2. */
 
+/* IMPORTANT: on Darwin it is essential to use the _nocancel versions
+   of syscalls rather than the vanilla version, if a _nocancel version
+   is available.  See docs/internals/Darwin-notes.txt for the reason
+   why. */
+
 #include "pub_core_basics.h"     /* basic types */
 #include "pub_core_vkiscnums.h"  /* for syscall numbers */
 #include "pub_core_debuglog.h"   /* our own iface */
@@ -71,7 +76,7 @@ static UInt local_sys_write_stderr ( HChar* buf, Int n )
       "movl  0(%%ebx), %%ecx\n" /* %ecx = buf */
       "movl  4(%%ebx), %%edx\n" /* %edx = n */
       "movl  $"VG_STRINGIFY(__NR_write)", %%eax\n" /* %eax = __NR_write */
-      "movl  $1, %%ebx\n"       /* %ebx = stderr */
+      "movl  $2, %%ebx\n"       /* %ebx = stderr */
       "int   $0x80\n"           /* write(stderr, buf, n) */
       "popl  %%ebx\n"           /* reestablish &block */
       "movl  %%eax, 0(%%ebx)\n" /* block[0] = result */
@@ -225,6 +230,42 @@ static UInt local_sys_getpid ( void )
         "r0","r2","r4","r5","r6","r7","r8","r9","r10","r11","r12"
    );
    return (UInt)__res;
+}
+
+#elif defined(VGP_arm_linux)
+
+static UInt local_sys_write_stderr ( HChar* buf, Int n )
+{
+   volatile Int block[2];
+   block[0] = (Int)buf;
+   block[1] = n;
+   __asm__ volatile (
+      "mov  r0, #2\n\t"        /* stderr */
+      "ldr  r1, [%0]\n\t"      /* buf */
+      "ldr  r2, [%0, #4]\n\t"  /* n */
+      "mov  r7, #"VG_STRINGIFY(__NR_write)"\n\t"
+      "svc  0x0\n"          /* write() */
+      "str  r0, [%0]\n\t"
+      :
+      : "r" (block)
+      : "r0","r1","r2","r7"
+   );
+   if (block[0] < 0)
+      block[0] = -1;
+   return (UInt)block[0];
+}
+
+static UInt local_sys_getpid ( void )
+{
+   UInt __res;
+   __asm__ volatile (
+      "mov  r7, #"VG_STRINGIFY(__NR_getpid)"\n"
+      "svc  0x0\n"      /* getpid() */
+      "mov  %0, r0\n"
+      : "=r" (__res)
+      :
+      : "r0", "r7" );
+   return __res;
 }
 
 #elif defined(VGP_ppc32_aix5)
@@ -391,6 +432,88 @@ static UInt local_sys_getpid ( void )
                         "cr4","cr5","cr6","cr7"
    );
    return (UInt)block[0];
+}
+
+#elif defined(VGP_x86_darwin)
+
+/* We would use VG_DARWIN_SYSNO_TO_KERNEL instead of VG_DARWIN_SYSNO_INDEX
+   except that the former has a C ternary ?: operator which isn't valid in
+   asm code.  Both macros give the same results for Unix-class syscalls (which
+   these all are, as identified by the use of 'int 0x80'). */
+__attribute__((noinline))
+static UInt local_sys_write_stderr ( HChar* buf, Int n )
+{
+   UInt __res;
+   __asm__ volatile (
+      "movl  %2, %%eax\n"    /* push n */
+      "pushl %%eax\n"
+      "movl  %1, %%eax\n"    /* push buf */
+      "pushl %%eax\n"
+      "movl  $2, %%eax\n"    /* push stderr */
+      "pushl %%eax\n"
+      "movl  $"VG_STRINGIFY(VG_DARWIN_SYSNO_INDEX(__NR_write_nocancel))
+             ", %%eax\n"
+      "pushl %%eax\n"        /* push fake return address */
+      "int   $0x80\n"        /* write(stderr, buf, n) */
+      "jnc   1f\n"           /* jump if no error */
+      "movl  $-1, %%eax\n"   /* return -1 if error */
+      "1: "
+      "movl  %%eax, %0\n"    /* __res = eax */
+      "addl  $16, %%esp\n"   /* pop x4 */
+      : "=mr" (__res)
+      : "g" (buf), "g" (n)
+      : "eax", "edx", "cc"
+   );
+   return __res;
+}
+
+static UInt local_sys_getpid ( void )
+{
+   UInt __res;
+   __asm__ volatile (
+      "movl $"VG_STRINGIFY(VG_DARWIN_SYSNO_INDEX(__NR_getpid))", %%eax\n"
+      "int  $0x80\n"       /* getpid() */
+      "movl %%eax, %0\n"   /* set __res = eax */
+      : "=mr" (__res)
+      :
+      : "eax", "cc" );
+   return __res;
+}
+
+#elif defined(VGP_amd64_darwin)
+
+__attribute__((noinline))
+static UInt local_sys_write_stderr ( HChar* buf, Int n )
+{
+   UInt __res;
+   __asm__ volatile (
+      "movq  $2, %%rdi\n"    /* push stderr */
+      "movq  %1, %%rsi\n"    /* push buf */
+      "movl  %2, %%edx\n"    /* push n */
+      "movl  $"VG_STRINGIFY(VG_DARWIN_SYSNO_FOR_KERNEL(__NR_write_nocancel))
+             ", %%eax\n"
+      "syscall\n"            /* write(stderr, buf, n) */
+      "jnc   1f\n"           /* jump if no error */
+      "movq  $-1, %%rax\n"   /* return -1 if error */
+      "1: "
+      "movl  %%eax, %0\n"    /* __res = eax */
+      : "=mr" (__res)
+      : "g" (buf), "g" (n)
+      : "rdi", "rsi", "rdx", "rcx", "rax", "cc" );
+   return __res;
+}
+
+static UInt local_sys_getpid ( void )
+{
+   UInt __res;
+   __asm__ volatile (
+      "movl $"VG_STRINGIFY(VG_DARWIN_SYSNO_FOR_KERNEL(__NR_getpid))", %%eax\n"
+      "syscall\n"          /* getpid() */
+      "movl %%eax, %0\n"   /* set __res = eax */
+      : "=mr" (__res)
+      :
+      : "rax", "rcx", "cc" );
+   return __res;
 }
 
 #else
@@ -693,6 +816,18 @@ VG_(debugLog_vprintf) (
       else                { is_long = True; }
 
       switch (format[i]) {
+         case 'o': /* %o */
+            if (flags & VG_MSG_ALTFORMAT) {
+               ret += 2;
+               send('0',send_arg2);
+            }
+            if (is_long)
+               ret += myvprintf_int64(send, send_arg2, flags, 8, width, False,
+                                      (ULong)(va_arg (vargs, ULong)));
+            else
+               ret += myvprintf_int64(send, send_arg2, flags, 8, width, False,
+                                      (ULong)(va_arg (vargs, UInt)));
+            break;
          case 'd': /* %d */
             flags |= VG_MSG_SIGNED;
             if (is_long)
@@ -833,7 +968,6 @@ static void add_to_buf ( HChar c, void* p )
 /* Send a logging message.  Nothing is output unless 'level'
    is <= the current loglevel. */
 /* EXPORTED */
-__attribute__((format(__printf__, 3, 4)))
 void VG_(debugLog) ( Int level, const HChar* modulename,
                                 const HChar* format, ... )
 {

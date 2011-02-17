@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -56,15 +56,21 @@ extern void VG_(di_initialise) ( void );
    in later queries to m_debuginfo.  In this case the handle value
    will be one or above.  If the returned value is zero, no debug info
    was read. */
-#if defined(VGO_linux)
+#if defined(VGO_linux)  ||  defined(VGO_darwin)
 extern ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV );
 
 extern void VG_(di_notify_munmap)( Addr a, SizeT len );
 
 extern void VG_(di_notify_mprotect)( Addr a, SizeT len, UInt prot );
+
+/* this should really return ULong, as per VG_(di_notify_mmap). */
+extern void VG_(di_notify_pdb_debuginfo)( Int fd, Addr avma,
+                                          SizeT total_size,
+                                          PtrdiffT unknown_purpose__reloc );
 #endif
 
 #if defined(VGO_aix5)
+// GrP fixme use this instead for darwin?
 /* AIX5: Very similar, except packaged more neatly.  The supplied
    parameters describe a code segment and its associated data segment,
    that have recently been mapped in -- so we need to read debug info
@@ -100,12 +106,38 @@ Bool VG_(get_fnname_raw) ( Addr a, Char* buf, Int nbuf );
 extern
 Bool VG_(get_fnname_no_cxx_demangle) ( Addr a, Char* buf, Int nbuf );
 
-/* Use DWARF2/3 CFA information to do one step of stack unwinding. */
-extern Bool VG_(use_CF_info) ( /*MOD*/Addr* ipP,
-                               /*MOD*/Addr* spP,
-                               /*MOD*/Addr* fpP,
+
+/* Use DWARF2/3 CFA information to do one step of stack unwinding.
+   D3UnwindRegs holds the current register values, and is
+   arch-specific.  Note that the x86 and amd64 definitions are shared
+   and so the regs are named 'xip' etc rather than 'eip' and 'rip'. */
+#if defined(VGA_amd64) || defined(VGA_x86)
+typedef
+   struct { Addr xip; Addr xsp; Addr xbp; }
+   D3UnwindRegs;
+#elif defined(VGA_arm)
+typedef
+   struct { Addr r15; Addr r14; Addr r13; Addr r12; Addr r11; Addr r7; }
+   D3UnwindRegs;
+#elif defined(VGA_ppc32) || defined(VGA_ppc64)
+typedef
+   UChar  /* should be void, but gcc complains at use points */
+   D3UnwindRegs;
+#else
+#  error "Unsupported arch"
+#endif
+
+extern Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregs,
                                Addr min_accessible,
                                Addr max_accessible );
+
+
+/* Use MSVC FPO data to do one step of stack unwinding. */
+extern Bool VG_(use_FPO_info) ( /*MOD*/Addr* ipP,
+                                /*MOD*/Addr* spP,
+                                /*MOD*/Addr* fpP,
+                                Addr min_accessible,
+                                Addr max_accessible );
 
 /* ppc64-linux only: find the TOC pointer (R2 value) that should be in
    force at the entry point address of the function containing

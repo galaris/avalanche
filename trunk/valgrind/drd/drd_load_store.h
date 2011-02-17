@@ -1,7 +1,8 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -37,16 +38,19 @@
 
 Bool DRD_(get_check_stack_accesses)(void);
 void DRD_(set_check_stack_accesses)(const Bool c);
+Bool DRD_(get_first_race_only)(void);
+void DRD_(set_first_race_only)(const Bool fro);
 IRSB* DRD_(instrument)(VgCallbackClosure* const closure,
                        IRSB* const bb_in,
                        VexGuestLayout* const layout,
-                       VexGuestExtents* const vge, 
+                       VexGuestExtents* const vge,
                        IRType const gWordTy,
                        IRType const hWordTy);
 void DRD_(trace_mem_access)(const Addr addr, const SizeT size,
                             const BmAccessTypeT access_type);
 VG_REGPARM(2) void DRD_(trace_load)(Addr addr, SizeT size);
 VG_REGPARM(2) void DRD_(trace_store)(Addr addr, SizeT size);
+void DRD_(clean_memory)(const Addr a1, const SizeT len);
 
 
 #endif //  __DRD_LOAD_STORE_H

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Nicholas Nethercote
+   Copyright (C) 2000-2010 Nicholas Nethercote
       njn@valgrind.org
 
    This program is free software; you can redistribute it and/or
@@ -47,6 +47,13 @@ extern SysRes ML_(do_fork_clone) ( ThreadId tid, UInt flags,
 DECL_TEMPLATE(linux, sys_mount);
 DECL_TEMPLATE(linux, sys_oldumount);
 DECL_TEMPLATE(linux, sys_umount);
+DECL_TEMPLATE(linux, sys_perf_counter_open);
+DECL_TEMPLATE(linux, sys_preadv);
+DECL_TEMPLATE(linux, sys_pwritev);
+DECL_TEMPLATE(linux, sys_dup3);
+DECL_TEMPLATE(linux, sys_getcpu);
+DECL_TEMPLATE(linux, sys_splice);
+DECL_TEMPLATE(linux, sys_readahead);
 
 // POSIX, but various sub-cases differ between Linux and Darwin.
 DECL_TEMPLATE(linux, sys_fcntl);
@@ -85,11 +92,14 @@ DECL_TEMPLATE(linux, sys_pselect6);
 DECL_TEMPLATE(linux, sys_ppoll);
 
 DECL_TEMPLATE(linux, sys_epoll_create);
+DECL_TEMPLATE(linux, sys_epoll_create1);
 DECL_TEMPLATE(linux, sys_epoll_ctl);
 DECL_TEMPLATE(linux, sys_epoll_wait);
 DECL_TEMPLATE(linux, sys_epoll_pwait);
 DECL_TEMPLATE(linux, sys_eventfd);
 DECL_TEMPLATE(linux, sys_eventfd2);
+
+DECL_TEMPLATE(linux, sys_fallocate);
 
 DECL_TEMPLATE(linux, sys_gettid);
 DECL_TEMPLATE(linux, sys_set_tid_address);
@@ -113,6 +123,7 @@ DECL_TEMPLATE(linux, sys_set_mempolicy);
 DECL_TEMPLATE(linux, sys_get_mempolicy);
 
 DECL_TEMPLATE(linux, sys_inotify_init);
+DECL_TEMPLATE(linux, sys_inotify_init1);
 DECL_TEMPLATE(linux, sys_inotify_add_watch);
 DECL_TEMPLATE(linux, sys_inotify_rm_watch);
 
@@ -206,7 +217,7 @@ DECL_TEMPLATE(linux, sys_sched_getscheduler);
 DECL_TEMPLATE(linux, sys_sched_yield);
 DECL_TEMPLATE(linux, sys_sched_get_priority_max);
 DECL_TEMPLATE(linux, sys_sched_get_priority_min);
-//DECL_TEMPLATE(linux, sys_sched_rr_get_interval);    // not yet encountered
+DECL_TEMPLATE(linux, sys_sched_rr_get_interval);
 DECL_TEMPLATE(linux, sys_sched_setaffinity);
 DECL_TEMPLATE(linux, sys_sched_getaffinity);
 
@@ -234,10 +245,12 @@ DECL_TEMPLATE(linux, sys_rt_sigprocmask);
 DECL_TEMPLATE(linux, sys_rt_sigpending);
 DECL_TEMPLATE(linux, sys_rt_sigtimedwait);
 DECL_TEMPLATE(linux, sys_rt_sigqueueinfo);
+DECL_TEMPLATE(linux, sys_rt_tgsigqueueinfo);
 DECL_TEMPLATE(linux, sys_rt_sigsuspend);
 
 // Linux-specific?
 DECL_TEMPLATE(linux, sys_sync_file_range);
+DECL_TEMPLATE(linux, sys_sync_file_range2);
 DECL_TEMPLATE(linux, sys_stime);  /* maybe generic?  I'm not sure */
 
 // Linux specific (kernel modules)

@@ -17,6 +17,10 @@
 // when memory is unaddressable, and so tries to dereference it when doing
 // PRE_MEM_READ/PRE_MEM_WRITE calls.  (Note that Memcheck will
 // always issue an error message immediately before these seg faults occur).
+//
+// The output has numbers like "3s 2m" for each syscall.  "s" is short for
+// "scalar", ie. the argument itself is undefined.  "m" is short for "memory",
+// ie. the argument points to memory which is unaddressable.
 
 int main(void)
 {
@@ -367,11 +371,11 @@ int main(void)
 
    // __NR_gettimeofday 78
    GO(__NR_gettimeofday, "2s 2m");
-   SY(__NR_gettimeofday, x0, x0+1); FAIL;
+   SY(__NR_gettimeofday, x0+1, x0+1); FAIL;
 
    // __NR_settimeofday 79
    GO(__NR_settimeofday, "2s 2m");
-   SY(__NR_settimeofday, x0, x0+1); FAIL;
+   SY(__NR_settimeofday, x0+1, x0+1); FAIL;
 
    // __NR_getgroups 80
    GO(__NR_getgroups, "2s 1m");
@@ -546,9 +550,8 @@ int main(void)
 #ifndef CLONE_PARENT_SETTID
 #define CLONE_PARENT_SETTID	0x00100000
 #endif
-   // XXX: should really be "4s 2m"?  Not sure... (see PRE(sys_clone))
-   GO(__NR_clone, "4s 0m");
-   SY(__NR_clone, x0|CLONE_PARENT_SETTID|SIGCHLD, x0, x0, x0); FAIL;
+   GO(__NR_clone, "5s 3m");
+   SY(__NR_clone, x0|CLONE_PARENT_SETTID|CLONE_SETTLS|CLONE_CHILD_SETTID|SIGCHLD, x0, x0, x0, x0); FAIL;
    if (0 == res) {
       SY(__NR_exit, 0); FAIL;
    }
@@ -1247,6 +1250,10 @@ int main(void)
    // __NR_sys_kexec_load 283
    GO(__NR_sys_kexec_load, "ni");
    SY(__NR_sys_kexec_load); FAIL;
+
+   // __NR_epoll_create1 329
+   GO(__NR_epoll_create1, "1s 0m");
+   SY(__NR_epoll_create1, x0); SUCC_OR_FAIL;
 
    // no such syscall...
    GO(9999, "1e");

@@ -9,7 +9,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -68,20 +68,20 @@ void ML_(symerr) ( struct _DebugInfo* di, Bool serious, HChar* msg )
    if (serious) {
 
       VG_(message)(Vg_DebugMsg, "WARNING: Serious error when "
-                                "reading debug info");
+                                "reading debug info\n");
       if (True || VG_(clo_verbosity) < 2) {
          /* Need to show what the file name is, at verbosity levels 2
             or below, since that won't already have been shown */
          VG_(message)(Vg_DebugMsg, 
-                      "When reading debug info from %s:",
+                      "When reading debug info from %s:\n",
                       (di && di->filename) ? di->filename : (UChar*)"???");
       }
-      VG_(message)(Vg_DebugMsg, "%s", msg);
+      VG_(message)(Vg_DebugMsg, "%s\n", msg);
 
    } else { /* !serious */
 
       if (VG_(clo_verbosity) >= 2)
-         VG_(message)(Vg_DebugMsg, "%s", msg);
+         VG_(message)(Vg_DebugMsg, "%s\n", msg);
 
    }
 }
@@ -90,11 +90,11 @@ void ML_(symerr) ( struct _DebugInfo* di, Bool serious, HChar* msg )
 /* Print a symbol. */
 void ML_(ppSym) ( Int idx, DiSym* sym )
 {
-  VG_(printf)( "%5d:  %#8lx .. %#8lx (%d)      %s\n",
-               idx,
-               sym->addr, 
-               sym->addr + sym->size - 1, sym->size,
-	       sym->name );
+   VG_(printf)( "%5d:  %#8lx .. %#8lx (%d)      %s\n",
+                idx,
+                sym->addr, 
+                sym->addr + sym->size - 1, sym->size,
+	        sym->name );
 }
 
 /* Print a call-frame-info summary. */
@@ -126,11 +126,23 @@ void ML_(ppDiCfSI) ( XArray* /* of CfiExpr */ exprs, DiCfSI* si )
    VG_(printf)("[%#lx .. %#lx]: ", si->base,
                                si->base + (UWord)si->len - 1);
    switch (si->cfa_how) {
-      case CFIC_SPREL: 
+      case CFIC_IA_SPREL: 
          VG_(printf)("let cfa=oldSP+%d", si->cfa_off); 
          break;
-      case CFIC_FPREL: 
-         VG_(printf)("let cfa=oldFP+%d", si->cfa_off); 
+      case CFIC_IA_BPREL: 
+         VG_(printf)("let cfa=oldBP+%d", si->cfa_off); 
+         break;
+      case CFIC_ARM_R13REL: 
+         VG_(printf)("let cfa=oldR13+%d", si->cfa_off); 
+         break;
+      case CFIC_ARM_R12REL: 
+         VG_(printf)("let cfa=oldR12+%d", si->cfa_off); 
+         break;
+      case CFIC_ARM_R11REL: 
+         VG_(printf)("let cfa=oldR11+%d", si->cfa_off); 
+         break;
+      case CFIC_ARM_R7REL: 
+         VG_(printf)("let cfa=oldR7+%d", si->cfa_off); 
          break;
       case CFIC_EXPR: 
          VG_(printf)("let cfa={"); 
@@ -143,10 +155,26 @@ void ML_(ppDiCfSI) ( XArray* /* of CfiExpr */ exprs, DiCfSI* si )
 
    VG_(printf)(" in RA=");
    SHOW_HOW(si->ra_how, si->ra_off);
+#  if defined(VGA_x86) || defined(VGA_amd64)
    VG_(printf)(" SP=");
    SHOW_HOW(si->sp_how, si->sp_off);
-   VG_(printf)(" FP=");
-   SHOW_HOW(si->fp_how, si->fp_off);
+   VG_(printf)(" BP=");
+   SHOW_HOW(si->bp_how, si->bp_off);
+#  elif defined(VGA_arm)
+   VG_(printf)(" R14=");
+   SHOW_HOW(si->r14_how, si->r14_off);
+   VG_(printf)(" R13=");
+   SHOW_HOW(si->r13_how, si->r13_off);
+   VG_(printf)(" R12=");
+   SHOW_HOW(si->r12_how, si->r12_off);
+   VG_(printf)(" R11=");
+   SHOW_HOW(si->r11_how, si->r11_off);
+   VG_(printf)(" R7=");
+   SHOW_HOW(si->r7_how, si->r7_off);
+#  elif defined(VGA_ppc32) || defined(VGA_ppc64)
+#  else
+#    error "Unknown arch"
+#  endif
    VG_(printf)("\n");
 #  undef SHOW_HOW
 }
@@ -229,6 +257,24 @@ void ML_(addSym) ( struct _DebugInfo* di, DiSym* sym )
 }
 
 
+/* Resize the symbol table to save memory.
+*/
+void ML_(shrinkSym)( struct _DebugInfo* di )
+{
+   DiSym* new_tab;
+   UInt new_sz = di->symtab_used;
+   if (new_sz == di->symtab_size) return;
+
+   new_tab = ML_(dinfo_zalloc)( "di.storage.shrinkSym", 
+                                new_sz * sizeof(DiSym) );
+   VG_(memcpy)(new_tab, di->symtab, new_sz * sizeof(DiSym));
+
+   ML_(dinfo_free)(di->symtab);
+   di->symtab = new_tab;
+   di->symtab_size = new_sz;
+}
+
+
 /* Add a location to the location table. 
 */
 static void addLoc ( struct _DebugInfo* di, DiLoc* loc )
@@ -256,6 +302,24 @@ static void addLoc ( struct _DebugInfo* di, DiLoc* loc )
    di->loctab[di->loctab_used] = *loc;
    di->loctab_used++;
    vg_assert(di->loctab_used <= di->loctab_size);
+}
+
+
+/* Resize the lineinfo table to save memory.
+*/
+void ML_(shrinkLineInfo)( struct _DebugInfo* di )
+{
+   DiLoc* new_tab;
+   UInt new_sz = di->loctab_used;
+   if (new_sz == di->loctab_size) return;
+
+   new_tab = ML_(dinfo_zalloc)( "di.storage.shrinkLineInfo", 
+                                new_sz * sizeof(DiLoc) );
+   VG_(memcpy)(new_tab, di->loctab, new_sz * sizeof(DiLoc));
+
+   ML_(dinfo_free)(di->loctab);
+   di->loctab = new_tab;
+   di->loctab_size = new_sz;
 }
 
 
@@ -293,7 +357,7 @@ void ML_(addLineInfo) ( struct _DebugInfo* di,
        if (VG_(clo_verbosity) > 2) {
            VG_(message)(Vg_DebugMsg, 
                         "warning: line info addresses out of order "
-                        "at entry %d: 0x%lx 0x%lx", entry, this, next);
+                        "at entry %d: 0x%lx 0x%lx\n", entry, this, next);
        }
        size = 1;
    }
@@ -302,7 +366,7 @@ void ML_(addLineInfo) ( struct _DebugInfo* di,
        if (0)
        VG_(message)(Vg_DebugMsg, 
                     "warning: line info address range too large "
-                    "at entry %d: %d", entry, size);
+                    "at entry %d: %d\n", entry, size);
        size = 1;
    }
 
@@ -315,7 +379,7 @@ void ML_(addLineInfo) ( struct _DebugInfo* di,
        if (0)
           VG_(message)(Vg_DebugMsg, 
                        "warning: ignoring line info entry falling "
-                       "outside current DebugInfo: %#lx %#lx %#lx %#lx",
+                       "outside current DebugInfo: %#lx %#lx %#lx %#lx\n",
                        di->text_avma, 
                        di->text_avma + di->text_size, 
                        this, next-1);
@@ -329,12 +393,12 @@ void ML_(addLineInfo) ( struct _DebugInfo* di,
          complained = True;
          VG_(message)(Vg_UserMsg, 
                       "warning: ignoring line info entry with "
-                      "huge line number (%d)", lineno);
+                      "huge line number (%d)\n", lineno);
          VG_(message)(Vg_UserMsg, 
                       "         Can't handle line numbers "
-                      "greater than %d, sorry", MAX_LINENO);
+                      "greater than %d, sorry\n", MAX_LINENO);
          VG_(message)(Vg_UserMsg, 
-                      "(Nb: this message is only shown once)");
+                      "(Nb: this message is only shown once)\n");
       }
       return;
    }
@@ -346,7 +410,7 @@ void ML_(addLineInfo) ( struct _DebugInfo* di,
    loc.dirname   = dirname;
 
    if (0) VG_(message)(Vg_DebugMsg, 
-		       "addLoc: addr %#lx, size %d, line %d, file %s",
+		       "addLoc: addr %#lx, size %d, line %d, file %s\n",
 		       this,size,lineno,filename);
 
    addLoc ( di, &loc );
@@ -397,7 +461,7 @@ void ML_(addDiCfSI) ( struct _DebugInfo* di, DiCfSI* cfsi_orig )
          if (VG_(clo_verbosity) > 1) {
             VG_(message)(
                Vg_DebugMsg,
-               "warning: DiCfSI %#lx .. %#lx outside segment %#lx .. %#lx",
+               "warning: DiCfSI %#lx .. %#lx outside segment %#lx .. %#lx\n",
                cfsi.base, 
                cfsi.base + cfsi.len - 1,
                di->text_avma,
@@ -538,9 +602,13 @@ static void ppCfiOp ( CfiOp op )
 static void ppCfiReg ( CfiReg reg )
 {
    switch (reg) {
-      case Creg_SP: VG_(printf)("SP"); break;
-      case Creg_FP: VG_(printf)("FP"); break;
-      case Creg_IP: VG_(printf)("IP"); break;
+      case Creg_IA_SP:   VG_(printf)("xSP"); break;
+      case Creg_IA_BP:   VG_(printf)("xBP"); break;
+      case Creg_IA_IP:   VG_(printf)("xIP"); break;
+      case Creg_ARM_R13: VG_(printf)("R13"); break;
+      case Creg_ARM_R12: VG_(printf)("R12"); break;
+      case Creg_ARM_R15: VG_(printf)("R15"); break;
+      case Creg_ARM_R14: VG_(printf)("R14"); break;
       default: vg_assert(0);
    }
 }
@@ -835,7 +903,7 @@ void ML_(addVar)( struct _DebugInfo* di,
       if (VG_(clo_verbosity) >= 0) {
          VG_(message)(Vg_DebugMsg, 
             "warning: addVar: in range %#lx .. %#lx outside "
-            "segment %#lx .. %#lx (%s)",
+            "segment %#lx .. %#lx (%s)\n",
             aMin, aMax,
             di->text_avma, di->text_avma + di->text_size -1,
             name
@@ -862,7 +930,7 @@ void ML_(addVar)( struct _DebugInfo* di,
    if (badness) {
       static Int complaints = 10;
       if (VG_(clo_verbosity) >= 2 && complaints > 0) {
-         VG_(message)(Vg_DebugMsg, "warning: addVar: %s (%s)",
+         VG_(message)(Vg_DebugMsg, "warning: addVar: %s (%s)\n",
                                    badness, name );
          complaints--;
       }
@@ -951,7 +1019,7 @@ static void canonicaliseVarInfo ( struct _DebugInfo* di )
       /* All the rest of this is for the local-scope case. */
       /* iterate over all entries in 'scope' */
       nInThisScope = 0;
-      range = rangep = NULL;
+      rangep = NULL;
       VG_(OSetGen_ResetIter)(scope);
       while (True) {
          range = VG_(OSetGen_Next)(scope);
@@ -1018,14 +1086,26 @@ static Int compare_DiSym ( void* va, void* vb )
 }
 
 
-/* Two symbols have the same address.  Which name do we prefer?
+/* Two symbols have the same address.  Which name do we prefer?  In order:
 
-   The general rule is to prefer the shorter symbol name.  If the
-   symbol contains a '@', which means it is versioned, then the length
-   up to the '@' is used for length comparison purposes (so
-   "foo@GLIBC_2.4.2" is considered shorter than "foobar"), but if two
-   symbols have the same length, the one with the version string is
-   preferred.  If all else fails, use alphabetical ordering.
+   - Prefer "PMPI_<foo>" over "MPI_<foo>".
+
+   - Else, prefer a non-NULL name over a NULL one.
+
+   - Else, prefer a non-whitespace name over an all-whitespace name.
+
+   - Else, prefer the shorter symbol name.  If the symbol contains a
+     version symbol ('@' on Linux, other platforms may differ), which means it
+     is versioned, then the length up to the version symbol is used for length
+     comparison purposes (so "foo@GLIBC_2.4.2" is considered shorter than
+     "foobar"). 
+     
+   - Else, if two symbols have the same length, prefer a versioned symbol over
+     a non-versioned symbol.
+     
+   - Else, use alphabetical ordering.
+
+   - Otherwise, they must be the same;  use the symbol with the lower address.
 
    Very occasionally this goes wrong (eg. 'memcmp' and 'bcmp' are
    aliases in glibc, we choose the 'bcmp' symbol because it's shorter,
@@ -1035,7 +1115,6 @@ static Int compare_DiSym ( void* va, void* vb )
 static DiSym* prefersym ( struct _DebugInfo* di, DiSym* a, DiSym* b )
 {
    Word cmp;
-   Word lena, lenb;		/* full length */
    Word vlena, vlenb;		/* length without version */
    const UChar *vpa, *vpb;
 
@@ -1044,11 +1123,19 @@ static DiSym* prefersym ( struct _DebugInfo* di, DiSym* a, DiSym* b )
 
    vg_assert(a->addr == b->addr);
 
-   vlena = lena = VG_(strlen)(a->name);
-   vlenb = lenb = VG_(strlen)(b->name);
+   vlena = VG_(strlen)(a->name);
+   vlenb = VG_(strlen)(b->name);
 
-   vpa = VG_(strchr)(a->name, '@');
-   vpb = VG_(strchr)(b->name, '@');
+#if defined(VGO_linux) || defined(VGO_aix5)
+#  define VERSION_CHAR '@'
+#elif defined(VGO_darwin)
+#  define VERSION_CHAR '$'
+#else
+#  error Unknown OS
+#endif
+
+   vpa = VG_(strchr)(a->name, VERSION_CHAR);
+   vpb = VG_(strchr)(b->name, VERSION_CHAR);
 
    if (vpa)
       vlena = vpa - a->name;
@@ -1065,6 +1152,42 @@ static DiSym* prefersym ( struct _DebugInfo* di, DiSym* a, DiSym* b )
        && 0==VG_(strncmp)(a->name, "PMPI_", 5)
        && 0==VG_(strcmp)(b->name, 1+a->name)) {
       preferA = True; goto out;
+   }
+
+   /* Prefer non-empty name. */
+   if (vlena  &&  !vlenb) {
+      preferA = True; goto out;
+   }
+   if (vlenb  &&  !vlena) {
+      preferB = True; goto out;
+   }
+
+   /* Prefer non-whitespace name. */
+   {
+      Bool blankA = True;
+      Bool blankB = True;
+      Char *s;
+      s = a->name;
+      while (*s) {
+         if (!VG_(isspace)(*s++)) {
+            blankA = False;
+            break;
+         }
+      }
+      s = b->name;
+      while (*s) {
+         if (!VG_(isspace)(*s++)) {
+            blankB = False;
+            break;
+         }
+      }
+
+      if (!blankA  &&  blankB) {
+         preferA = True; goto out;
+      }
+      if (!blankB  &&  blankA) {
+         preferB = True; goto out;
+      }
    }
 
    /* Select the shortest unversioned name */
@@ -1092,8 +1215,10 @@ static DiSym* prefersym ( struct _DebugInfo* di, DiSym* a, DiSym* b )
    if (cmp > 0) {
       preferB = True; goto out;
    }
-   /* If we get here, they are the same (?!).  That's very odd.  In
-      this case we could choose either (arbitrarily), but might as
+
+   /* If we get here, they are the same name. */
+
+   /* In this case we could choose either (arbitrarily), but might as
       well choose the one with the lowest DiSym* address, so as to try
       and make the comparison mechanism more stable (a la sorting
       parlance).  Also, skip the diagnostic printing in this case. */
@@ -1119,7 +1244,9 @@ static DiSym* prefersym ( struct _DebugInfo* di, DiSym* a, DiSym* b )
 static void canonicaliseSymtab ( struct _DebugInfo* di )
 {
    Word  i, j, n_merged, n_truncated;
-   Addr  s1, s2, e1, e2;
+   Addr  s1, s2, e1, e2, p1, p2;
+   UChar *n1, *n2;
+   Bool t1, t2, f1, f2;
 
 #  define SWAP(ty,aa,bb) \
       do { ty tt = (aa); (aa) = (bb); (bb) = tt; } while (0)
@@ -1141,7 +1268,8 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
       for (i = 0; i < j; i++) {
          if (i < j-1
              && di->symtab[i].addr   == di->symtab[i+1].addr
-             && di->symtab[i].size   == di->symtab[i+1].size) {
+             && di->symtab[i].size   == di->symtab[i+1].size
+             ) {
             n_merged++;
             /* merge the two into one */
 	    di->symtab[di->symtab_used++] 
@@ -1178,15 +1306,24 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
 
       /* Truncate one or the other. */
       s1 = di->symtab[i].addr;
-      s2 = di->symtab[i+1].addr;
       e1 = s1 + di->symtab[i].size - 1;
+      p1 = di->symtab[i].tocptr;
+      n1 = di->symtab[i].name;
+      t1 = di->symtab[i].isText;
+      f1 = di->symtab[i].isIFunc;
+      s2 = di->symtab[i+1].addr;
       e2 = s2 + di->symtab[i+1].size - 1;
+      p2 = di->symtab[i+1].tocptr;
+      n2 = di->symtab[i+1].name;
+      t2 = di->symtab[i+1].isText;
+      f2 = di->symtab[i+1].isIFunc;
       if (s1 < s2) {
          e1 = s2-1;
       } else {
          vg_assert(s1 == s2);
          if (e1 > e2) { 
-            s1 = e2+1; SWAP(Addr,s1,s2); SWAP(Addr,e1,e2); 
+            s1 = e2+1; SWAP(Addr,s1,s2); SWAP(Addr,e1,e2); SWAP(Addr,p1,p2);
+                       SWAP(UChar *,n1,n2); SWAP(Bool,t1,t2);
          } else 
          if (e1 < e2) {
             s2 = e1+1;
@@ -1195,10 +1332,18 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
               up back at cleanup_more, which will take care of it. */
 	 }
       }
-      di->symtab[i].addr   = s1;
-      di->symtab[i+1].addr = s2;
-      di->symtab[i].size   = e1 - s1 + 1;
-      di->symtab[i+1].size = e2 - s2 + 1;
+      di->symtab[i].addr    = s1;
+      di->symtab[i].size    = e1 - s1 + 1;
+      di->symtab[i].tocptr  = p1;
+      di->symtab[i].name    = n1;
+      di->symtab[i].isText  = t1;
+      di->symtab[i].isIFunc = f1;
+      di->symtab[i+1].addr    = s2;
+      di->symtab[i+1].size    = e2 - s2 + 1;
+      di->symtab[i+1].tocptr  = p2;
+      di->symtab[i+1].name    = n2;
+      di->symtab[i+1].isText  = t2;
+      di->symtab[i+1].isIFunc = f2;
       vg_assert(s1 <= s2);
       vg_assert(di->symtab[i].size > 0);
       vg_assert(di->symtab[i+1].size > 0);
@@ -1326,7 +1471,7 @@ static Int compare_DiCfSI ( void* va, void* vb )
    return 0;
 }
 
-static void canonicaliseCFI ( struct _DebugInfo* di )
+void ML_(canonicaliseCFI) ( struct _DebugInfo* di )
 {
    Word  i, j;
    const Addr minAvma = 0;
@@ -1419,7 +1564,7 @@ void ML_(canonicaliseTables) ( struct _DebugInfo* di )
 {
    canonicaliseSymtab ( di );
    canonicaliseLoctab ( di );
-   canonicaliseCFI ( di );
+   ML_(canonicaliseCFI) ( di );
    canonicaliseVarInfo ( di );
 }
 
@@ -1509,6 +1654,31 @@ Word ML_(search_one_cfitab) ( struct _DebugInfo* di, Addr ptr )
    }
 }
 
+
+/* Find a FPO-table index containing the specified pointer, or -1
+   if not found.  Binary search.  */
+
+Word ML_(search_one_fpotab) ( struct _DebugInfo* di, Addr ptr )
+{
+   Addr const addr = ptr - di->rx_map_avma;
+   Addr a_mid_lo, a_mid_hi;
+   Word mid, size,
+        lo = 0,
+        hi = di->fpo_size-1;
+   while (True) {
+      /* current unsearched space is from lo to hi, inclusive. */
+      if (lo > hi) return -1; /* not found */
+      mid      = (lo + hi) / 2;
+      a_mid_lo = di->fpo[mid].ulOffStart;
+      size     = di->fpo[mid].cbProcSize;
+      a_mid_hi = a_mid_lo + size - 1;
+      vg_assert(a_mid_hi >= a_mid_lo);
+      if (addr < a_mid_lo) { hi = mid-1; continue; }
+      if (addr > a_mid_hi) { lo = mid+1; continue; }
+      vg_assert(addr >= a_mid_lo && addr <= a_mid_hi);
+      return mid;
+   }
+}
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

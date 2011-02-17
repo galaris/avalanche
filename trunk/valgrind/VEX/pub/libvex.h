@@ -1,42 +1,31 @@
 
 /*---------------------------------------------------------------*/
-/*---                                                         ---*/
-/*--- This file (libvex.h) is                                 ---*/
-/*--- Copyright (C) OpenWorks LLP.  All rights reserved.      ---*/
-/*---                                                         ---*/
+/*--- begin                                          libvex.h ---*/
 /*---------------------------------------------------------------*/
 
 /*
-   This file is part of LibVEX, a library for dynamic binary
-   instrumentation and translation.
+   This file is part of Valgrind, a dynamic binary instrumentation
+   framework.
 
-   Copyright (C) 2004-2008 OpenWorks LLP.  All rights reserved.
+   Copyright (C) 2004-2010 OpenWorks LLP
+      info@open-works.net
 
-   This library is made available under a dual licensing scheme.
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version.
 
-   If you link LibVEX against other code all of which is itself
-   licensed under the GNU General Public License, version 2 dated June
-   1991 ("GPL v2"), then you may use LibVEX under the terms of the GPL
-   v2, as appearing in the file LICENSE.GPL.  If the file LICENSE.GPL
-   is missing, you can obtain a copy of the GPL v2 from the Free
-   Software Foundation Inc., 51 Franklin St, Fifth Floor, Boston, MA
+   This program is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
    02110-1301, USA.
 
-   For any other uses of LibVEX, you must first obtain a commercial
-   license from OpenWorks LLP.  Please contact info@open-works.co.uk
-   for information about commercial licensing.
-
-   This software is provided by OpenWorks LLP "as is" and any express
-   or implied warranties, including, but not limited to, the implied
-   warranties of merchantability and fitness for a particular purpose
-   are disclaimed.  In no event shall OpenWorks LLP be liable for any
-   direct, indirect, incidental, special, exemplary, or consequential
-   damages (including, but not limited to, procurement of substitute
-   goods or services; loss of use, data, or profits; or business
-   interruption) however caused and on any theory of liability,
-   whether in contract, strict liability, or tort (including
-   negligence or otherwise) arising in any way out of the use of this
-   software, even if advised of the possibility of such damage.
+   The GNU General Public License is contained in the file COPYING.
 
    Neither the names of the U.S. Department of Energy nor the
    University of California nor the names of its contributors may be
@@ -78,30 +67,42 @@ typedef
    but not SSE1).  LibVEX_Translate will check for nonsensical
    combinations. */
 
-/* x86: baseline capability is Pentium-1 (FPU, MMX, but no SSE) */
-#define VEX_HWCAPS_X86_SSE1   (1<<1)  /* SSE1 support (Pentium III) */
-#define VEX_HWCAPS_X86_SSE2   (1<<2)  /* SSE2 support (Pentium 4) */
-#define VEX_HWCAPS_X86_SSE3   (1<<3)  /* SSE3 support (>= Prescott) */
+/* x86: baseline capability is Pentium-1 (FPU, MMX, but no SSE), with
+   cmpxchg8b. */
+#define VEX_HWCAPS_X86_SSE1    (1<<1)  /* SSE1 support (Pentium III) */
+#define VEX_HWCAPS_X86_SSE2    (1<<2)  /* SSE2 support (Pentium 4) */
+#define VEX_HWCAPS_X86_SSE3    (1<<3)  /* SSE3 support (>= Prescott) */
+#define VEX_HWCAPS_X86_LZCNT   (1<<4)  /* SSE4a LZCNT insn */
 
-/* amd64: baseline capability is SSE2 */
-#define VEX_HWCAPS_AMD64_SSE3 (1<<4)  /* SSE3 support */
+/* amd64: baseline capability is SSE2, with cmpxchg8b but not
+   cmpxchg16b. */
+#define VEX_HWCAPS_AMD64_SSE3  (1<<5)  /* SSE3 support */
+#define VEX_HWCAPS_AMD64_CX16  (1<<6)  /* cmpxchg16b support */
+#define VEX_HWCAPS_AMD64_LZCNT (1<<7)  /* SSE4a LZCNT insn */
 
 /* ppc32: baseline capability is integer only */
-#define VEX_HWCAPS_PPC32_F    (1<<5)  /* basic (non-optional) FP */
-#define VEX_HWCAPS_PPC32_V    (1<<6)  /* Altivec (VMX) */
-#define VEX_HWCAPS_PPC32_FX   (1<<7)  /* FP extns (fsqrt, fsqrts) */
-#define VEX_HWCAPS_PPC32_GX   (1<<8)  /* Graphics extns
-                                         (fres,frsqrte,fsel,stfiwx) */
+#define VEX_HWCAPS_PPC32_F     (1<<8)  /* basic (non-optional) FP */
+#define VEX_HWCAPS_PPC32_V     (1<<9)  /* Altivec (VMX) */
+#define VEX_HWCAPS_PPC32_FX    (1<<10) /* FP extns (fsqrt, fsqrts) */
+#define VEX_HWCAPS_PPC32_GX    (1<<11) /* Graphics extns
+                                          (fres,frsqrte,fsel,stfiwx) */
 
 /* ppc64: baseline capability is integer and basic FP insns */
-#define VEX_HWCAPS_PPC64_V    (1<<9)  /* Altivec (VMX) */
-#define VEX_HWCAPS_PPC64_FX   (1<<10) /* FP extns (fsqrt, fsqrts) */
-#define VEX_HWCAPS_PPC64_GX   (1<<11) /* Graphics extns
-                                         (fres,frsqrte,fsel,stfiwx) */
+#define VEX_HWCAPS_PPC64_V     (1<<12) /* Altivec (VMX) */
+#define VEX_HWCAPS_PPC64_FX    (1<<13) /* FP extns (fsqrt, fsqrts) */
+#define VEX_HWCAPS_PPC64_GX    (1<<14) /* Graphics extns
+                                          (fres,frsqrte,fsel,stfiwx) */
 
 /* arm: baseline capability is ARMv4 */
-/* No extra capabilities */
+/* Bits 5:0 - architecture level (e.g. 5 for v5, 6 for v6 etc) */
+#define VEX_HWCAPS_ARM_VFP    (1<<6)  /* VFP extension */
+#define VEX_HWCAPS_ARM_VFP2   (1<<7)  /* VFPv2 */
+#define VEX_HWCAPS_ARM_VFP3   (1<<8)  /* VFPv3 */
+/* Bits 15:10 reserved for (possible) future VFP revisions */
+#define VEX_HWCAPS_ARM_NEON   (1<<16) /* Advanced SIMD also known as NEON */
 
+/* Get an ARM architecure level from HWCAPS */
+#define VEX_ARM_ARCHLEVEL(x) ((x) & 0x3f)
 
 /* These return statically allocated strings. */
 
@@ -119,6 +120,10 @@ typedef
       UInt hwcaps;
       /* PPC32/PPC64 only: size of cache line */
       Int ppc_cache_line_szB;
+      /* PPC32/PPC64 only: sizes zeroed by the dcbz/dcbzl instructions
+       * (bug#135264) */
+      UInt ppc_dcbz_szB;
+      UInt ppc_dcbzl_szB; /* 0 means unsupported (SIGILL) */
    }
    VexArchInfo;
 
@@ -262,6 +267,9 @@ typedef
          far, the front end(s) will attempt to chase into its
          successor. A setting of zero disables chasing.  */
       Int guest_chase_thresh;
+      /* EXPERIMENTAL: chase across conditional branches?  Not all
+         front ends honour this.  Default: NO. */
+      Bool guest_chase_cond;
    }
    VexControl;
 
@@ -270,15 +278,6 @@ typedef
 
 extern 
 void LibVEX_default_VexControl ( /*OUT*/ VexControl* vcon );
-
-
-/*-------------------------------------------------------*/
-/*--- Version information                             ---*/
-/*-------------------------------------------------------*/
-
-/* Returns the Vex SVN version, as a statically allocated string. */
-
-extern const HChar* LibVEX_Version ( void );
 
 
 /*-------------------------------------------------------*/
@@ -329,7 +328,7 @@ extern void LibVEX_ShowAllocStats ( void );
 
 /* The max number of guest state chunks which we can describe as
    always defined (for the benefit of Memcheck). */
-#define VEXGLO_N_ALWAYSDEFD  22
+#define VEXGLO_N_ALWAYSDEFD  24
 
 typedef
    struct {
@@ -372,7 +371,7 @@ typedef
    16-aligned size and be 16-aligned, and placed back-to-back.
 */
 
-#define LibVEX_N_SPILL_BYTES 2048
+#define LibVEX_N_SPILL_BYTES 4096
 
 
 /*-------------------------------------------------------*/

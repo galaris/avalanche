@@ -7,7 +7,7 @@
    This file is part of Cachegrind, a Valgrind tool for cache
    profiling programs.
 
-   Copyright (C) 2005-2008 Nicholas Nethercote
+   Copyright (C) 2005-2010 Nicholas Nethercote
       njn@valgrind.org
 
    This program is free software; you can redistribute it and/or
@@ -28,6 +28,8 @@
    The GNU General Public License is contained in the file COPYING.
 */
 
+#if defined(VGA_ppc32)
+
 #include "pub_tool_basics.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
@@ -35,13 +37,13 @@
 
 #include "cg_arch.h"
 
-void VG_(configure_caches)(cache_t* I1c, cache_t* D1c, cache_t* L2c,
+void VG_(configure_caches)(cache_t* I1c, cache_t* D1c, cache_t* LLc,
                            Bool all_caches_clo_defined)
 {
    // Set caches to default.
    *I1c = (cache_t) {  65536, 2, 64 };
    *D1c = (cache_t) {  65536, 2, 64 };
-   *L2c = (cache_t) { 262144, 8, 64 };
+   *LLc = (cache_t) { 262144, 8, 64 };
 
    // Warn if config not completely specified from cmd line.  Note that
    // this message is slightly different from the one we give on x86/AMD64
@@ -54,11 +56,12 @@ void VG_(configure_caches)(cache_t* I1c, cache_t* D1c, cache_t* L2c,
    // cachegrind/tests/filter_stderr!
    //
    if (!all_caches_clo_defined) {
-      VG_(message)(Vg_DebugMsg, 
-                   "Warning: Cannot auto-detect cache config on PPC32, using one "
-                   "or more defaults ");
+      VG_(dmsg)("Warning: Cannot auto-detect cache config on PPC32, using one "
+                "or more defaults\n");
    }
 }
+
+#endif // defined(VGA_ppc32)
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

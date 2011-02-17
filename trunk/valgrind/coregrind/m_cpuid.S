@@ -7,7 +7,7 @@
   This file is part of Valgrind, a dynamic binary instrumentation
   framework.
 
-  Copyright (C) 2000-2008 Julian Seward 
+  Copyright (C) 2000-2010 Julian Seward 
      jseward@acm.org
 
   This program is free software; you can redistribute it and/or
@@ -33,8 +33,9 @@
 /*
     Bool VG_(has_cpuid)(void)
  */
-.globl VG_(has_cpuid)
 #if defined(VGA_x86)
+.text
+.globl VG_(has_cpuid)
     VG_(has_cpuid):
         pushl   %ebp
         movl    %esp, %ebp
@@ -57,6 +58,8 @@
         popl    %ebp
         ret
 #elif defined(VGA_amd64)
+.text
+.globl VG_(has_cpuid)
     VG_(has_cpuid):
         movq    $1, %rax
         ret
@@ -66,8 +69,9 @@
     void VG_(cpuid)(UInt eax,
                     UInt* eax_ret, UInt* ebx_ret, UInt* ecx_ret, UInt* edx_ret)
  */
-.globl VG_(cpuid)
 #if defined(VGA_x86)
+.text
+.globl VG_(cpuid)
     VG_(cpuid):
         pushl   %ebp
         movl    %esp, %ebp
@@ -107,6 +111,8 @@
         popl    %ebp
         ret
 #elif defined(VGA_amd64)
+.text
+.globl VG_(cpuid)
     VG_(cpuid):
         pushq   %rbp
         movq    %rsp, %rbp
@@ -143,7 +149,7 @@
         ret
 #endif
 
-#if defined(VGA_x86) || defined(VGA_amd64)        
+#if defined(VGP_x86_linux) || defined(VGP_amd64_linux)
 /* Let the linker know we don't need an executable stack */
 .section .note.GNU-stack,"",@progbits
 #endif

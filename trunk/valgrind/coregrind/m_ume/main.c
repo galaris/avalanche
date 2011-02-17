@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -46,18 +46,20 @@
 
 
 typedef struct {
-   const HChar *name;
    Bool (*match_fn)(Char *hdr, Int len);
    Int  (*load_fn)(Int fd, const HChar *name, ExeInfo *info);
 } ExeHandler;
 
 static ExeHandler exe_handlers[] = {
-#if defined(HAVE_ELF)
-   { "ELF",    VG_(match_ELF),    VG_(load_ELF) },
+   // Nb: AIX5 doesn't use m_ume, which is why it's not represented here.
+#if defined(VGO_linux)
+   { VG_(match_ELF),    VG_(load_ELF) },
+#elif defined(VGO_darwin)
+   { VG_(match_macho),  VG_(load_macho) },
+#else
+#  error "unknown OS"
 #endif
-#if defined(HAVE_SCRIPT)
-   { "script", VG_(match_script), VG_(load_script) },
-#endif
+   { VG_(match_script), VG_(load_script) },
 };
 #define EXE_HANDLER_COUNT (sizeof(exe_handlers)/sizeof(exe_handlers[0]))
 
@@ -74,23 +76,23 @@ VG_(pre_exec_check)(const HChar* exe_name, Int* out_fd, Bool allow_setuid)
 
    // Check it's readable
    res = VG_(open)(exe_name, VKI_O_RDONLY, 0);
-   if (res.isError) {
+   if (sr_isError(res)) {
       return res;
    }
-   fd = res.res;
+   fd = sr_Res(res);
 
    // Check we have execute permissions
    ret = VG_(check_executable)(&is_setuid, (HChar*)exe_name, allow_setuid);
    if (0 != ret) {
       VG_(close)(fd);
       if (is_setuid && !VG_(clo_xml)) {
-         VG_(message)(Vg_UserMsg, "");
+         VG_(message)(Vg_UserMsg, "\n");
          VG_(message)(Vg_UserMsg,
-                      "Warning: Can't execute setuid/setgid executable: %s",
+                      "Warning: Can't execute setuid/setgid executable: %s\n",
                       exe_name);
          VG_(message)(Vg_UserMsg, "Possible workaround: remove "
-                      "--trace-children=yes, if in effect");
-         VG_(message)(Vg_UserMsg, "");
+                      "--trace-children=yes, if in effect\n");
+         VG_(message)(Vg_UserMsg, "\n");
       }
       return VG_(mk_SysRes_Error)(ret);
    }
@@ -100,11 +102,11 @@ VG_(pre_exec_check)(const HChar* exe_name, Int* out_fd, Bool allow_setuid)
       bufsz = fsz;
 
    res = VG_(pread)(fd, buf, bufsz, 0);
-   if (res.isError || res.res != bufsz) {
+   if (sr_isError(res) || sr_Res(res) != bufsz) {
       VG_(close)(fd);
       return VG_(mk_SysRes_Error)(VKI_EACCES);
    }
-   bufsz = res.res;
+   bufsz = sr_Res(res);
 
    // Look for a matching executable format
    for (i = 0; i < EXE_HANDLER_COUNT; i++) {
@@ -119,7 +121,7 @@ VG_(pre_exec_check)(const HChar* exe_name, Int* out_fd, Bool allow_setuid)
    }
 
    // Write the 'out_fd' param if necessary, or close the file.
-   if (!res.isError && out_fd) {
+   if (!sr_isError(res) && out_fd) {
       *out_fd = fd; 
    } else { 
       VG_(close)(fd);
@@ -140,13 +142,13 @@ Int VG_(do_exec_inner)(const HChar* exe, ExeInfo* info)
    Int ret;
 
    res = VG_(pre_exec_check)(exe, &fd, False/*allow_setuid*/);
-   if (res.isError)
-      return res.err;
+   if (sr_isError(res))
+      return sr_Err(res);
 
-   vg_assert2(res.res >= 0 && res.res < EXE_HANDLER_COUNT, 
+   vg_assert2(sr_Res(res) >= 0 && sr_Res(res) < EXE_HANDLER_COUNT, 
               "invalid VG_(pre_exec_check) result");
 
-   ret = (*exe_handlers[res.res].load_fn)(fd, exe, info);
+   ret = (*exe_handlers[sr_Res(res)].load_fn)(fd, exe, info);
 
    VG_(close)(fd);
 
@@ -157,9 +159,9 @@ Int VG_(do_exec_inner)(const HChar* exe, ExeInfo* info)
 static Bool is_hash_bang_file(Char* f)
 {
    SysRes res = VG_(open)(f, VKI_O_RDONLY, 0);
-   if (!res.isError) {
+   if (!sr_isError(res)) {
       Char buf[3] = {0,0,0};
-      Int fd = res.res;
+      Int fd = sr_Res(res);
       Int n  = VG_(read)(fd, buf, 2); 
       if (n == 2 && VG_STREQ("#!", buf))
          return True;
@@ -173,9 +175,9 @@ static Bool is_hash_bang_file(Char* f)
 static Bool is_binary_file(Char* f)
 {
    SysRes res = VG_(open)(f, VKI_O_RDONLY, 0);
-   if (!res.isError) {
+   if (!sr_isError(res)) {
       UChar buf[80];
-      Int fd = res.res;
+      Int fd = sr_Res(res);
       Int n  = VG_(read)(fd, buf, 80); 
       Int i;
       for (i = 0; i < n; i++) {
@@ -187,7 +189,7 @@ static Bool is_binary_file(Char* f)
       // Something went wrong.  This will only happen if we earlier
       // succeeded in opening the file but fail here (eg. the file was
       // deleted between then and now).
-      VG_(printf)("valgrind: %s: unknown error\n", f);
+      VG_(fmsg)("%s: unknown error\n", f);
       VG_(exit)(126);      // 126 == NOEXEC
    }
 }
@@ -208,7 +210,7 @@ static Int do_exec_shell_followup(Int ret, HChar* exe_name, ExeInfo* info)
 
       // Is it a binary file?  
       if (is_binary_file(exe_name)) {
-         VG_(printf)("valgrind: %s: cannot execute binary file\n", exe_name);
+         VG_(fmsg)("%s: cannot execute binary file\n", exe_name);
          VG_(exit)(126);      // 126 == NOEXEC
       }
 
@@ -224,7 +226,7 @@ static Int do_exec_shell_followup(Int ret, HChar* exe_name, ExeInfo* info)
 
       if (0 != ret) {
          // Something went wrong with executing the default interpreter
-         VG_(printf)("valgrind: %s: bad interpreter (%s): %s\n",
+         VG_(fmsg)("%s: bad interpreter (%s): %s\n",
                      exe_name, info->interp_name, VG_(strerror)(ret));
          VG_(exit)(126);      // 126 == NOEXEC
       }
@@ -235,22 +237,21 @@ static Int do_exec_shell_followup(Int ret, HChar* exe_name, ExeInfo* info)
    
       // Was it a directory?
       res = VG_(stat)(exe_name, &st);
-      if (!res.isError && VKI_S_ISDIR(st.st_mode)) {
-         VG_(printf)("valgrind: %s: is a directory\n", exe_name);
+      if (!sr_isError(res) && VKI_S_ISDIR(st.mode)) {
+         VG_(fmsg)("%s: is a directory\n", exe_name);
       
       // Was it not executable?
       } else if (0 != VG_(check_executable)(NULL, exe_name, 
                                             False/*allow_setuid*/)) {
-         VG_(printf)("valgrind: %s: %s\n", exe_name, VG_(strerror)(ret));
+         VG_(fmsg)("%s: %s\n", exe_name, VG_(strerror)(ret));
 
       // Did it start with "#!"?  If so, it must have been a bad interpreter.
       } else if (is_hash_bang_file(exe_name)) {
-         VG_(printf)("valgrind: %s: bad interpreter: %s\n",
-                     exe_name, VG_(strerror)(ret));
+         VG_(fmsg)("%s: bad interpreter: %s\n", exe_name, VG_(strerror)(ret));
 
       // Otherwise it was something else.
       } else {
-         VG_(printf)("valgrind: %s: %s\n", exe_name, VG_(strerror)(ret));
+         VG_(fmsg)("%s: %s\n", exe_name, VG_(strerror)(ret));
       }
       // 126 means NOEXEC;  I think this is Posix, and that in some cases we
       // should be returning 127, meaning NOTFOUND.  Oh well.

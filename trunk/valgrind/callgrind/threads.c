@@ -6,7 +6,7 @@
 /*
    This file is part of Callgrind, a Valgrind tool for call tracing.
 
-   Copyright (C) 2002-2008, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
+   Copyright (C) 2002-2010, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -203,22 +203,21 @@ void CLG_(pre_signal)(ThreadId tid, Int sigNum, Bool alt_stack)
 	     tid, sigNum, alt_stack ? "yes":"no");
 
     /* switch to the thread the handler runs in */
-    CLG_(run_thread)(tid);
+    CLG_(switch_thread)(tid);
 
     /* save current execution state */
     exec_state_save();
 
-    /* setup current state for a spontaneous call */
-    CLG_(init_exec_state)( &CLG_(current_state) );
-    CLG_(push_cxt)(0);
-
     /* setup new cxtinfo struct for this signal handler */
     es = push_exec_state(sigNum);
-    CLG_(init_cost)( CLG_(sets).full, es->cost);
+    CLG_(zero_cost)( CLG_(sets).full, es->cost );
     CLG_(current_state).cost = es->cost;
     es->call_stack_bottom = CLG_(current_call_stack).sp;
 
+    /* setup current state for a spontaneous call */
+    CLG_(init_exec_state)( &CLG_(current_state) );
     CLG_(current_state).sig = sigNum;
+    CLG_(push_cxt)(0);
 }
 
 /* Run post-signal if the stackpointer for call stack is at
@@ -244,7 +243,8 @@ void CLG_(post_signal)(ThreadId tid, Int sigNum)
     CLG_DEBUG(0, ">> post_signal(TID %d, sig %d)\n",
 	     tid, sigNum);
 
-    CLG_ASSERT(tid == CLG_(current_tid));
+    /* thread switching potentially needed, eg. with instrumentation off */
+    CLG_(switch_thread)(tid);
     CLG_ASSERT(sigNum == CLG_(current_state).sig);
 
     /* Unwind call stack of this signal handler.
@@ -330,8 +330,7 @@ static exec_state* new_exec_state(Int sigNum)
     /* allocate real cost space: needed as incremented by
      * simulation functions */
     es->cost       = CLG_(get_eventset_cost)(CLG_(sets).full);
-    CLG_(init_cost)( CLG_(sets).full, es->cost );
-
+    CLG_(zero_cost)( CLG_(sets).full, es->cost );
     CLG_(init_exec_state)(es);
     es->sig        = sigNum;
     es->call_stack_bottom  = 0;
@@ -418,6 +417,7 @@ exec_state* exec_state_save(void)
   es->jmps_passed = CLG_(current_state).jmps_passed;
   es->bbcc        = CLG_(current_state).bbcc;
   es->nonskipped  = CLG_(current_state).nonskipped;
+  CLG_ASSERT(es->cost == CLG_(current_state).cost);
 
   CLG_DEBUGIF(1) {
     CLG_DEBUG(1, "  cxtinfo_save(sig %d): collect %s, jmps_passed %d\n",

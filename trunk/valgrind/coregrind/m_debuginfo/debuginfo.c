@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -28,11 +28,6 @@
 
    The GNU General Public License is contained in the file COPYING.
 */
-/*
-   Stabs reader greatly improved by Nick Nethercote, Apr 02.
-   This module was also extensively hacked on by Jeremy Fitzhardinge
-   and Tom Hughes.
-*/
 
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
@@ -43,6 +38,7 @@
 #include "pub_core_libcassert.h"
 #include "pub_core_libcprint.h"
 #include "pub_core_libcfile.h"
+#include "pub_core_libcproc.h"   // VG_(getenv)
 #include "pub_core_seqmatch.h"
 #include "pub_core_options.h"
 #include "pub_core_redir.h"      // VG_(redir_notify_{new,delete}_SegInfo)
@@ -51,6 +47,7 @@
 #include "pub_core_xarray.h"
 #include "pub_core_oset.h"
 #include "pub_core_stacktrace.h" // VG_(get_StackTrace) XXX: circular dependency
+#include "pub_core_ume.h"
 
 #include "priv_misc.h"           /* dinfo_zalloc/free */
 #include "priv_d3basics.h"       /* ML_(pp_GX) */
@@ -61,11 +58,15 @@
 #if defined(VGO_linux)
 # include "priv_readelf.h"
 # include "priv_readdwarf3.h"
+# include "priv_readpdb.h"
 #elif defined(VGO_aix5)
 # include "pub_core_debuglog.h"
 # include "pub_core_libcproc.h"
 # include "pub_core_libcfile.h"
 # include "priv_readxcoff.h"
+#elif defined(VGO_darwin)
+# include "priv_readmacho.h"
+# include "priv_readpdb.h"
 #endif
 
 
@@ -217,6 +218,7 @@ static void free_DebugInfo ( DebugInfo* di )
    if (di->loctab)     ML_(dinfo_free)(di->loctab);
    if (di->cfsi)       ML_(dinfo_free)(di->cfsi);
    if (di->cfsi_exprs) VG_(deleteXA)(di->cfsi_exprs);
+   if (di->fpo)        ML_(dinfo_free)(di->fpo);
 
    for (chunk = di->strchunks; chunk != NULL; chunk = next) {
       next = chunk->next;
@@ -305,7 +307,7 @@ static void discard_DebugInfo ( DebugInfo* di )
          if (curr->have_dinfo
              && (VG_(clo_verbosity) > 1 || VG_(clo_trace_redir)))
             VG_(message)(Vg_DebugMsg, 
-                         "Discarding syms at %#lx-%#lx in %s due to %s()",
+                         "Discarding syms at %#lx-%#lx in %s due to %s()\n",
                          di->text_avma, 
                          di->text_avma + di->text_size,
                          curr->filename ? curr->filename : (UChar*)"???",
@@ -574,7 +576,7 @@ void VG_(di_initialise) ( void )
 /*---                                                        ---*/
 /*--------------------------------------------------------------*/
 
-#if defined(VGO_linux)
+#if defined(VGO_linux)  ||  defined(VGO_darwin)
 
 /* The debug info system is driven by notifications that a text
    segment has been mapped in, or unmapped.  When that happens it
@@ -604,7 +606,7 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
    DebugInfo* di;
    ULong      di_handle;
    SysRes     fd;
-   Int        nread;
+   Int        nread, oflags;
    HChar      buf1k[1024];
    Bool       debug = False;
    SysRes     statres;
@@ -643,11 +645,11 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
 
    /* stat dereferences symlinks, so we don't expect it to succeed and
       yet produce something that is a symlink. */
-   vg_assert(statres.isError || ! VKI_S_ISLNK(statbuf.st_mode));
+   vg_assert(sr_isError(statres) || ! VKI_S_ISLNK(statbuf.mode));
 
    /* Don't let the stat call fail silently.  Filter out some known
       sources of noise before complaining, though. */
-   if (statres.isError) {
+   if (sr_isError(statres)) {
       DebugInfo fake_di;
       Bool quiet = VG_(strstr)(filename, "/var/run/nscd/") != NULL;
       if (!quiet && VG_(clo_verbosity) > 1) {
@@ -660,7 +662,7 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
 
    /* Finally, the point of all this stattery: if it's not a regular file,
       don't try to read debug info from it. */
-   if (! VKI_S_ISREG(statbuf.st_mode))
+   if (! VKI_S_ISREG(statbuf.mode))
       return 0;
 
    /* no uses of statbuf below here. */
@@ -698,14 +700,16 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
 
       x86-linux:   consider if r and x
       all others:  consider if r and x and not w
+
+      2009 Aug 16: apply similar kludge to ppc32-linux.
+      See http://bugs.kde.org/show_bug.cgi?id=190820
    */
    is_rx_map = False;
    is_rw_map = False;
-#  if defined(VGP_x86_linux)
+#  if defined(VGA_x86) || defined(VGA_ppc32)
    is_rx_map = seg->hasR && seg->hasX;
    is_rw_map = seg->hasR && seg->hasW;
-#  elif defined(VGP_amd64_linux) \
-        || defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
+#  elif defined(VGA_amd64) || defined(VGA_ppc64) || defined(VGA_arm)
    is_rx_map = seg->hasR && seg->hasX && !seg->hasW;
    is_rw_map = seg->hasR && seg->hasW && !seg->hasX;
 #  else
@@ -723,10 +727,13 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
    /* Peer at the first few bytes of the file, to see if it is an ELF */
    /* object file. Ignore the file if we do not have read permission. */
    VG_(memset)(buf1k, 0, sizeof(buf1k));
-   fd = VG_(open)( filename, VKI_O_RDONLY, 0 );
-   if (fd.isError) {
-      if (fd.err != VKI_EACCES)
-      {
+   oflags = VKI_O_RDONLY;
+#  if defined(VKI_O_LARGEFILE)
+   oflags |= VKI_O_LARGEFILE;
+#  endif
+   fd = VG_(open)( filename, oflags, 0 );
+   if (sr_isError(fd)) {
+      if (sr_Err(fd) != VKI_EACCES) {
          DebugInfo fake_di;
          VG_(memset)(&fake_di, 0, sizeof(fake_di));
          fake_di.filename = filename;
@@ -734,8 +741,8 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
       }
       return 0;
    }
-   nread = VG_(read)( fd.res, buf1k, sizeof(buf1k) );
-   VG_(close)( fd.res );
+   nread = VG_(read)( sr_Res(fd), buf1k, sizeof(buf1k) );
+   VG_(close)( sr_Res(fd) );
 
    if (nread == 0)
       return 0;
@@ -748,9 +755,17 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
    }
    vg_assert(nread > 0 && nread <= sizeof(buf1k) );
 
-   /* We're only interested in mappings of ELF object files. */
+   /* We're only interested in mappings of object files. */
+   // Nb: AIX5 doesn't use this file and so isn't represented here.
+#if defined(VGO_linux)
    if (!ML_(is_elf_object_file)( buf1k, (SizeT)nread ))
       return 0;
+#elif defined(VGO_darwin)
+   if (!ML_(is_macho_object_file)( buf1k, (SizeT)nread ))
+      return 0;
+#else
+#  error "unknown OS"
+#endif
 
    /* See if we have a DebugInfo for this filename.  If not,
       create one. */
@@ -802,7 +817,14 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV )
    discard_DebugInfos_which_overlap_with( di );
 
    /* .. and acquire new info. */
+   // Nb: AIX5 doesn't use this file and so isn't represented here.
+#if defined(VGO_linux)
    ok = ML_(read_elf_debug_info)( di );
+#elif defined(VGO_darwin)
+   ok = ML_(read_macho_debug_info)( di );
+#else
+#  error "unknown OS"
+#endif
 
    if (ok) {
 
@@ -862,7 +884,7 @@ void VG_(di_notify_munmap)( Addr a, SizeT len )
 void VG_(di_notify_mprotect)( Addr a, SizeT len, UInt prot )
 {
    Bool exe_ok = toBool(prot & VKI_PROT_EXEC);
-#  if defined(VGP_x86_linux)
+#  if defined(VGA_x86)
    exe_ok = exe_ok || toBool(prot & VKI_PROT_READ);
 #  endif
    if (0 && !exe_ok) {
@@ -872,7 +894,210 @@ void VG_(di_notify_mprotect)( Addr a, SizeT len, UInt prot )
    }
 }
 
-#endif /* defined(VGO_linux) */
+/*--------- PDB (windows debug info) reading --------- */
+
+/* this should really return ULong, as per VG_(di_notify_mmap). */
+void VG_(di_notify_pdb_debuginfo)( Int fd_obj, Addr avma_obj,
+                                   SizeT total_size,
+                                   PtrdiffT unknown_purpose__reloc )
+{
+   Int    i, r, sz_exename;
+   ULong  obj_mtime, pdb_mtime;
+   Char   exename[VKI_PATH_MAX];
+   Char*  pdbname = NULL;
+   Char*  dot;
+   SysRes sres;
+   Int    fd_pdbimage;
+   SizeT  n_pdbimage;
+   struct vg_stat stat_buf;
+
+   if (VG_(clo_verbosity) > 0) {
+      VG_(message)(Vg_UserMsg, "\n");
+      VG_(message)(Vg_UserMsg,
+         "LOAD_PDB_DEBUGINFO(fd=%d, avma=%#lx, total_size=%lu, "
+         "uu_reloc=%#lx)\n", 
+         fd_obj, avma_obj, total_size, unknown_purpose__reloc
+      );
+   }
+
+   /* 'fd' refers to the .exe/.dll we're dealing with.  Get its modification
+      time into obj_mtime. */
+   r = VG_(fstat)(fd_obj, &stat_buf);
+   if (r == -1)
+      goto out; /* stat failed ?! */
+   vg_assert(r == 0);
+   obj_mtime = stat_buf.mtime;
+
+   /* and get its name into exename[]. */
+   vg_assert(VKI_PATH_MAX > 100); /* to ensure /proc/self/fd/%d is safe */
+   VG_(memset)(exename, 0, sizeof(exename));
+   VG_(sprintf)(exename, "/proc/self/fd/%d", fd_obj);
+   /* convert exename from a symlink to real name .. overwrites the
+      old contents of the buffer.  Ick. */
+   sz_exename = VG_(readlink)(exename, exename, sizeof(exename)-2 );
+   if (sz_exename == -1)
+      goto out; /* readlink failed ?! */
+   vg_assert(sz_exename >= 0 && sz_exename < sizeof(exename));
+   vg_assert(exename[sizeof(exename)-1] == 0);
+
+   if (VG_(clo_verbosity) > 0) {
+      VG_(message)(Vg_UserMsg, "LOAD_PDB_DEBUGINFO: objname: %s\n", exename);
+   }
+
+   /* Try to get the PDB file name from the executable. */
+   pdbname = ML_(find_name_of_pdb_file)(exename);
+   if (pdbname) {
+      vg_assert(VG_(strlen)(pdbname) >= 5); /* 5 = strlen("X.pdb") */
+      /* So we successfully extracted a name from the PE file.  But it's
+         likely to be of the form
+            e:\foo\bar\xyzzy\wibble.pdb
+         and we need to change it into something we can actually open
+         in Wine-world, which basically means turning it into
+            $HOME/.wine/drive_e/foo/bar/xyzzy/wibble.pdb
+         We also take into account $WINEPREFIX, if it is set.
+         For the moment, if the name isn't fully qualified, just forget it
+         (we'd have to root around to find where the pdb actually is)
+      */
+      /* Change all the backslashes to forward slashes */
+      for (i = 0; pdbname[i]; i++) {
+         if (pdbname[i] == '\\')
+            pdbname[i] = '/';
+      }
+      Bool is_quald
+         = ('a' <= VG_(tolower)(pdbname[0]) && VG_(tolower)(pdbname[0]) <= 'z')
+           && pdbname[1] == ':'
+           && pdbname[2] == '/';
+      HChar* home = VG_(getenv)("HOME");
+      HChar* wpfx = VG_(getenv)("WINEPREFIX");
+      if (is_quald && wpfx) {
+         /* Change e:/foo/bar/xyzzy/wibble.pdb
+                to $WINEPREFIX/drive_e/foo/bar/xyzzy/wibble.pdb
+         */
+         Int mashedSzB = VG_(strlen)(pdbname) + VG_(strlen)(wpfx) + 50/*misc*/;
+         HChar* mashed = ML_(dinfo_zalloc)("di.debuginfo.dnpdi.1", mashedSzB);
+         VG_(sprintf)(mashed, "%s/drive_%c%s",
+                      wpfx, pdbname[0], &pdbname[2]);
+         vg_assert(mashed[mashedSzB-1] == 0);
+         ML_(dinfo_free)(pdbname);
+         pdbname = mashed;
+      }
+      else if (is_quald && home && !wpfx) {
+         /* Change e:/foo/bar/xyzzy/wibble.pdb
+                to $HOME/.wine/drive_e/foo/bar/xyzzy/wibble.pdb
+         */
+         Int mashedSzB = VG_(strlen)(pdbname) + VG_(strlen)(home) + 50/*misc*/;
+         HChar* mashed = ML_(dinfo_zalloc)("di.debuginfo.dnpdi.2", mashedSzB);
+         VG_(sprintf)(mashed, "%s/.wine/drive_%c%s",
+                      home, pdbname[0], &pdbname[2]);
+         vg_assert(mashed[mashedSzB-1] == 0);
+         ML_(dinfo_free)(pdbname);
+         pdbname = mashed;
+      } else {
+         /* It's not a fully qualified path, or neither $HOME nor $WINE
+            are set (strange).  Give up. */
+         ML_(dinfo_free)(pdbname);
+         pdbname = NULL;
+      }
+   }
+
+   /* Try s/exe/pdb/ if we don't have a valid pdbname. */
+   if (!pdbname) {
+      /* Try to find a matching PDB file from which to read debuginfo.
+         Windows PE files have symbol tables and line number information,
+         but MSVC doesn't seem to use them. */
+      /* Why +5 ?  Because in the worst case, we could find a dot as the
+         last character of pdbname, and we'd then put "pdb" right after
+         it, hence extending it a bit. */
+      pdbname = ML_(dinfo_zalloc)("di.debuginfo.lpd1", sz_exename+5);
+      VG_(strcpy)(pdbname, exename);
+      vg_assert(pdbname[sz_exename+5-1] == 0);
+      dot = VG_(strrchr)(pdbname, '.');
+      if (!dot)
+         goto out; /* there's no dot in the exe's name ?! */
+      if (dot[1] == 0)
+         goto out; /* hmm, path ends in "." */
+
+      if ('A' <= dot[1] && dot[1] <= 'Z')
+         VG_(strcpy)(dot, ".PDB");
+      else
+         VG_(strcpy)(dot, ".pdb");
+
+      vg_assert(pdbname[sz_exename+5-1] == 0);
+   }
+
+   /* See if we can find it, and check it's in-dateness. */
+   sres = VG_(stat)(pdbname, &stat_buf);
+   if (sr_isError(sres)) {
+      VG_(message)(Vg_UserMsg, "Warning: Missing or un-stat-able %s\n",
+                               pdbname);
+   if (VG_(clo_verbosity) > 0)
+      VG_(message)(Vg_UserMsg, "LOAD_PDB_DEBUGINFO: missing: %s\n", pdbname);
+      goto out;
+   }
+   pdb_mtime = stat_buf.mtime;
+
+   if (obj_mtime > pdb_mtime + 60ULL) {
+      /* PDB file is older than PE file.  Really, the PDB should be
+         newer than the PE, but that doesn't always seem to be the
+         case.  Allow the PDB to be up to one minute older.
+         Otherwise, it's probably out of date, in which case ignore it
+         or we will either (a) print wrong stack traces or more likely
+         (b) crash.
+      */
+      VG_(message)(Vg_UserMsg,
+                   "Warning:       %s (mtime = %llu)\n"
+                   " is older than %s (mtime = %llu)\n",
+                   pdbname, pdb_mtime, exename, obj_mtime);
+   }
+
+   sres = VG_(open)(pdbname, VKI_O_RDONLY, 0);
+   if (sr_isError(sres)) {
+      VG_(message)(Vg_UserMsg, "Warning: Can't open %s\n", pdbname);
+      goto out;
+   }
+
+   /* Looks promising; go on to try and read stuff from it. */
+   fd_pdbimage = sr_Res(sres);
+   n_pdbimage  = stat_buf.size;
+   sres = VG_(am_mmap_file_float_valgrind)( n_pdbimage, VKI_PROT_READ,
+                                            fd_pdbimage, 0 );
+   if (sr_isError(sres)) {
+      VG_(close)(fd_pdbimage);
+      goto out;
+   }
+
+   if (VG_(clo_verbosity) > 0)
+      VG_(message)(Vg_UserMsg, "LOAD_PDB_DEBUGINFO: pdbname: %s\n", pdbname);
+
+   /* play safe; always invalidate the CFI cache.  I don't know if
+      this is necessary, but anyway .. */
+   cfsi_cache__invalidate();
+   /* dump old info for this range, if any */
+   discard_syms_in_range( avma_obj, total_size );
+
+   { void* pdbimage = (void*)sr_Res(sres);
+     DebugInfo* di = find_or_create_DebugInfo_for(exename, NULL/*membername*/ );
+
+     /* this di must be new, since we just nuked any old stuff in the range */
+     vg_assert(di && !di->have_rx_map && !di->have_rw_map);
+     vg_assert(!di->have_dinfo);
+
+     /* don't set up any of the di-> fields; let
+        ML_(read_pdb_debug_info) do it. */
+     ML_(read_pdb_debug_info)( di, avma_obj, unknown_purpose__reloc,
+                               pdbimage, n_pdbimage, pdbname, pdb_mtime );
+     // JRS fixme: take notice of return value from read_pdb_debug_info,
+     // and handle failure
+     vg_assert(di->have_dinfo); // fails if PDB read failed
+     VG_(am_munmap_valgrind)( (Addr)pdbimage, n_pdbimage );
+     VG_(close)(fd_pdbimage);
+   }
+
+  out:
+   if (pdbname) ML_(dinfo_free)(pdbname);
+}
+
+#endif /* defined(VGO_linux) || defined(VGO_darwin) */
 
 
 /*-------------------------------------------------------------*/
@@ -1018,10 +1243,13 @@ static void search_all_symtabs ( Addr ptr, /*OUT*/DebugInfo** pdi,
    for (di = debugInfo_list; di != NULL; di = di->next) {
 
       if (findText) {
-         inRange = di->text_present
-                   && di->text_size > 0
-                   && di->text_avma <= ptr 
-                   && ptr < di->text_avma + di->text_size;
+         /* Consider any symbol in the r-x mapped area to be text.
+            See Comment_Regarding_Text_Range_Checks in storage.c for
+            details. */
+         inRange = di->have_rx_map
+                   && di->rx_map_size > 0
+                   && di->rx_map_avma <= ptr
+                   && ptr < di->rx_map_avma + di->rx_map_size;
       } else {
          inRange = (di->data_present
                     && di->data_size > 0
@@ -1240,14 +1468,17 @@ Vg_FnNameKind VG_(get_fnname_kind) ( Char* name )
       return Vg_FnNameMain;
 
    } else if (
-#if defined(VGO_linux)
+#      if defined(VGO_linux)
        VG_STREQ("__libc_start_main",  name) ||  // glibc glibness
        VG_STREQ("generic_start_main", name) ||  // Yellow Dog doggedness
-#elif defined(VGO_aix5)
+#      elif defined(VGO_aix5)
        VG_STREQ("__start", name)            ||  // AIX aches
-#else
-#      error Unknown OS
-#endif
+#      elif defined(VGO_darwin)
+       // See readmacho.c for an explanation of this.
+       VG_STREQ("start_according_to_valgrind", name) ||  // Darwin, darling
+#      else
+#        error "Unknown OS"
+#      endif
        0) {
       return Vg_FnNameBelowMain;
 
@@ -1343,14 +1574,18 @@ Bool VG_(get_objname) ( Addr a, Char* buf, Int nbuf )
 
 /* Map a code address to its DebugInfo.  Returns NULL if not found.  Doesn't
    require debug info. */
-DebugInfo* VG_(find_seginfo) ( Addr a )
+DebugInfo* VG_(find_DebugInfo) ( Addr a )
 {
+   static UWord n_search = 0;
    DebugInfo* di;
+   n_search++;
    for (di = debugInfo_list; di != NULL; di = di->next) {
       if (di->text_present
           && di->text_size > 0
           && di->text_avma <= a 
           && a < di->text_avma + di->text_size) {
+         if (0 == (n_search & 0xF))
+            move_DebugInfo_one_step_forward( di );
          return di;
       }
    }
@@ -1539,10 +1774,13 @@ Char* VG_(describe_IP)(Addr eip, Char* buf, Int n_buf)
    UInt  lineno; 
    UChar ibuf[50];
    Int   n = 0;
+
    static UChar buf_fn[BUF_LEN];
    static UChar buf_obj[BUF_LEN];
    static UChar buf_srcloc[BUF_LEN];
    static UChar buf_dirname[BUF_LEN];
+   buf_fn[0] = buf_obj[0] = buf_srcloc[0] = buf_dirname[0] = 0;
+
    Bool  know_dirinfo = False;
    Bool  know_fnname  = VG_(clo_sym_offsets)
                         ? VG_(get_fnname_w_offset) (eip, buf_fn, BUF_LEN)
@@ -1554,6 +1792,11 @@ Char* VG_(describe_IP)(Addr eip, Char* buf, Int n_buf)
                            buf_dirname, BUF_LEN, &know_dirinfo,
                            &lineno 
                         );
+   buf_fn     [ sizeof(buf_fn)-1      ]  = 0;
+   buf_obj    [ sizeof(buf_obj)-1     ]  = 0;
+   buf_srcloc [ sizeof(buf_srcloc)-1  ]  = 0;
+   buf_dirname[ sizeof(buf_dirname)-1 ]  = 0;
+
    if (VG_(clo_xml)) {
 
       Bool   human_readable = True;
@@ -1605,28 +1848,63 @@ Char* VG_(describe_IP)(Addr eip, Char* buf, Int n_buf)
    } else {
 
       /* Print for humans to read */
+      //
+      // Possible forms:
+      //
+      //   0x80483BF: really (a.c:20)
+      //   0x80483BF: really (in /foo/a.out)
+      //   0x80483BF: really (in ???)
+      //   0x80483BF: ??? (in /foo/a.out)
+      //   0x80483BF: ??? (a.c:20)
+      //   0x80483BF: ???
+      //
       VG_(sprintf)(ibuf,"0x%llX: ", (ULong)eip);
       APPEND(ibuf);
       if (know_fnname) {
          APPEND(buf_fn);
-         if (!know_srcloc && know_objname) {
-            APPEND(" (in ");
-            APPEND(buf_obj);
-            APPEND(")");
-         }
-      } else if (know_objname && !know_srcloc) {
-         APPEND("(within ");
-         APPEND(buf_obj);
-         APPEND(")");
       } else {
          APPEND("???");
       }
       if (know_srcloc) {
          APPEND(" (");
+         // Get the directory name, if any, possibly pruned, into dirname.
+         UChar* dirname = NULL;
+         if (VG_(clo_n_fullpath_after) > 0) {
+            Int i;
+            dirname = buf_dirname;
+            // Remove leading prefixes from the dirname.
+            // If user supplied --fullpath-after=foo, this will remove 
+            // a leading string which matches '.*foo' (not greedy).
+            for (i = 0; i < VG_(clo_n_fullpath_after); i++) {
+               UChar* prefix = VG_(clo_fullpath_after)[i];
+               UChar* str    = VG_(strstr)(dirname, prefix);
+               if (str) {
+                  dirname = str + VG_(strlen)(prefix);
+                  break;
+               }
+            }
+            /* remove leading "./" */
+            if (dirname[0] == '.' && dirname[1] == '/')
+               dirname += 2;
+         }
+         // do we have any interesting directory name to show?  If so
+         // add it in.
+         if (dirname && dirname[0] != 0) {
+            APPEND(dirname);
+            APPEND("/");
+         }
          APPEND(buf_srcloc);
          APPEND(":");
          VG_(sprintf)(ibuf,"%d",lineno);
          APPEND(ibuf);
+         APPEND(")");
+      } else if (know_objname) {
+         APPEND(" (in ");
+         APPEND(buf_obj);
+         APPEND(")");
+      } else if (know_fnname) {
+         // Nb: do this in two steps because "??)" is a trigraph!
+         APPEND(" (in ???");
          APPEND(")");
       }
 
@@ -1650,24 +1928,25 @@ Char* VG_(describe_IP)(Addr eip, Char* buf, Int n_buf)
    a CfiExpr into one convenient struct. */
 typedef
    struct {
-      Addr ipHere;
-      Addr spHere;
-      Addr fpHere;
-      Addr min_accessible;
-      Addr max_accessible;
+      D3UnwindRegs* uregs;
+      Addr          min_accessible;
+      Addr          max_accessible;
    }
    CfiExprEvalContext;
 
 /* Evaluate the CfiExpr rooted at ix in exprs given the context eec.
    *ok is set to False on failure, but not to True on success.  The
    caller must set it to True before calling. */
-static 
+__attribute__((noinline))
+static
 UWord evalCfiExpr ( XArray* exprs, Int ix, 
                     CfiExprEvalContext* eec, Bool* ok )
 {
    UWord wL, wR;
    Addr  a;
-   CfiExpr* e = VG_(indexXA)( exprs, ix );
+   CfiExpr* e;
+   vg_assert(sizeof(Addr) == sizeof(UWord));
+   e = VG_(indexXA)( exprs, ix );
    switch (e->tag) {
       case Cex_Binop:
          wL = evalCfiExpr( exprs, e->Cex.Binop.ixL, eec, ok );
@@ -1684,9 +1963,19 @@ UWord evalCfiExpr ( XArray* exprs, Int ix,
          /*NOTREACHED*/
       case Cex_CfiReg:
          switch (e->Cex.CfiReg.reg) {
-            case Creg_IP: return (Addr)eec->ipHere;
-            case Creg_SP: return (Addr)eec->spHere;
-            case Creg_FP: return (Addr)eec->fpHere;
+#           if defined(VGA_x86) || defined(VGA_amd64)
+            case Creg_IA_IP: return eec->uregs->xip;
+            case Creg_IA_SP: return eec->uregs->xsp;
+            case Creg_IA_BP: return eec->uregs->xbp;
+#           elif defined(VGA_arm)
+            case Creg_ARM_R15: return eec->uregs->r15;
+            case Creg_ARM_R14: return eec->uregs->r14;
+            case Creg_ARM_R13: return eec->uregs->r13;
+            case Creg_ARM_R12: return eec->uregs->r12;
+#           elif defined(VGA_ppc32) || defined(VGA_ppc64)
+#           else
+#             error "Unsupported arch"
+#           endif
             default: goto unhandled;
          }
          /*NOTREACHED*/
@@ -1832,94 +2121,175 @@ static void cfsi_cache__invalidate ( void ) {
 }
 
 
-/* The main function for DWARF2/3 CFI-based stack unwinding.
-   Given an IP/SP/FP triple, produce the IP/SP/FP values for the
-   previous frame, if possible. */
-/* Returns True if OK.  If not OK, *{ip,sp,fp}P are not changed. */
-/* NOTE: this function may rearrange the order of entries in the
-   DebugInfo list. */
-Bool VG_(use_CF_info) ( /*MOD*/Addr* ipP,
-                        /*MOD*/Addr* spP,
-                        /*MOD*/Addr* fpP,
-                        Addr min_accessible,
-                        Addr max_accessible )
+static inline CFSICacheEnt* cfsi_cache__find ( Addr ip )
 {
-   Bool       ok;
-   DebugInfo* di;
-   DiCfSI*    cfsi = NULL;
-   Addr       cfa, ipHere, spHere, fpHere, ipPrev, spPrev, fpPrev;
+   UWord         hash = ip % N_CFSI_CACHE;
+   CFSICacheEnt* ce = &cfsi_cache[hash];
+   static UWord  n_q = 0, n_m = 0;
 
-   CfiExprEvalContext eec;
-
-   static UWord n_q = 0, n_m = 0;
    n_q++;
    if (0 && 0 == (n_q & 0x1FFFFF))
       VG_(printf)("QQQ %lu %lu\n", n_q, n_m);
 
-   { UWord hash = (*ipP) % N_CFSI_CACHE;
-     CFSICacheEnt* ce = &cfsi_cache[hash];
-
-     if (LIKELY(ce->ip == *ipP) && LIKELY(ce->di != NULL)) {
-        /* found an entry in the cache .. */
-     } else {
-        /* not found in cache.  Search and update. */
-        n_m++;
-        ce->ip = *ipP;
-        find_DiCfSI( &ce->di, &ce->ix, *ipP );
-     }
-
-     if (UNLIKELY(ce->di == (DebugInfo*)1)) {
-        /* no DiCfSI for this address */
-        cfsi = NULL;
-        di = NULL;
-     } else {
-        /* found a DiCfSI for this address */
-        di = ce->di;
-        cfsi = &di->cfsi[ ce->ix ];
-     }
+   if (LIKELY(ce->ip == ip) && LIKELY(ce->di != NULL)) {
+      /* found an entry in the cache .. */
+   } else {
+      /* not found in cache.  Search and update. */
+      n_m++;
+      ce->ip = ip;
+      find_DiCfSI( &ce->di, &ce->ix, ip );
    }
 
-   if (UNLIKELY(cfsi == NULL))
+   if (UNLIKELY(ce->di == (DebugInfo*)1)) {
+      /* no DiCfSI for this address */
+      return NULL;
+   } else {
+      /* found a DiCfSI for this address */
+      return ce;
+   }
+}
+
+
+inline
+static Addr compute_cfa ( D3UnwindRegs* uregs,
+                          Addr min_accessible, Addr max_accessible,
+                          DebugInfo* di, DiCfSI* cfsi )
+{
+   CfiExprEvalContext eec;
+   Addr               cfa;
+   Bool               ok;
+
+   /* Compute the CFA. */
+   cfa = 0;
+   switch (cfsi->cfa_how) {
+#     if defined(VGA_x86) || defined(VGA_amd64)
+      case CFIC_IA_SPREL: 
+         cfa = cfsi->cfa_off + uregs->xsp;
+         break;
+      case CFIC_IA_BPREL: 
+         cfa = cfsi->cfa_off + uregs->xbp;
+         break;
+#     elif defined(VGA_arm)
+      case CFIC_ARM_R13REL: 
+         cfa = cfsi->cfa_off + uregs->r13;
+         break;
+      case CFIC_ARM_R12REL: 
+         cfa = cfsi->cfa_off + uregs->r12;
+         break;
+      case CFIC_ARM_R11REL: 
+         cfa = cfsi->cfa_off + uregs->r11;
+         break;
+      case CFIC_ARM_R7REL: 
+         cfa = cfsi->cfa_off + uregs->r7;
+         break;
+#     elif defined(VGA_ppc32) || defined(VGA_ppc64)
+#     else
+#       error "Unsupported arch"
+#     endif
+      case CFIC_EXPR: /* available on all archs */
+         if (0) {
+            VG_(printf)("CFIC_EXPR: ");
+            ML_(ppCfiExpr)(di->cfsi_exprs, cfsi->cfa_off);
+            VG_(printf)("\n");
+         }
+         eec.uregs          = uregs;
+         eec.min_accessible = min_accessible;
+         eec.max_accessible = max_accessible;
+         ok = True;
+         cfa = evalCfiExpr(di->cfsi_exprs, cfsi->cfa_off, &eec, &ok );
+         if (!ok) return 0;
+         break;
+      default: 
+         vg_assert(0);
+   }
+   return cfa;
+}
+
+
+/* Get the call frame address (CFA) given an IP/SP/FP triple. */
+/* NOTE: This function may rearrange the order of entries in the
+   DebugInfo list. */
+Addr ML_(get_CFA) ( Addr ip, Addr sp, Addr fp,
+                    Addr min_accessible, Addr max_accessible )
+{
+   CFSICacheEnt* ce;
+   DebugInfo*    di;
+   DiCfSI*       cfsi;
+
+   ce = cfsi_cache__find(ip);
+
+   if (UNLIKELY(ce == NULL))
+      return 0; /* no info.  Nothing we can do. */
+
+   di = ce->di;
+   cfsi = &di->cfsi[ ce->ix ];
+
+   /* Temporary impedance-matching kludge so that this keeps working
+      on x86-linux and amd64-linux. */
+#  if defined(VGA_x86) || defined(VGA_amd64)
+   { D3UnwindRegs uregs;
+     uregs.xip = ip;
+     uregs.xsp = sp;
+     uregs.xbp = fp;
+     return compute_cfa(&uregs,
+                        min_accessible,  max_accessible, di, cfsi);
+   }
+#  else
+   return 0; /* indicates failure */
+#  endif
+}
+
+
+/* The main function for DWARF2/3 CFI-based stack unwinding.  Given a
+   set of registers in UREGS, modify it to hold the register values
+   for the previous frame, if possible.  Returns True if successful.
+   If not successful, *UREGS is not changed.
+
+   For x86 and amd64, the unwound registers are: {E,R}IP,
+   {E,R}SP, {E,R}BP.
+
+   For arm, the unwound registers are: R7 R11 R12 R13 R14 R15.
+*/
+Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
+                        Addr min_accessible,
+                        Addr max_accessible )
+{
+   Bool               ok;
+   DebugInfo*         di;
+   DiCfSI*            cfsi = NULL;
+   Addr               cfa, ipHere = 0;
+   CFSICacheEnt*      ce;
+   CfiExprEvalContext eec;
+   D3UnwindRegs       uregsPrev;
+
+#  if defined(VGA_x86) || defined(VGA_amd64)
+   ipHere = uregsHere->xip;
+#  elif defined(VGA_arm)
+   ipHere = uregsHere->r15;
+#  elif defined(VGA_ppc32) || defined(VGA_ppc64)
+#  else
+#    error "Unknown arch"
+#  endif
+   ce = cfsi_cache__find(ipHere);
+
+   if (UNLIKELY(ce == NULL))
       return False; /* no info.  Nothing we can do. */
+
+   di = ce->di;
+   cfsi = &di->cfsi[ ce->ix ];
 
    if (0) {
       VG_(printf)("found cfisi: "); 
       ML_(ppDiCfSI)(di->cfsi_exprs, cfsi);
    }
 
-   ipPrev = spPrev = fpPrev = 0;
-
-   ipHere = *ipP;
-   spHere = *spP;
-   fpHere = *fpP;
+   VG_(bzero_inline)(&uregsPrev, sizeof(uregsPrev));
 
    /* First compute the CFA. */
-   cfa = 0;
-   switch (cfsi->cfa_how) {
-      case CFIC_SPREL: 
-         cfa = cfsi->cfa_off + spHere;
-         break;
-      case CFIC_FPREL: 
-         cfa = cfsi->cfa_off + fpHere;
-         break;
-      case CFIC_EXPR: 
-         if (0) {
-            VG_(printf)("CFIC_EXPR: ");
-            ML_(ppCfiExpr)(di->cfsi_exprs, cfsi->cfa_off);
-            VG_(printf)("\n");
-         }
-         eec.ipHere = ipHere;
-         eec.spHere = spHere;
-         eec.fpHere = fpHere;
-         eec.min_accessible = min_accessible;
-         eec.max_accessible = max_accessible;
-         ok = True;
-         cfa = evalCfiExpr(di->cfsi_exprs, cfsi->cfa_off, &eec, &ok );
-         if (!ok) return False;
-         break;
-      default: 
-         vg_assert(0);
-   }
+   cfa = compute_cfa(uregsHere,
+                     min_accessible, max_accessible, di, cfsi);
+   if (UNLIKELY(cfa == 0))
+      return False;
 
    /* Now we know the CFA, use it to roll back the registers we're
       interested in. */
@@ -1945,9 +2315,7 @@ Bool VG_(use_CF_info) ( /*MOD*/Addr* ipP,
             case CFIR_EXPR:                             \
                if (0)                                   \
                   ML_(ppCfiExpr)(di->cfsi_exprs,_off);  \
-               eec.ipHere = ipHere;                     \
-               eec.spHere = spHere;                     \
-               eec.fpHere = fpHere;                     \
+               eec.uregs = uregsHere;                   \
                eec.min_accessible = min_accessible;     \
                eec.max_accessible = max_accessible;     \
                ok = True;                               \
@@ -1959,15 +2327,147 @@ Bool VG_(use_CF_info) ( /*MOD*/Addr* ipP,
          }                                              \
       } while (0)
 
-   COMPUTE(ipPrev, ipHere, cfsi->ra_how, cfsi->ra_off);
-   COMPUTE(spPrev, spHere, cfsi->sp_how, cfsi->sp_off);
-   COMPUTE(fpPrev, fpHere, cfsi->fp_how, cfsi->fp_off);
+#  if defined(VGA_x86) || defined(VGA_amd64)
+   COMPUTE(uregsPrev.xip, uregsHere->xip, cfsi->ra_how, cfsi->ra_off);
+   COMPUTE(uregsPrev.xsp, uregsHere->xsp, cfsi->sp_how, cfsi->sp_off);
+   COMPUTE(uregsPrev.xbp, uregsHere->xbp, cfsi->bp_how, cfsi->bp_off);
+#  elif defined(VGA_arm)
+   COMPUTE(uregsPrev.r15, uregsHere->r15, cfsi->ra_how,  cfsi->ra_off);
+   COMPUTE(uregsPrev.r14, uregsHere->r14, cfsi->r14_how, cfsi->r14_off);
+   COMPUTE(uregsPrev.r13, uregsHere->r13, cfsi->r13_how, cfsi->r13_off);
+   COMPUTE(uregsPrev.r12, uregsHere->r12, cfsi->r12_how, cfsi->r12_off);
+   COMPUTE(uregsPrev.r11, uregsHere->r11, cfsi->r11_how, cfsi->r11_off);
+   COMPUTE(uregsPrev.r7,  uregsHere->r7,  cfsi->r7_how,  cfsi->r7_off);
+#  elif defined(VGA_ppc32) || defined(VGA_ppc64)
+#  else
+#    error "Unknown arch"
+#  endif
 
 #  undef COMPUTE
 
-   *ipP = ipPrev;
-   *spP = spPrev;
-   *fpP = fpPrev;
+   *uregsHere = uregsPrev;
+   return True;
+}
+
+
+/*--------------------------------------------------------------*/
+/*---                                                        ---*/
+/*--- TOP LEVEL: FOR UNWINDING THE STACK USING               ---*/
+/*---            MSVC FPO INFO                               ---*/
+/*---                                                        ---*/
+/*--------------------------------------------------------------*/
+
+Bool VG_(use_FPO_info) ( /*MOD*/Addr* ipP,
+                         /*MOD*/Addr* spP,
+                         /*MOD*/Addr* fpP,
+                         Addr min_accessible,
+                         Addr max_accessible )
+{
+   Word       i;
+   DebugInfo* di;
+   FPO_DATA*  fpo = NULL;
+   Addr       spHere;
+
+   static UWord n_search = 0;
+   static UWord n_steps = 0;
+   n_search++;
+
+   if (0) VG_(printf)("search FPO for %#lx\n", *ipP);
+
+   for (di = debugInfo_list; di != NULL; di = di->next) {
+      n_steps++;
+
+      /* Use the per-DebugInfo summary address ranges to skip
+         inapplicable DebugInfos quickly. */
+      if (di->fpo == NULL)
+         continue;
+      if (*ipP < di->fpo_minavma || *ipP > di->fpo_maxavma)
+         continue;
+
+      i = ML_(search_one_fpotab)( di, *ipP );
+      if (i != -1) {
+         Word j;
+         if (0) {
+            /* debug printing only */
+            VG_(printf)("look for %#lx  size %ld i %ld\n",
+                        *ipP, di->fpo_size, i);
+            for (j = 0; j < di->fpo_size; j++)
+               VG_(printf)("[%02ld] %#x %d\n", 
+                            j, di->fpo[j].ulOffStart, di->fpo[j].cbProcSize);
+         }
+         vg_assert(i >= 0 && i < di->fpo_size);
+         fpo = &di->fpo[i];
+         break;
+      }
+   }
+
+   if (fpo == NULL)
+      return False;
+
+   if (0 && ((n_search & 0x7FFFF) == 0))
+      VG_(printf)("VG_(use_FPO_info): %lu searches, "
+                  "%lu DebugInfos looked at\n",
+                  n_search, n_steps);
+
+
+   /* Start of performance-enhancing hack: once every 64 (chosen
+      hackily after profiling) successful searches, move the found
+      DebugInfo one step closer to the start of the list.  This makes
+      future searches cheaper.  For starting konqueror on amd64, this
+      in fact reduces the total amount of searching done by the above
+      find-the-right-DebugInfo loop by more than a factor of 20. */
+   if ((n_search & 0x3F) == 0) {
+      /* Move si one step closer to the start of the list. */
+      //move_DebugInfo_one_step_forward( di );
+   }
+   /* End of performance-enhancing hack. */
+
+   if (0) {
+      VG_(printf)("found fpo: ");
+      //ML_(ppFPO)(fpo);
+   }
+
+   /*
+   Stack layout is:
+   %esp->
+      4*.cbRegs  {%edi, %esi, %ebp, %ebx}
+      4*.cdwLocals
+      return_pc
+      4*.cdwParams
+   prior_%esp->
+
+   Typical code looks like:
+      sub $4*.cdwLocals,%esp
+         Alternative to above for >=4KB (and sometimes for smaller):
+            mov $size,%eax
+            call __chkstk  # WinNT performs page-by-page probe!
+               __chkstk is much like alloc(), except that on return
+               %eax= 5+ &CALL.  Thus it could be used as part of
+               Position Independent Code to locate the Global Offset Table.
+      push %ebx
+      push %ebp
+      push %esi
+         Other once-only instructions often scheduled >here<.
+      push %edi
+
+   If the pc is within the first .cbProlog bytes of the function,
+   then you must disassemble to see how many registers have been pushed,
+   because instructions in the prolog may be scheduled for performance.
+   The order of PUSH is always %ebx, %ebp, %esi, %edi, with trailing
+   registers not pushed when .cbRegs < 4.  This seems somewhat strange
+   because %ebp is the register whose usage you want to minimize,
+   yet it is in the first half of the PUSH list.
+
+   I don't know what happens when the compiler constructs an outgoing CALL.
+   %esp could move if outgoing parameters are PUSHed, and this affects
+   traceback for errors during the PUSHes. */
+ 
+   spHere = *spP;
+
+   *ipP = *(Addr *)(spHere + 4*(fpo->cbRegs + fpo->cdwLocals));
+   *spP =           spHere + 4*(fpo->cbRegs + fpo->cdwLocals + 1 
+                                            + fpo->cdwParams);
+   *fpP = *(Addr *)(spHere + 4*2);
    return True;
 }
 
@@ -1978,6 +2478,25 @@ Bool VG_(use_CF_info) ( /*MOD*/Addr* ipP,
 /*---            FROM DWARF3 DEBUG INFO                      ---*/
 /*---                                                        ---*/
 /*--------------------------------------------------------------*/
+
+/* Try to make p2XA(dst, fmt, args..) turn into
+   VG_(xaprintf_no_f_c)(dst, fmt, args) without having to resort to
+   vararg macros.  As usual with everything to do with varargs, it's
+   an ugly hack.
+
+   //#define p2XA(dstxa, format, args...)
+   //   VG_(xaprintf_no_f_c)(dstxa, format, ##args)
+*/
+#define  p2XA  VG_(xaprintf_no_f_c)
+
+/* Add a zero-terminating byte to DST, which must be an XArray* of
+   HChar. */
+static void zterm_XA ( XArray* dst )
+{
+   HChar zero = 0;
+   (void) VG_(addBytesToXA)( dst, &zero, 1 );
+}
+
 
 /* Evaluate the location expression/list for var, to see whether or
    not data_addr falls within the variable.  If so also return the
@@ -2034,7 +2553,7 @@ static Bool data_address_is_in_var ( /*OUT*/PtrdiffT* offset,
       VG_(printf)("\n");
    }
 
-   if (res.kind == GXR_Value 
+   if (res.kind == GXR_Addr 
        && res.word <= data_addr
        && data_addr < res.word + var_szB) {
       *offset = data_addr - res.word;
@@ -2045,13 +2564,14 @@ static Bool data_address_is_in_var ( /*OUT*/PtrdiffT* offset,
 }
 
 
-/* Format the acquired information into dname1[0 .. n_dname-1] and
-   dname2[0 .. n_dname-1] in an understandable way.  Not so easy.
-   If frameNo is -1, this is assumed to be a global variable; else
-   a local variable. */
-static void format_message ( /*OUT*/Char* dname1,
-                             /*OUT*/Char* dname2,
-                             Int      n_dname,
+/* Format the acquired information into DN(AME)1 and DN(AME)2, which
+   are XArray*s of HChar, that have been initialised by the caller.
+   Resulting strings will be zero terminated.  Information is
+   formatted in an understandable way.  Not so easy.  If frameNo is
+   -1, this is assumed to be a global variable; else a local
+   variable. */
+static void format_message ( /*MOD*/XArray* /* of HChar */ dn1,
+                             /*MOD*/XArray* /* of HChar */ dn2,
                              Addr     data_addr,
                              DiVariable* var,
                              PtrdiffT var_offset,
@@ -2060,19 +2580,35 @@ static void format_message ( /*OUT*/Char* dname1,
                              Int      frameNo, 
                              ThreadId tid )
 {
-   Bool have_descr, have_srcloc;
+   Bool   have_descr, have_srcloc;
+   Bool   xml       = VG_(clo_xml);
    UChar* vo_plural = var_offset == 1 ? "" : "s";
    UChar* ro_plural = residual_offset == 1 ? "" : "s";
+   UChar* basetag   = "auxwhat"; /* a constant */
+   UChar tagL[32], tagR[32], xagL[32], xagR[32];
 
    vg_assert(frameNo >= -1);
-   vg_assert(dname1 && dname2 && n_dname > 1);
+   vg_assert(dn1 && dn2);
    vg_assert(described);
    vg_assert(var && var->name);
    have_descr = VG_(sizeXA)(described) > 0
                 && *(UChar*)VG_(indexXA)(described,0) != '\0';
    have_srcloc = var->fileName && var->lineNo > 0;
 
-   dname1[0] = dname2[0] = '\0';
+   tagL[0] = tagR[0] = xagL[0] = xagR[0] = 0;
+   if (xml) {
+      VG_(sprintf)(tagL, "<%s>",   basetag); // <auxwhat>
+      VG_(sprintf)(tagR, "</%s>",  basetag); // </auxwhat>
+      VG_(sprintf)(xagL, "<x%s>",  basetag); // <xauxwhat>
+      VG_(sprintf)(xagR, "</x%s>", basetag); // </xauxwhat>
+   }
+
+#  define TAGL(_xa) p2XA(_xa, "%s", tagL)
+#  define TAGR(_xa) p2XA(_xa, "%s", tagR)
+#  define XAGL(_xa) p2XA(_xa, "%s", xagL)
+#  define XAGR(_xa) p2XA(_xa, "%s", xagR)
+#  define TXTL(_xa) p2XA(_xa, "%s", "<text>")
+#  define TXTR(_xa) p2XA(_xa, "%s", "</text>")
 
    /* ------ local cases ------ */
 
@@ -2081,13 +2617,23 @@ static void format_message ( /*OUT*/Char* dname1,
          Location 0x7fefff6cf is 543 bytes inside local var "a",
          in frame #1 of thread 1
       */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside local var \"%s\",",
-         data_addr, var_offset, vo_plural, var->name );
-      VG_(snprintf)(
-         dname2, n_dname,
-         "in frame #%d of thread %d", frameNo, (Int)tid);
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside local var \"%t\",",
+               data_addr, var_offset, vo_plural, var->name );
+         TAGR( dn1 );
+         TAGL( dn2 );
+         p2XA( dn2,
+               "in frame #%d of thread %d", frameNo, (Int)tid );
+         TAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside local var \"%s\",",
+               data_addr, var_offset, vo_plural, var->name );
+         p2XA( dn2,
+               "in frame #%d of thread %d", frameNo, (Int)tid );
+      }
    } 
    else
    if ( frameNo >= 0 && have_srcloc && (!have_descr) ) {
@@ -2095,15 +2641,31 @@ static void format_message ( /*OUT*/Char* dname1,
          Location 0x7fefff6cf is 543 bytes inside local var "a"
          declared at dsyms7.c:17, in frame #1 of thread 1
       */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside local var \"%s\"",
-         data_addr, var_offset, vo_plural, var->name);
-      ML_(pp_GX) (var->gexpr);
-      VG_(snprintf)(
-         dname2, n_dname,
-         "declared at %s:%d, in frame #%d of thread %d",
-         var->fileName, var->lineNo, frameNo, (Int)tid);
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside local var \"%t\"",
+               data_addr, var_offset, vo_plural, var->name );
+         TAGR( dn1 );
+         XAGL( dn2 );
+         TXTL( dn2 );
+         p2XA( dn2,
+               "declared at %t:%d, in frame #%d of thread %d",
+               var->fileName, var->lineNo, frameNo, (Int)tid );
+         TXTR( dn2 );
+         // FIXME: also do <dir>
+         p2XA( dn2,
+               " <file>%t</file> <line>%d</line> ", 
+               var->fileName, var->lineNo );
+         XAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside local var \"%s\"",
+               data_addr, var_offset, vo_plural, var->name );
+         p2XA( dn2,
+               "declared at %s:%d, in frame #%d of thread %d",
+               var->fileName, var->lineNo, frameNo, (Int)tid );
+      }
    }
    else
    if ( frameNo >= 0 && (!have_srcloc) && have_descr ) {
@@ -2111,28 +2673,57 @@ static void format_message ( /*OUT*/Char* dname1,
          Location 0x7fefff6cf is 2 bytes inside a[3].xyzzy[21].c2
          in frame #1 of thread 1
       */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside %s%s",
-         data_addr, residual_offset, ro_plural, var->name,
-         (char*)(VG_(indexXA)(described,0)) );
-      VG_(snprintf)(
-         dname2, n_dname,
-         "in frame #%d of thread %d", frameNo, (Int)tid);
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %t%t",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         TAGR( dn1 );
+         TAGL( dn2 );
+         p2XA( dn2,
+               "in frame #%d of thread %d", frameNo, (Int)tid );
+         TAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %s%s",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         p2XA( dn2,
+               "in frame #%d of thread %d", frameNo, (Int)tid );
+      }
    } 
    else
    if ( frameNo >= 0 && have_srcloc && have_descr ) {
-     /* Location 0x7fefff6cf is 2 bytes inside a[3].xyzzy[21].c2,
-        declared at dsyms7.c:17, in frame #1 of thread 1 */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside %s%s,",
-         data_addr, residual_offset, ro_plural, var->name,
-         (char*)(VG_(indexXA)(described,0)) );
-      VG_(snprintf)(
-         dname2, n_dname,
-         "declared at %s:%d, in frame #%d of thread %d",
-         var->fileName, var->lineNo, frameNo, (Int)tid);
+      /* Location 0x7fefff6cf is 2 bytes inside a[3].xyzzy[21].c2,
+         declared at dsyms7.c:17, in frame #1 of thread 1 */
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %t%t,",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         TAGR( dn1 );
+         XAGL( dn2 );
+         TXTL( dn2 );
+         p2XA( dn2,
+               "declared at %t:%d, in frame #%d of thread %d",
+               var->fileName, var->lineNo, frameNo, (Int)tid );
+         TXTR( dn2 );
+         // FIXME: also do <dir>
+         p2XA( dn2,
+               " <file>%t</file> <line>%d</line> ",
+               var->fileName, var->lineNo );
+         XAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %s%s,",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         p2XA( dn2,
+               "declared at %s:%d, in frame #%d of thread %d",
+               var->fileName, var->lineNo, frameNo, (Int)tid );
+      }
    }
    else
    /* ------ global cases ------ */
@@ -2140,10 +2731,17 @@ static void format_message ( /*OUT*/Char* dname1,
       /* no srcloc, no description:
          Location 0x7fefff6cf is 543 bytes inside global var "a"
       */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside global var \"%s\"",
-         data_addr, var_offset, vo_plural, var->name );
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside global var \"%t\"",
+               data_addr, var_offset, vo_plural, var->name );
+         TAGR( dn1 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside global var \"%s\"",
+               data_addr, var_offset, vo_plural, var->name );
+      }
    } 
    else
    if ( frameNo >= -1 && have_srcloc && (!have_descr) ) {
@@ -2151,14 +2749,31 @@ static void format_message ( /*OUT*/Char* dname1,
          Location 0x7fefff6cf is 543 bytes inside global var "a"
          declared at dsyms7.c:17
       */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside global var \"%s\"",
-         data_addr, var_offset, vo_plural, var->name );
-      VG_(snprintf)(
-         dname2, n_dname,
-         "declared at %s:%d",
-         var->fileName, var->lineNo);
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside global var \"%t\"",
+               data_addr, var_offset, vo_plural, var->name );
+         TAGR( dn1 );
+         XAGL( dn2 );
+         TXTL( dn2 );
+         p2XA( dn2,
+               "declared at %t:%d",
+               var->fileName, var->lineNo);
+         TXTR( dn2 );
+         // FIXME: also do <dir>
+         p2XA( dn2,
+               " <file>%t</file> <line>%d</line> ",
+               var->fileName, var->lineNo );
+         XAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside global var \"%s\"",
+               data_addr, var_offset, vo_plural, var->name );
+         p2XA( dn2,
+               "declared at %s:%d",
+               var->fileName, var->lineNo);
+      }
    }
    else
    if ( frameNo >= -1 && (!have_srcloc) && have_descr ) {
@@ -2166,43 +2781,82 @@ static void format_message ( /*OUT*/Char* dname1,
          Location 0x7fefff6cf is 2 bytes inside a[3].xyzzy[21].c2,
          a global variable
       */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside %s%s,",
-         data_addr, residual_offset, ro_plural, var->name,
-         (char*)(VG_(indexXA)(described,0)) );
-      VG_(snprintf)(
-         dname2, n_dname,
-         "a global variable");
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %t%t,",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         TAGR( dn1 );
+         TAGL( dn2 );
+         p2XA( dn2,
+               "a global variable");
+         TAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %s%s,",
+               data_addr, residual_offset, ro_plural, var->name,
+               (char*)(VG_(indexXA)(described,0)) );
+         p2XA( dn2,
+               "a global variable");
+      }
    } 
    else
    if ( frameNo >= -1 && have_srcloc && have_descr ) {
-     /* Location 0x7fefff6cf is 2 bytes inside a[3].xyzzy[21].c2,
-        a global variable declared at dsyms7.c:17 */
-      VG_(snprintf)(
-         dname1, n_dname,
-         "Location 0x%lx is %lu byte%s inside %s%s,",
-         data_addr, residual_offset, ro_plural, var->name,
-         (char*)(VG_(indexXA)(described,0)) );
-      VG_(snprintf)(
-         dname2, n_dname,
-         "a global variable declared at %s:%d",
-         var->fileName, var->lineNo);
+      /* Location 0x7fefff6cf is 2 bytes inside a[3].xyzzy[21].c2,
+         a global variable declared at dsyms7.c:17 */
+      if (xml) {
+         TAGL( dn1 );
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %t%t,",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         TAGR( dn1 );
+         XAGL( dn2 );
+         TXTL( dn2 );
+         p2XA( dn2,
+               "a global variable declared at %t:%d",
+               var->fileName, var->lineNo);
+         TXTR( dn2 );
+         // FIXME: also do <dir>
+         p2XA( dn2,
+               " <file>%t</file> <line>%d</line> ",
+               var->fileName, var->lineNo );
+         XAGR( dn2 );
+      } else {
+         p2XA( dn1,
+               "Location 0x%lx is %lu byte%s inside %s%s,",
+               data_addr, residual_offset, ro_plural, var->name,
+               (HChar*)(VG_(indexXA)(described,0)) );
+         p2XA( dn2,
+               "a global variable declared at %s:%d",
+               var->fileName, var->lineNo);
+      }
    }
    else 
       vg_assert(0);
 
-   dname1[n_dname-1] = dname2[n_dname-1] = 0;
+   /* Zero terminate both strings */
+   zterm_XA( dn1 );
+   zterm_XA( dn2 );
+
+#  undef TAGL
+#  undef TAGR
+#  undef XAGL
+#  undef XAGR
+#  undef TXTL
+#  undef TXTR
 }
 
+
 /* Determine if data_addr is a local variable in the frame
-   characterised by (ip,sp,fp), and if so write its description into
-   dname{1,2}[0..n_dname-1], and return True.  If not, return
-   False. */
+   characterised by (ip,sp,fp), and if so write its description at the
+   ends of DNAME{1,2}, which are XArray*s of HChar, that have been
+   initialised by the caller, zero terminate both, and return True.
+   If it's not a local variable in said frame, return False. */
 static 
-Bool consider_vars_in_frame ( /*OUT*/Char* dname1,
-                              /*OUT*/Char* dname2,
-                              Int n_dname,
+Bool consider_vars_in_frame ( /*MOD*/XArray* /* of HChar */ dname1,
+                              /*MOD*/XArray* /* of HChar */ dname2,
                               Addr data_addr,
                               Addr ip, Addr sp, Addr fp,
                               /* shown to user: */
@@ -2310,7 +2964,7 @@ Bool consider_vars_in_frame ( /*OUT*/Char* dname1,
             XArray* described = ML_(describe_type)( &residual_offset,
                                                     di->admin_tyents, 
                                                     var->typeR, offset );
-            format_message( dname1, dname2, n_dname, 
+            format_message( dname1, dname2,
                             data_addr, var, offset, residual_offset,
                             described, frameNo, tid );
             VG_(deleteXA)( described );
@@ -2322,15 +2976,24 @@ Bool consider_vars_in_frame ( /*OUT*/Char* dname1,
    return False;
 }
 
-/* Try to form some description of data_addr by looking at the DWARF3
+/* Try to form some description of DATA_ADDR by looking at the DWARF3
    debug info we have.  This considers all global variables, and all
-   frames in the stacks of all threads.  Result (or as much as will
-   fit) is put into into dname{1,2}[0 .. n_dname-1] and is guaranteed
-   to be zero terminated. */
-Bool VG_(get_data_description)( /*OUT*/Char* dname1,
-                                /*OUT*/Char* dname2,
-                                Int  n_dname,
-                                Addr data_addr )
+   frames in the stacks of all threads.  Result is written at the ends
+   of DNAME{1,2}V, which are XArray*s of HChar, that have been
+   initialised by the caller, and True is returned.  If no description
+   is created, False is returned.  Regardless of the return value,
+   DNAME{1,2}V are guaranteed to be zero terminated after the call.
+
+   Note that after the call, DNAME{1,2} may have more than one
+   trailing zero, so callers should establish the useful text length
+   using VG_(strlen) on the contents, rather than VG_(sizeXA) on the
+   XArray itself.
+*/
+Bool VG_(get_data_description)( 
+        /*MOD*/ void* /* really, XArray* of HChar */ dname1v,
+        /*MOD*/ void* /* really, XArray* of HChar */ dname2v,
+        Addr data_addr
+     )
 {
 #  define N_FRAMES 8
    Addr ips[N_FRAMES], sps[N_FRAMES], fps[N_FRAMES];
@@ -2342,8 +3005,8 @@ Bool VG_(get_data_description)( /*OUT*/Char* dname1,
    DebugInfo* di;
    Word       j;
 
-   vg_assert(n_dname > 1);
-   dname1[n_dname-1] = dname2[n_dname-1] = 0;
+   XArray*    dname1 = (XArray*)dname1v;
+   XArray*    dname2 = (XArray*)dname2v;
 
    if (0) VG_(printf)("get_data_description: dataaddr %#lx\n", data_addr);
    /* First, see if data_addr is (or is part of) a global variable.
@@ -2409,11 +3072,12 @@ Bool VG_(get_data_description)( /*OUT*/Char* dname1,
             XArray* described = ML_(describe_type)( &residual_offset,
                                                     di->admin_tyents,
                                                     var->typeR, offset );
-            format_message( dname1, dname2, n_dname, 
+            format_message( dname1, dname2,
                             data_addr, var, offset, residual_offset,
                             described, -1/*frameNo*/, tid );
             VG_(deleteXA)( described );
-            dname1[n_dname-1] = dname2[n_dname-1] = 0;
+            zterm_XA( dname1 );
+            zterm_XA( dname2 );
             return True;
          }
       }
@@ -2433,12 +3097,13 @@ Bool VG_(get_data_description)( /*OUT*/Char* dname1,
    while ( VG_(thread_stack_next)(&tid, &stack_min, &stack_max) ) {
       if (stack_min >= stack_max)
          continue; /* ignore obviously stupid cases */
-      if (consider_vars_in_frame( dname1, dname2, n_dname,
+      if (consider_vars_in_frame( dname1, dname2,
                                   data_addr,
                                   VG_(get_IP)(tid),
                                   VG_(get_SP)(tid), 
                                   VG_(get_FP)(tid), tid, 0 )) {
-         dname1[n_dname-1] = dname2[n_dname-1] = 0;
+         zterm_XA( dname1 );
+         zterm_XA( dname2 );
          return True;
       }
    }
@@ -2457,7 +3122,8 @@ Bool VG_(get_data_description)( /*OUT*/Char* dname1,
       }
    }
    if (!found) {
-      dname1[n_dname-1] = dname2[n_dname-1] = 0;
+      zterm_XA( dname1 );
+      zterm_XA( dname2 );
       return False;
    }
 
@@ -2472,11 +3138,12 @@ Bool VG_(get_data_description)( /*OUT*/Char* dname1,
       Oh well. */
    vg_assert(n_frames >= 0 && n_frames <= N_FRAMES);
    for (j = 0; j < n_frames; j++) {
-      if (consider_vars_in_frame( dname1, dname2, n_dname,
+      if (consider_vars_in_frame( dname1, dname2,
                                   data_addr,
                                   ips[j], 
                                   sps[j], fps[j], tid, j )) {
-         dname1[n_dname-1] = dname2[n_dname-1] = 0;
+         zterm_XA( dname1 );
+         zterm_XA( dname2 );
          return True;
       }
       /* Now, it appears that gcc sometimes appears to produce
@@ -2498,17 +3165,19 @@ Bool VG_(get_data_description)( /*OUT*/Char* dname1,
          either (1) I misunderstood something, or (2) GDB has an
          equivalent kludge. */
       if (j > 0 /* this is a non-innermost frame */
-          && consider_vars_in_frame( dname1, dname2, n_dname,
+          && consider_vars_in_frame( dname1, dname2,
                                      data_addr,
                                      ips[j] + 1, 
                                      sps[j], fps[j], tid, j )) {
-         dname1[n_dname-1] = dname2[n_dname-1] = 0;
+         zterm_XA( dname1 );
+         zterm_XA( dname2 );
          return True;
       }
    }
 
    /* We didn't find anything useful. */
-   dname1[n_dname-1] = dname2[n_dname-1] = 0;
+   zterm_XA( dname1 );
+   zterm_XA( dname2 );
    return False;
 #  undef N_FRAMES
 }
@@ -2595,7 +3264,7 @@ void analyse_deps ( /*MOD*/XArray* /* of FrameBlock */ blocks,
    vg_assert(res_sp_6k.kind == res_fp_6k.kind);
    vg_assert(res_sp_6k.kind == res_fp_7k.kind);
 
-   if (res_sp_6k.kind == GXR_Value) {
+   if (res_sp_6k.kind == GXR_Addr) {
       StackBlock block;
       GXResult res;
       UWord sp_delta = res_sp_7k.word - res_sp_6k.word;
@@ -2612,7 +3281,7 @@ void analyse_deps ( /*MOD*/XArray* /* of FrameBlock */ blocks,
          regs.sp = regs.fp = 0;
          regs.ip = ip;
          res = ML_(evaluate_GX)( var->gexpr, var->fbGX, &regs, di );
-         tl_assert(res.kind == GXR_Value);
+         tl_assert(res.kind == GXR_Addr);
          if (debug)
          VG_(printf)("   %5ld .. %5ld (sp) %s\n",
                      res.word, res.word + ((UWord)mul.ul) - 1, var->name);
@@ -2631,7 +3300,7 @@ void analyse_deps ( /*MOD*/XArray* /* of FrameBlock */ blocks,
          regs.sp = regs.fp = 0;
          regs.ip = ip;
          res = ML_(evaluate_GX)( var->gexpr, var->fbGX, &regs, di );
-         tl_assert(res.kind == GXR_Value);
+         tl_assert(res.kind == GXR_Addr);
          if (debug)
          VG_(printf)("   %5ld .. %5ld (FP) %s\n",
                      res.word, res.word + ((UWord)mul.ul) - 1, var->name);
@@ -2846,7 +3515,7 @@ void* /* really, XArray* of GlobalBlock */
             res = ML_(evaluate_trivial_GX)( var->gexpr, di );
 
             /* Not a constant address => not interesting */
-            if (res.kind != GXR_Value) {
+            if (res.kind != GXR_Addr) {
                if (0) VG_(printf)("FAIL\n");
                continue;
             }
@@ -2906,82 +3575,83 @@ void* /* really, XArray* of GlobalBlock */
 }
 
 
-
 /*------------------------------------------------------------*/
 /*--- DebugInfo accessor functions                         ---*/
 /*------------------------------------------------------------*/
 
-const DebugInfo* VG_(next_seginfo)(const DebugInfo* di)
+const DebugInfo* VG_(next_DebugInfo)(const DebugInfo* di)
 {
    if (di == NULL)
       return debugInfo_list;
    return di->next;
 }
 
-Addr VG_(seginfo_get_text_avma)(const DebugInfo* di)
+Addr VG_(DebugInfo_get_text_avma)(const DebugInfo* di)
 {
    return di->text_present ? di->text_avma : 0; 
 }
 
-SizeT VG_(seginfo_get_text_size)(const DebugInfo* di)
+SizeT VG_(DebugInfo_get_text_size)(const DebugInfo* di)
 {
    return di->text_present ? di->text_size : 0; 
 }
 
-Addr VG_(seginfo_get_plt_avma)(const DebugInfo* di)
+Addr VG_(DebugInfo_get_plt_avma)(const DebugInfo* di)
 {
    return di->plt_present ? di->plt_avma : 0; 
 }
 
-SizeT VG_(seginfo_get_plt_size)(const DebugInfo* di)
+SizeT VG_(DebugInfo_get_plt_size)(const DebugInfo* di)
 {
    return di->plt_present ? di->plt_size : 0; 
 }
 
-Addr VG_(seginfo_get_gotplt_avma)(const DebugInfo* di)
+Addr VG_(DebugInfo_get_gotplt_avma)(const DebugInfo* di)
 {
    return di->gotplt_present ? di->gotplt_avma : 0; 
 }
 
-SizeT VG_(seginfo_get_gotplt_size)(const DebugInfo* di)
+SizeT VG_(DebugInfo_get_gotplt_size)(const DebugInfo* di)
 {
    return di->gotplt_present ? di->gotplt_size : 0; 
 }
 
-const UChar* VG_(seginfo_soname)(const DebugInfo* di)
+const UChar* VG_(DebugInfo_get_soname)(const DebugInfo* di)
 {
    return di->soname;
 }
 
-const UChar* VG_(seginfo_filename)(const DebugInfo* di)
+const UChar* VG_(DebugInfo_get_filename)(const DebugInfo* di)
 {
    return di->filename;
 }
 
-PtrdiffT VG_(seginfo_get_text_bias)(const DebugInfo* di)
+PtrdiffT VG_(DebugInfo_get_text_bias)(const DebugInfo* di)
 {
    return di->text_present ? di->text_bias : 0;
 }
 
-Int VG_(seginfo_syms_howmany) ( const DebugInfo *si )
+Int VG_(DebugInfo_syms_howmany) ( const DebugInfo *si )
 {
    return si->symtab_used;
 }
 
-void VG_(seginfo_syms_getidx) ( const DebugInfo *si, 
-                                      Int idx,
-                               /*OUT*/Addr*   avma,
-                               /*OUT*/Addr*   tocptr,
-                               /*OUT*/UInt*   size,
-                               /*OUT*/HChar** name,
-                               /*OUT*/Bool*   isText )
+void VG_(DebugInfo_syms_getidx) ( const DebugInfo *si, 
+                                        Int idx,
+                                  /*OUT*/Addr*   avma,
+                                  /*OUT*/Addr*   tocptr,
+                                  /*OUT*/UInt*   size,
+                                  /*OUT*/HChar** name,
+                                  /*OUT*/Bool*   isText,
+                                  /*OUT*/Bool*   isIFunc )
 {
    vg_assert(idx >= 0 && idx < si->symtab_used);
-   if (avma)   *avma   = si->symtab[idx].addr;
-   if (tocptr) *tocptr = si->symtab[idx].tocptr;
-   if (size)   *size   = si->symtab[idx].size;
-   if (name)   *name   = (HChar*)si->symtab[idx].name;
-   if (isText) *isText = si->symtab[idx].isText;
+   if (avma)    *avma    = si->symtab[idx].addr;
+   if (tocptr)  *tocptr  = si->symtab[idx].tocptr;
+   if (size)    *size    = si->symtab[idx].size;
+   if (name)    *name    = (HChar*)si->symtab[idx].name;
+   if (isText)  *isText  = si->symtab[idx].isText;
+   if (isIFunc) *isIFunc = si->symtab[idx].isIFunc;
 }
 
 
@@ -3011,8 +3681,8 @@ const HChar* VG_(pp_SectKind)( VgSectKind kind )
    characters of the object's name is put in name[0 .. n_name-2], and
    name[n_name-1] is set to zero (guaranteed zero terminated). */
 
-VgSectKind VG_(seginfo_sect_kind)( /*OUT*/UChar* name, SizeT n_name, 
-                                   Addr a)
+VgSectKind VG_(DebugInfo_sect_kind)( /*OUT*/UChar* name, SizeT n_name, 
+                                     Addr a)
 {
    DebugInfo* di;
    VgSectKind res = Vg_SectUnknown;
@@ -3021,7 +3691,8 @@ VgSectKind VG_(seginfo_sect_kind)( /*OUT*/UChar* name, SizeT n_name,
 
       if (0)
          VG_(printf)(
-            "addr=%#lx di=%p %s got=%#lx,%ld plt=%#lx,%ld data=%#lx,%ld bss=%#lx,%ld\n",
+            "addr=%#lx di=%p %s got=%#lx,%ld plt=%#lx,%ld "
+            "data=%#lx,%ld bss=%#lx,%ld\n",
             a, di, di->filename,
             di->got_avma,  di->got_size,
             di->plt_avma,  di->plt_size,
@@ -3117,7 +3788,6 @@ VgSectKind VG_(seginfo_sect_kind)( /*OUT*/UChar* name, SizeT n_name,
    return res;
 
 }
-
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

@@ -286,10 +286,10 @@ Bool leaveFnName (Char* fnName)
 Bool parseMask(Char* filename)
 {
   inputFilter = VG_(newXA)(VG_(malloc), "inputFilter", VG_(free), sizeof(XArray*));
-  Int fd = VG_(open)(filename, VKI_O_RDWR | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO).res;
+  Int fd = sr_Res(VG_(open)(filename, VKI_O_RDWR | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
   struct vg_stat fileInfo;
   VG_(fstat)(fd,  &fileInfo);
-  Long size = fileInfo.st_size; 
+  Long size = fileInfo.size; 
   Char* buf = (Char*) VG_(malloc)("buf", size + 1);
   VG_(read)(fd, buf, size);
   buf[size] = '\0';

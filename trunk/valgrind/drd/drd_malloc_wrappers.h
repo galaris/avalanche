@@ -1,7 +1,8 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -30,12 +31,14 @@
 #include "pub_tool_execontext.h" /* ExeContext */
 
 
-typedef void (*StartUsingMem)(const Addr a1, const Addr a2, UInt ec_uniq);
-typedef void (*StopUsingMem)(const Addr a1, const Addr a2);
+typedef void (*StartUsingMem)(const Addr a1, const SizeT len, UInt ec_uniq);
+typedef void (*StopUsingMem)(const Addr a1, const SizeT len);
 
 
 void DRD_(register_malloc_wrappers)(const StartUsingMem start_callback,
                                     const StopUsingMem stop_callback);
+void DRD_(malloclike_block)(const ThreadId tid, const Addr p, const SizeT size);
+Bool DRD_(freelike_block)(const ThreadId tid, const Addr p);
 Bool DRD_(heap_addrinfo)(Addr const a,
                          Addr* const data,
                          SizeT* const size,

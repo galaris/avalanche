@@ -11,28 +11,49 @@ if VGCONF_ARCHS_INCLUDE_AMD64
 SUBDIRS += amd64
 endif
 
+if VGCONF_ARCHS_INCLUDE_PPC32
+SUBDIRS += ppc32
+endif
+if VGCONF_ARCHS_INCLUDE_PPC64
+SUBDIRS += ppc64
+endif
+
 # OS-specific tests
 if VGCONF_OS_IS_LINUX
 SUBDIRS += linux
+endif
+if VGCONF_OS_IS_DARWIN
+SUBDIRS += darwin
 endif
 
 # Platform-specific tests
 if VGCONF_PLATFORMS_INCLUDE_X86_LINUX
 SUBDIRS += x86-linux
 endif
+if VGCONF_PLATFORMS_INCLUDE_AMD64_LINUX
+SUBDIRS += amd64-linux
+endif
 
-DIST_SUBDIRS = x86 amd64 linux x86-linux .
+DIST_SUBDIRS = x86 amd64 ppc32 ppc64 linux darwin x86-linux amd64-linux .
 
-noinst_SCRIPTS = filter_allocs filter_leak_check_size \
-		 filter_stderr filter_xml \
-		 filter_varinfo3
+dist_noinst_SCRIPTS = \
+	filter_addressable \
+	filter_allocs \
+	filter_leak_cases_possible \
+	filter_stderr filter_xml \
+	filter_varinfo3
 
-EXTRA_DIST = $(noinst_SCRIPTS) \
+noinst_HEADERS = leak.h
+
+EXTRA_DIST = \
 	addressable.stderr.exp addressable.stdout.exp addressable.vgtest \
+	atomic_incs.stderr.exp atomic_incs.vgtest \
+	atomic_incs.stdout.exp-32bit atomic_incs.stdout.exp-64bit \
 	badaddrvalue.stderr.exp \
 	badaddrvalue.stdout.exp badaddrvalue.vgtest \
 	badfree-2trace.stderr.exp badfree-2trace.vgtest \
 	badfree.stderr.exp badfree.vgtest \
+	badfree3.stderr.exp badfree3.vgtest \
 	badjump.stderr.exp badjump.vgtest \
 	badjump2.stderr.exp badjump2.vgtest \
 	badloop.stderr.exp badloop.vgtest \
@@ -40,15 +61,17 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	badrw.stderr.exp badrw.vgtest \
 	brk2.stderr.exp brk2.vgtest \
 	buflen_check.stderr.exp buflen_check.vgtest \
+	calloc-overflow.stderr.exp calloc-overflow.vgtest\
 	clientperm.stderr.exp \
 	clientperm.stdout.exp clientperm.vgtest \
 	custom_alloc.stderr.exp custom_alloc.vgtest \
+	custom-overlap.stderr.exp custom-overlap.vgtest \
 	deep_templates.vgtest \
 	deep_templates.stdout.exp deep_templates.stderr.exp \
 	describe-block.stderr.exp describe-block.vgtest \
 	doublefree.stderr.exp doublefree.vgtest \
 	erringfds.stderr.exp erringfds.stdout.exp erringfds.vgtest \
-	error_counts.stderr.exp error_counts.stdout.exp error_counts.vgtest \
+	error_counts.stderr.exp error_counts.vgtest \
 	errs1.stderr.exp errs1.vgtest \
 	exitprog.stderr.exp exitprog.vgtest \
 	execve.stderr.exp execve.vgtest \
@@ -59,23 +82,22 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	inits.stderr.exp inits.vgtest \
 	inline.stderr.exp inline.stdout.exp inline.vgtest \
 	leak-0.vgtest leak-0.stderr.exp \
-	leak-cycle.vgtest leak-cycle.stderr.exp leak-cycle.stderr.exp64 \
-	leak-pool-0.vgtest leak-pool-0.stderr.exp leak-pool-0.stderr.exp64 \
-	leak-pool-1.vgtest leak-pool-1.stderr.exp leak-pool-1.stderr.exp64 \
-	leak-pool-2.vgtest leak-pool-2.stderr.exp leak-pool-2.stderr.exp64 \
-	leak-pool-3.vgtest leak-pool-3.stderr.exp leak-pool-3.stderr.exp64 \
-	leak-pool-4.vgtest leak-pool-4.stderr.exp leak-pool-4.stderr.exp64 \
-	leak-pool-5.vgtest leak-pool-5.stderr.exp leak-pool-5.stderr.exp64 \
+	leak-cases-full.vgtest leak-cases-full.stderr.exp \
+	leak-cases-possible.vgtest leak-cases-possible.stderr.exp \
+	leak-cases-summary.vgtest leak-cases-summary.stderr.exp \
+	leak-cycle.vgtest leak-cycle.stderr.exp \
+	leak-pool-0.vgtest leak-pool-0.stderr.exp \
+	leak-pool-1.vgtest leak-pool-1.stderr.exp \
+	leak-pool-2.vgtest leak-pool-2.stderr.exp \
+	leak-pool-3.vgtest leak-pool-3.stderr.exp \
+	leak-pool-4.vgtest leak-pool-4.stderr.exp \
+	leak-pool-5.vgtest leak-pool-5.stderr.exp \
 	leak-tree.vgtest leak-tree.stderr.exp \
-	leak-tree.stderr.exp2 leak-tree.stderr.exp64 \
-	leak-regroot.vgtest leak-regroot.stderr.exp \
-	leakotron.vgtest leakotron.stdout.exp leakotron.stderr.exp \
 	linux-syslog-syscall linux-syslog-syscall.stderr.exp \
 	linux-syscalls-2007 linux-syscalls-2007.stderr.exp \
 	long_namespace_xml.vgtest long_namespace_xml.stdout.exp \
 	long_namespace_xml.stderr.exp \
-	lsframe1.vgtest lsframe1.stdout.exp lsframe1.stderr.exp \
-	lsframe2.vgtest lsframe2.stdout.exp lsframe2.stderr.exp \
+	long-supps.vgtest long-supps.stderr.exp long-supps.supp \
 	mallinfo.stderr.exp mallinfo.vgtest \
 	malloc_free_fill.vgtest \
 	malloc_free_fill.stderr.exp \
@@ -91,24 +113,23 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	memalign2.stderr.exp memalign2.vgtest \
 	memcmptest.stderr.exp memcmptest.stderr.exp2 \
 	memcmptest.stdout.exp memcmptest.vgtest \
-	mempool.stderr.exp mempool.stderr.exp64 mempool.vgtest \
+	mempool.stderr.exp mempool.vgtest \
 	metadata.stderr.exp metadata.stdout.exp metadata.vgtest \
-	mismatches.stderr.exp mismatches.stderr.exp64 mismatches.vgtest \
+	mismatches.stderr.exp mismatches.vgtest \
 	mmaptest.stderr.exp mmaptest.vgtest \
-	nanoleak.stderr.exp nanoleak.vgtest \
 	nanoleak_supp.stderr.exp nanoleak_supp.vgtest nanoleak.supp \
 	nanoleak2.stderr.exp nanoleak2.vgtest \
 	new_nothrow.stderr.exp new_nothrow.vgtest \
 	new_override.stderr.exp new_override.stdout.exp new_override.vgtest \
 	noisy_child.vgtest noisy_child.stderr.exp noisy_child.stdout.exp \
 	null_socket.stderr.exp null_socket.vgtest \
-	origin1-yes.vgtest origin1-yes.stdout.exp \
-	origin1-yes.stderr.exp \
+	origin1-yes.vgtest origin1-yes.stdout.exp origin1-yes.stderr.exp \
 	origin2-not-quite.vgtest origin2-not-quite.stdout.exp \
 	origin2-not-quite.stderr.exp \
 	origin3-no.vgtest origin3-no.stdout.exp \
 	origin3-no.stderr.exp \
 	origin4-many.vgtest origin4-many.stdout.exp \
+	origin4-many.stderr.exp \
 	origin5-bz2.vgtest origin5-bz2.stdout.exp \
 	origin5-bz2.stderr.exp-glibc25-x86 \
 	origin5-bz2.stderr.exp-glibc25-amd64 \
@@ -126,8 +147,8 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	pdb-realloc2.stderr.exp pdb-realloc2.stdout.exp pdb-realloc2.vgtest \
 	pipe.stderr.exp pipe.vgtest \
 	pointer-trace.vgtest \
-	pointer-trace.stderr.exp pointer-trace.stderr.exp64 \
-	post-syscall.stderr.exp post-syscall.stdout.exp post-syscall.vgtest \
+	pointer-trace.stderr.exp \
+	post-syscall.stderr.exp post-syscall.vgtest \
 	realloc1.stderr.exp realloc1.vgtest \
 	realloc2.stderr.exp realloc2.vgtest \
 	realloc3.stderr.exp realloc3.vgtest \
@@ -135,13 +156,13 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	sh-mem-random.stderr.exp sh-mem-random.stdout.exp64 \
 	sh-mem-random.stdout.exp sh-mem-random.vgtest \
 	sigaltstack.stderr.exp sigaltstack.vgtest \
-	sigkill.stderr.exp sigkill.stderr.exp2 sigkill.stderr.exp3 sigkill.vgtest \
+	sigkill.stderr.exp sigkill.stderr.exp-darwin sigkill.vgtest \
 	signal2.stderr.exp signal2.stdout.exp signal2.vgtest \
 	sigprocmask.stderr.exp sigprocmask.stderr.exp2 sigprocmask.vgtest \
-	stack_changes.stderr.exp stack_changes.stdout.exp \
-	stack_changes.stdout.exp2 stack_changes.vgtest \
-	strchr.stderr.exp strchr.stderr.exp2 strchr.vgtest \
+	strchr.stderr.exp strchr.stderr.exp2 strchr.stderr.exp-darwin \
+	    strchr.vgtest \
 	str_tester.stderr.exp str_tester.vgtest \
+	supp-dir.vgtest supp-dir.stderr.exp \
 	supp_unknown.stderr.exp supp_unknown.vgtest supp_unknown.supp \
 	supp1.stderr.exp supp1.vgtest \
 	supp2.stderr.exp supp2.vgtest \
@@ -150,18 +171,16 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	trivialleak.stderr.exp trivialleak.vgtest \
 	unit_libcbase.stderr.exp unit_libcbase.vgtest \
 	unit_oset.stderr.exp unit_oset.stdout.exp unit_oset.vgtest \
-	varinfo1.vgtest varinfo1.stdout.exp varinfo1.stderr.exp \
-	varinfo2.vgtest varinfo2.stdout.exp varinfo2.stderr.exp \
-	varinfo3.vgtest varinfo3.stdout.exp varinfo3.stderr.exp \
-	varinfo4.vgtest varinfo4.stdout.exp varinfo4.stderr.exp \
-	varinfo5.vgtest varinfo5.stdout.exp varinfo5.stderr.exp \
-	varinfo6.vgtest varinfo6.stdout.exp \
-	varinfo6.stderr.exp-glibc25-amd64 varinfo6.stderr.exp-glibc25-x86 \
+	varinfo1.vgtest varinfo1.stdout.exp varinfo1.stderr.exp varinfo1.stderr.exp-ppc64\
+	varinfo2.vgtest varinfo2.stdout.exp varinfo2.stderr.exp varinfo2.stderr.exp-ppc64\
+	varinfo3.vgtest varinfo3.stdout.exp varinfo3.stderr.exp varinfo3.stderr.exp-ppc64\
+	varinfo4.vgtest varinfo4.stdout.exp varinfo4.stderr.exp varinfo4.stderr.exp-ppc64\
+	varinfo5.vgtest varinfo5.stdout.exp varinfo5.stderr.exp varinfo5.stderr.exp-ppc64\
+	varinfo6.vgtest varinfo6.stdout.exp varinfo6.stderr.exp varinfo6.stderr.exp-ppc64\
 	vcpu_bz2.stdout.exp vcpu_bz2.stderr.exp vcpu_bz2.vgtest \
 	vcpu_fbench.stdout.exp vcpu_fbench.stderr.exp vcpu_fbench.vgtest \
 	vcpu_fnfns.stdout.exp vcpu_fnfns.stdout.exp-glibc28-amd64 \
-	vcpu_fnfns.stderr.exp vcpu_fnfns.vgtest \
-	with-space.stderr.exp with-space.stdout.exp with-space.vgtest \
+	vcpu_fnfns.stdout.exp-darwin vcpu_fnfns.stderr.exp vcpu_fnfns.vgtest \
 	wrap1.vgtest wrap1.stdout.exp wrap1.stderr.exp \
 	wrap2.vgtest wrap2.stdout.exp wrap2.stderr.exp \
 	wrap3.vgtest wrap3.stdout.exp wrap3.stderr.exp \
@@ -172,32 +191,42 @@ EXTRA_DIST = $(noinst_SCRIPTS) \
 	wrap8.vgtest wrap8.stdout.exp wrap8.stderr.exp \
 	wrap8.stdout.exp2 wrap8.stderr.exp2 \
 	writev.stderr.exp writev.vgtest \
-	xml1.stderr.exp xml1.stderr.exp2 \
-	xml1.stderr.exp64 xml1.stdout.exp \
-	xml1.vgtest
+	xml1.stderr.exp xml1.stdout.exp xml1.vgtest
 
 check_PROGRAMS = \
 	addressable \
+	atomic_incs \
 	badaddrvalue badfree badjump badjump2 \
-	badloop badpoll badrw brk2 buflen_check \
-	clientperm custom_alloc \
+	badloop \
+	badpoll \
+	badrw \
+	brk2 \
+	buflen_check \
+	calloc-overflow \
+	clientperm \
+	custom_alloc \
+	custom-overlap \
 	deep_templates \
 	describe-block \
 	doublefree error_counts errs1 exitprog execve execve2 erringfds \
 	file_locking \
 	fprw fwrite inits inline \
-	leak-0 leak-cycle leak-pool leak-tree leak-regroot leakotron \
+	leak-0 \
+	leak-cases \
+	leak-cycle \
+	leak-pool \
+	leak-tree \
 	linux-syslog-syscall \
 	linux-syscalls-2007 \
 	long_namespace_xml \
-	lsframe1 lsframe2 \
+	long-supps \
 	mallinfo \
 	malloc_free_fill \
 	malloc_usable malloc1 malloc2 malloc3 manuel1 manuel2 manuel3 \
 	match-overrun \
 	memalign_test memalign2 memcmptest mempool mmaptest \
 	mismatches new_override metadata \
-	nanoleak nanoleak2 new_nothrow \
+	nanoleak_supp nanoleak2 new_nothrow \
 	noisy_child \
 	null_socket \
 	origin1-yes origin2-not-quite origin3-no \
@@ -210,7 +239,8 @@ check_PROGRAMS = \
 	realloc1 realloc2 realloc3 \
 	sh-mem sh-mem-random \
 	sigaltstack signal2 sigprocmask sigkill \
-	stack_changes strchr str_tester \
+	strchr \
+	str_tester \
 	supp_unknown supp1 supp2 suppfree \
 	trivialleak \
 	unit_libcbase unit_oset \
@@ -225,10 +255,27 @@ check_PROGRAMS = \
 AM_CFLAGS   += $(AM_FLAG_M3264_PRI)
 AM_CXXFLAGS += $(AM_FLAG_M3264_PRI)
 
+if VGCONF_PLATFORMS_INCLUDE_ARM_LINUX
+AM_CFLAGS   += -mfloat-abi=softfp
+AM_CXXFLAGS += -mfloat-abi=softfp
+endif
+
+if VGCONF_OS_IS_DARWIN
+atomic_incs_CFLAGS = $(AM_CFLAGS) -mdynamic-no-pic
+else
+atomic_incs_CFLAGS = $(AM_CFLAGS)
+endif
+
 deep_templates_SOURCES	= deep_templates.cpp
 deep_templates_CXXFLAGS	= $(AM_CFLAGS) -O -gstabs
 
+error_counts_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
+
+inits_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
+
 long_namespace_xml_SOURCES = long_namespace_xml.cpp
+
+manuel1_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
 memcmptest_CFLAGS	= $(AM_CFLAGS) -fno-builtin-memcmp
 
@@ -236,6 +283,10 @@ mismatches_SOURCES	= mismatches.cpp
 
 new_nothrow_SOURCES 	= new_nothrow.cpp
 new_override_SOURCES 	= new_override.cpp
+
+origin2_not_quite_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
+
+origin3_no_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
 # This requires optimisation in order to get just one resulting error.
 origin4_many_CFLAGS	= $(AM_CFLAGS) -O
@@ -296,6 +347,10 @@ if VGCONF_PLATFORMS_INCLUDE_PPC32_AIX5
  varinfo5_LDADD         = `pwd`/varinfo5so.so
  varinfo5_LDFLAGS       = $(AM_FLAG_M3264_PRI) -Wl,-G -Wl,-bnogc
 else
+if VGCONF_OS_IS_DARWIN
+ varinfo5_LDADD         = `pwd`/varinfo5so.so
+ varinfo5_LDFLAGS       = $(AM_FLAG_M3264_PRI)
+else
  varinfo5_LDADD         = varinfo5so.so
  varinfo5_LDFLAGS       = $(AM_FLAG_M3264_PRI) \
 				-Wl,-rpath,$(top_builddir)/memcheck/tests
@@ -311,10 +366,16 @@ if VGCONF_PLATFORMS_INCLUDE_PPC32_AIX5
  varinfo5so_so_LDFLAGS  = -fpic $(AM_FLAG_M3264_PRI) -shared \
 				-Wl,-G -Wl,-bnogc
 else
+if VGCONF_OS_IS_DARWIN
+ varinfo5so_so_LDFLAGS  = -fpic $(AM_FLAG_M3264_PRI) -dynamic \
+				-dynamiclib -all_load
+else
  varinfo5so_so_LDFLAGS  = -fpic $(AM_FLAG_M3264_PRI) -shared \
 				-Wl,-soname -Wl,varinfo5so.so
 endif
 endif
+endif
+
 # Build shared object for wrap7
 wrap7_SOURCES           = wrap7.c
 wrap7_DEPENDENCIES      = wrap7so.so
@@ -326,9 +387,14 @@ if VGCONF_PLATFORMS_INCLUDE_PPC32_AIX5
  wrap7_LDADD            = `pwd`/wrap7so.so
  wrap7_LDFLAGS          = $(AM_FLAG_M3264_PRI) -Wl,-G -Wl,-bnogc
 else
+if VGCONF_OS_IS_DARWIN
+ wrap7_LDADD            = `pwd`/wrap7so.so
+ wrap7_LDFLAGS          = $(AM_FLAG_M3264_PRI)
+else
  wrap7_LDADD            = wrap7so.so
  wrap7_LDFLAGS          = $(AM_FLAG_M3264_PRI) \
 				-Wl,-rpath,$(top_builddir)/memcheck/tests
+endif
 endif
 endif
 
@@ -341,9 +407,15 @@ if VGCONF_PLATFORMS_INCLUDE_PPC32_AIX5
  wrap7so_so_LDFLAGS     = -fpic $(AM_FLAG_M3264_PRI) -shared \
 				-Wl,-G -Wl,-bnogc
 else
+if VGCONF_OS_IS_DARWIN
+ wrap7so_so_LDFLAGS     = -fpic $(AM_FLAG_M3264_PRI) -dynamic \
+				-dynamiclib -all_load
+else
  wrap7so_so_LDFLAGS     = -fpic $(AM_FLAG_M3264_PRI) -shared \
 				-Wl,-soname -Wl,wrap7so.so
 endif
 endif
+endif
 
+endif
 

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2006-2008 OpenWorks LLP
+   Copyright (C) 2006-2010 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -32,6 +32,8 @@
    used to endorse or promote products derived from this software
    without prior written permission.
 */
+
+#if defined(VGO_aix5)
 
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
@@ -217,9 +219,9 @@ void ML_(aix5_set_threadstate_for_emergency_exit)(ThreadId tid, HChar* why)
    tst->os_state.exitcode = 1;
    if (!VG_(clo_xml)) {
       VG_(message)(Vg_UserMsg, 
-         "WARNING: AIX: %s", why);
+         "WARNING: AIX: %s\n", why);
       VG_(message)(Vg_UserMsg, 
-         "WARNING: (too difficult to continue past this point).");
+         "WARNING: (too difficult to continue past this point).\n");
       VG_(get_and_pp_StackTrace)(tid, 10);
    }
 }
@@ -796,7 +798,8 @@ static void pre_argv_envp(Addr a, ThreadId tid, Char* s1, Char* s2)
       a += sizeof(char*);
    }
 }
-static SysRes simple_pre_exec_check(const HChar* exe_name)
+static SysRes simple_pre_exec_check ( const HChar* exe_name,
+                                      Bool trace_this_child )
 {
    Int fd, ret;
    SysRes res;
@@ -813,7 +816,7 @@ static SysRes simple_pre_exec_check(const HChar* exe_name)
    // Check we have execute permissions.  We allow setuid executables
    // to be run only in the case when we are not simulating them, that
    // is, they to be run natively.
-   setuid_allowed = VG_(clo_trace_children)  ? False  : True;
+   setuid_allowed = trace_this_child  ? False  : True;
    ret = VG_(check_executable)(NULL/*&is_setuid*/,
                                (HChar*)exe_name, setuid_allowed);
    if (0 != ret) {
@@ -831,6 +834,7 @@ PRE(sys_execve)
    ThreadState* tst;
    Int          i, j, tot_args;
    SysRes       res;
+   Bool         trace_this_child;
 
    PRINT("sys_execve ( %#lx(%s), %#lx, %#lx )", ARG1, (Char*)ARG1, ARG2, ARG3);
    PRE_REG_READ3(vki_off_t, "execve",
@@ -860,10 +864,16 @@ PRE(sys_execve)
    //   SET_STATUS_Failure( VKI_EFAULT );
    //   return;
    //}
+   if (ARG1 == 0 /* obviously bogus */) {
+      SET_STATUS_Failure( VKI_EFAULT );
+   }
+
+   // Decide whether or not we want to follow along
+   trace_this_child = VG_(should_we_trace_this_child)( (HChar*)ARG1 );
 
    // Do the important checks:  it is a file, is executable, permissions are
    // ok, etc.
-   res = simple_pre_exec_check((const HChar*)ARG1);
+   res = simple_pre_exec_check( (const HChar*)ARG1, trace_this_child );
    if (res.isError) {
       SET_STATUS_Failure( res.err );
       return;
@@ -872,7 +882,7 @@ PRE(sys_execve)
    /* If we're tracing the child, and the launcher name looks bogus
       (possibly because launcher.c couldn't figure it out, see
       comments therein) then we have no option but to fail. */
-   if (VG_(clo_trace_children) 
+   if (trace_this_child 
        && (VG_(name_of_launcher) == NULL
            || VG_(name_of_launcher)[0] != '/')) {
       SET_STATUS_Failure( VKI_ECHILD ); /* "No child processes" */
@@ -890,7 +900,7 @@ PRE(sys_execve)
 
    // Set up the child's exe path.
    //
-   if (VG_(clo_trace_children)) {
+   if (trace_this_child) {
 
       // We want to exec the launcher.  Get its pre-remembered path.
       path = VG_(name_of_launcher);
@@ -928,7 +938,7 @@ PRE(sys_execve)
       VG_(env_remove_valgrind_env_stuff)( envp );
    }
 
-   if (VG_(clo_trace_children)) {
+   if (trace_this_child) {
       // Set VALGRIND_LIB in ARG3 (the environment)
       VG_(env_setenv)( &envp, VALGRIND_LIB, VG_(libdir));
    }
@@ -941,7 +951,7 @@ PRE(sys_execve)
    // except that the first VG_(args_for_valgrind_noexecpass) args
    // are omitted.
    //
-   if (!VG_(clo_trace_children)) {
+   if (!trace_this_child) {
       argv = (Char**)ARG2;
    } else {
       vg_assert( VG_(args_for_valgrind_noexecpass) >= 0 );
@@ -1042,12 +1052,12 @@ PRE(sys_execve)
       too much of a mess to continue, so we have to abort. */
   hosed:
    vg_assert(FAILURE);
-   VG_(message)(Vg_UserMsg, "execve(%#lx(%s), %#lx, %#lx) failed, errno %ld",
+   VG_(message)(Vg_UserMsg, "execve(%#lx(%s), %#lx, %#lx) failed, errno %ld\n",
                 ARG1, (Char*)ARG1, ARG2, ARG3, ERR);
    VG_(message)(Vg_UserMsg, "EXEC FAILED: I can't recover from "
-                            "execve() failing, so I'm dying.");
+                            "execve() failing, so I'm dying.\n");
    VG_(message)(Vg_UserMsg, "Add more stringent tests in PRE(sys_execve), "
-                            "or work out how to recover.");
+                            "or work out how to recover.\n");
    VG_(exit)(101);
 }
 
@@ -1433,14 +1443,14 @@ PRE(sys_kioctl)
                moans--;
                VG_(message)(Vg_UserMsg, 
                             "Warning: noted but unhandled ioctl 0x%lx"
-                            " with no size/direction hints",
+                            " with no size/direction hints\n",
                             ARG2); 
                VG_(message)(Vg_UserMsg, 
                             "   This could cause spurious value errors"
-                            " to appear.");
+                            " to appear.\n");
                VG_(message)(Vg_UserMsg, 
                             "   See README_MISSING_SYSCALL_OR_IOCTL for "
-                            "guidance on writing a proper wrapper." );
+                            "guidance on writing a proper wrapper.\n" );
             }
          } else {
             if ((dir & _VKI_IOC_WRITE) && size > 0)
@@ -2573,6 +2583,8 @@ PRE(sys_yield)
 
 #undef PRE
 #undef POST
+
+#endif // defined(VGO_aix5)
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

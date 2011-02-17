@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward
+   Copyright (C) 2000-2010 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -50,7 +50,7 @@ extern Bool ML_(client_signal_OK)(Int sigNo);
 
 // Return true if we're allowed to use or create this fd.
 extern
-Bool ML_(fd_allowed)(Int fd, const Char *syscallname, ThreadId tid, Bool soft);
+Bool ML_(fd_allowed)(Int fd, const Char *syscallname, ThreadId tid, Bool isNewFD);
 
 extern void ML_(record_fd_open_named)          (ThreadId tid, Int fd);
 extern void ML_(record_fd_open_nameless)       (ThreadId tid, Int fd);
@@ -62,13 +62,15 @@ extern void ML_(record_fd_open_with_given_name)(ThreadId tid, Int fd,
 extern
 Bool ML_(do_sigkill)(Int pid, Int tgid);
 
-/* So that it can be seen from syswrap-x86-linux.c. */
-/* When a client mmap has been successfully done, both aspacem and the
-   tool need to be notified of the new mapping.  Hence this fn. */
-extern 
-void 
-ML_(notify_aspacem_and_tool_of_mmap) ( Addr a, SizeT len, UInt prot, 
-                                       UInt mm_flags, Int fd, Off64T offset );
+/* When a client mmap or munmap has been successfully done, both the core 
+   and the tool need to be notified of the new mapping.  Hence this fn. */
+extern void 
+ML_(notify_core_and_tool_of_mmap) ( Addr a, SizeT len, UInt prot, 
+                                    UInt mm_flags, Int fd, Off64T offset );
+extern void 
+ML_(notify_core_and_tool_of_munmap) ( Addr a, SizeT len );
+extern void 
+ML_(notify_core_and_tool_of_mprotect) ( Addr a, SizeT len, Int prot );
 
 extern void
 ML_(buf_and_len_pre_check) ( ThreadId tid, Addr buf_p, Addr buflen_p,
@@ -76,6 +78,12 @@ ML_(buf_and_len_pre_check) ( ThreadId tid, Addr buf_p, Addr buflen_p,
 extern void
 ML_(buf_and_len_post_check) ( ThreadId tid, SysRes res,
                               Addr buf_p, Addr buflen_p, Char* s );
+
+/* PRE and POST for unknown ioctls based on ioctl request encoding */
+extern 
+void ML_(PRE_unknown_ioctl)(ThreadId tid, UWord request, UWord arg);
+extern 
+void ML_(POST_unknown_ioctl)(ThreadId tid, UInt res, UWord request, UWord arg);
 
 
 DECL_TEMPLATE(generic, sys_ni_syscall);            // * P -- unimplemented
@@ -184,10 +192,8 @@ DECL_TEMPLATE(generic, sys_fstatfs);               // * L?
 DECL_TEMPLATE(generic, sys_iopl);                  // (x86/amd64) L
 DECL_TEMPLATE(generic, sys_ipc);                   // (x86) L
 DECL_TEMPLATE(generic, sys_newuname);              // * P
-DECL_TEMPLATE(generic, sys_pread64_on32bitplat);   // * (Unix98?)
-DECL_TEMPLATE(generic, sys_pread64_on64bitplat);   // * (Unix98?)
-DECL_TEMPLATE(generic, sys_pwrite64_on32bitplat);  // * (Unix98?)
-DECL_TEMPLATE(generic, sys_pwrite64_on64bitplat);  // * (Unix98?)
+DECL_TEMPLATE(generic, sys_pread64);               // * (Unix98?)
+DECL_TEMPLATE(generic, sys_pwrite64);              // * (Unix98?)
 DECL_TEMPLATE(generic, sys_sigaltstack);           // (x86) (XPG4-UNIX)
 DECL_TEMPLATE(generic, sys_getpmsg);               // (?) (?)
 DECL_TEMPLATE(generic, sys_putpmsg);               // (?) (?)
@@ -245,6 +251,26 @@ extern void   ML_(generic_PRE_sys_shmctl)       ( TId, UW, UW, UW );
 extern void   ML_(generic_POST_sys_shmctl)      ( TId, UW, UW, UW, UW );
 
 extern SysRes ML_(generic_PRE_sys_mmap)         ( TId, UW, UW, UW, UW, UW, Off64T );
+
+#define PRE_timeval_READ(zzname, zzarg)                         \
+   do {                                                         \
+      struct vki_timeval *zztv = (struct vki_timeval *)(zzarg); \
+      PRE_FIELD_READ(zzname, zztv->tv_sec);                     \
+      PRE_FIELD_READ(zzname, zztv->tv_usec);                    \
+   } while (0)
+#define PRE_timeval_WRITE(zzname, zzarg)                        \
+   do {                                                         \
+      struct vki_timeval *zztv = (struct vki_timeval *)(zzarg); \
+      PRE_FIELD_WRITE(zzname, zztv->tv_sec);                    \
+      PRE_FIELD_WRITE(zzname, zztv->tv_usec);                   \
+   } while (0)
+#define POST_timeval_WRITE(zzarg)                               \
+   do {                                                         \
+      struct vki_timeval *zztv = (struct vki_timeval *)(zzarg); \
+      POST_FIELD_WRITE(zztv->tv_sec);                           \
+      POST_FIELD_WRITE(zztv->tv_usec);                          \
+   } while (0)
+
 
 #undef TId
 #undef UW

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2008 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -87,9 +87,39 @@
 #  include "vki-posixtypes-ppc32-linux.h"
 #elif defined(VGA_ppc64)
 #  include "vki-posixtypes-ppc64-linux.h"
+#elif defined(VGA_arm)
+#  include "vki-posixtypes-arm-linux.h"
 #else
 #  error Unknown platform
 #endif
+
+//----------------------------------------------------------------------
+// VKI_STATIC_ASSERT(). Inspired by BUILD_BUG_ON() from
+// linux-2.6.34/include/linux/kernel.h
+//----------------------------------------------------------------------
+
+/*
+ * Evaluates to zero if 'expr' is true and forces a compilation error if
+ * 'expr' is false. Can be used in a context where no comma expressions
+ * are allowed.
+ */
+#ifdef __cplusplus
+template <bool b> struct vki_static_assert { int m_bitfield:(2*b-1); };
+#define VKI_STATIC_ASSERT(expr)                         \
+    (sizeof(vki_static_assert<(expr)>) - sizeof(int))
+#else
+#define VKI_STATIC_ASSERT(expr) (sizeof(struct { int:-!(expr); }))
+#endif
+
+//----------------------------------------------------------------------
+// Based on _IOC_TYPECHECK() from linux-2.6.34/asm-generic/ioctl.h
+//----------------------------------------------------------------------
+
+/* provoke compile error for invalid uses of size argument */
+#define _VKI_IOC_TYPECHECK(t)                                           \
+    (VKI_STATIC_ASSERT((sizeof(t) == sizeof(t[1])                       \
+                        && sizeof(t) < (1 << _VKI_IOC_SIZEBITS)))       \
+     + sizeof(t))
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/compiler.h
@@ -169,6 +199,8 @@ typedef unsigned int	        vki_uint;
 #  include "vki-ppc32-linux.h"
 #elif defined(VGA_ppc64)
 #  include "vki-ppc64-linux.h"
+#elif defined(VGA_arm)
+#  include "vki-arm-linux.h"
 #else
 #  error Unknown platform
 #endif
@@ -277,14 +309,17 @@ struct vki_timex {
 	int  :32; int  :32; int  :32; int  :32;
 };
 
-//#define ADJ_OFFSET		0x0001	/* time offset */
-#define ADJ_FREQUENCY		0x0002	/* frequency offset */
-#define ADJ_MAXERROR		0x0004	/* maximum time error */
-#define ADJ_ESTERROR		0x0008	/* estimated time error */
-#define ADJ_STATUS		0x0010	/* clock status */
-#define ADJ_TIMECONST		0x0020	/* pll time constant */
-#define ADJ_TICK		0x4000	/* tick value */
-//#define ADJ_OFFSET_SINGLESHOT	0x8001	/* old-fashioned adjtime */
+#define VKI_ADJ_OFFSET			0x0001	/* time offset */
+#define VKI_ADJ_FREQUENCY		0x0002	/* frequency offset */
+#define VKI_ADJ_MAXERROR		0x0004	/* maximum time error */
+#define VKI_ADJ_ESTERROR		0x0008	/* estimated time error */
+#define VKI_ADJ_STATUS			0x0010	/* clock status */
+#define VKI_ADJ_TIMECONST		0x0020	/* pll time constant */
+#define VKI_ADJ_TAI			0x0080	/* set TAI offset */
+#define VKI_ADJ_TICK			0x4000	/* tick value */
+#define VKI_ADJ_ADJTIME			0x8000	/* switch between adjtime/adjtimex modes */
+//#define VKI_ADJ_OFFSET_SINGLESHOT	0x8001	/* old-fashioned adjtime */
+#define VKI_ADJ_OFFSET_READONLY		0x2000	/* read-only adjtime */
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/times.h
@@ -525,6 +560,7 @@ typedef struct vki_sigevent {
 #define VKI_SYS_GETSOCKOPT	15	/* sys_getsockopt(2)		*/
 #define VKI_SYS_SENDMSG		16	/* sys_sendmsg(2)		*/
 #define VKI_SYS_RECVMSG		17	/* sys_recvmsg(2)		*/
+#define VKI_SYS_ACCEPT4		18	/* sys_accept4(2)		*/
 
 enum vki_sock_type {
 	VKI_SOCK_STREAM	= 1,
@@ -1150,7 +1186,7 @@ struct  vki_seminfo {
 #define VKI_MREMAP_FIXED	2
 
 //----------------------------------------------------------------------
-// From linux-2.6.10-rc3-mm1/include/linux/futex.h
+// From linux-2.6.31-rc4/include/linux/futex.h
 //----------------------------------------------------------------------
 
 #define VKI_FUTEX_WAIT (0)
@@ -1158,7 +1194,16 @@ struct  vki_seminfo {
 #define VKI_FUTEX_FD (2)
 #define VKI_FUTEX_REQUEUE (3)
 #define VKI_FUTEX_CMP_REQUEUE (4)
+#define VKI_FUTEX_WAKE_OP (5)
+#define VKI_FUTEX_LOCK_PI (6)
+#define VKI_FUTEX_UNLOCK_PI (7)
+#define VKI_FUTEX_TRYLOCK_PI (8)
+#define VKI_FUTEX_WAIT_BITSET (9)
+#define VKI_FUTEX_WAKE_BITSET (10)
+#define VKI_FUTEX_WAIT_REQUEUE_PI (11)
+#define VKI_FUTEX_CMP_REQUEUE_PI (12)
 #define VKI_FUTEX_PRIVATE_FLAG (128)
+#define VKI_FUTEX_CLOCK_REALTIME (256)
 
 struct vki_robust_list {
 	struct vki_robust_list __user *next;
@@ -1251,10 +1296,17 @@ struct vki_dirent {
 // From linux-2.6.8.1/include/linux/fcntl.h
 //----------------------------------------------------------------------
 
-#define VKI_F_SETLEASE	(VKI_F_LINUX_SPECIFIC_BASE+0)
-#define VKI_F_GETLEASE	(VKI_F_LINUX_SPECIFIC_BASE+1)
+#define VKI_F_SETLEASE      (VKI_F_LINUX_SPECIFIC_BASE + 0)
+#define VKI_F_GETLEASE      (VKI_F_LINUX_SPECIFIC_BASE + 1)
 
-#define VKI_F_NOTIFY	(VKI_F_LINUX_SPECIFIC_BASE+2)
+#define VKI_F_CANCELLK      (VKI_F_LINUX_SPECIFIC_BASE + 5)
+
+#define VKI_F_DUPFD_CLOEXEC (VKI_F_LINUX_SPECIFIC_BASE + 6)
+
+#define VKI_F_NOTIFY        (VKI_F_LINUX_SPECIFIC_BASE + 2)
+
+#define VKI_F_SETPIPE_SZ    (VKI_F_LINUX_SPECIFIC_BASE + 7)
+#define VKI_F_GETPIPE_SZ    (VKI_F_LINUX_SPECIFIC_BASE + 8)
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/sysctl.h
@@ -1279,6 +1331,10 @@ typedef unsigned long	vki_aio_context_t;
 enum {
 	VKI_IOCB_CMD_PREAD = 0,
 	VKI_IOCB_CMD_PWRITE = 1,
+	VKI_IOCB_CMD_FSYNC = 2,
+	VKI_IOCB_CMD_FDSYNC = 3,
+	VKI_IOCB_CMD_PREADV = 7,
+	VKI_IOCB_CMD_PWRITEV = 8,
 };
 
 /* read() from /dev/aio returns these structures. */
@@ -1395,6 +1451,7 @@ struct vki_shmid_ds {
 };
 
 #define VKI_SHM_RDONLY  010000  /* read-only access */
+#define VKI_SHM_RND     020000  /* round attach address to SHMLBA boundary */
 
 #define VKI_SHM_STAT 	13
 #define VKI_SHM_INFO 	14
@@ -1847,6 +1904,7 @@ struct vki_cdrom_generic_command
 #define VKI_SNDCTL_DSP_SETFRAGMENT	_VKI_SIOWR('P',10, int)
 
 #define VKI_SNDCTL_DSP_GETFMTS		_VKI_SIOR ('P',11, int) /* Returns a mask */
+#define VKI_SNDCTL_DSP_SETFMT		_VKI_SIOWR('P', 5, int) /* Selects ONE fmt */
 
 typedef struct vki_audio_buf_info {
 			int fragments;	/* # of available fragments (partially usend ones not counted) */
@@ -1859,7 +1917,7 @@ typedef struct vki_audio_buf_info {
 
 #define VKI_SNDCTL_DSP_GETOSPACE	_VKI_SIOR ('P',12, vki_audio_buf_info)
 #define VKI_SNDCTL_DSP_GETISPACE	_VKI_SIOR ('P',13, vki_audio_buf_info)
-//#define VKI_SNDCTL_DSP_NONBLOCK	_VKI_SIO  ('P',14)
+#define VKI_SNDCTL_DSP_NONBLOCK		_VKI_SIO  ('P',14)
 #define VKI_SNDCTL_DSP_GETCAPS		_VKI_SIOR ('P',15, int)
 
 #define VKI_SNDCTL_DSP_GETTRIGGER	_VKI_SIOR ('P',16, int)
@@ -2134,8 +2192,10 @@ enum {
 	VKI_SNDRV_PCM_IOCTL_START = _VKI_IO('A', 0x42),
 	VKI_SNDRV_PCM_IOCTL_DROP = _VKI_IO('A', 0x43),
 	VKI_SNDRV_PCM_IOCTL_DRAIN = _VKI_IO('A', 0x44),
+	VKI_SNDRV_PCM_IOCTL_PAUSE = _VKI_IOW('A', 0x45, int),
 	VKI_SNDRV_PCM_IOCTL_RESUME = _VKI_IO('A', 0x47),
 	VKI_SNDRV_PCM_IOCTL_XRUN = _VKI_IO('A', 0x48),
+	VKI_SNDRV_PCM_IOCTL_LINK = _VKI_IOW('A', 0x60, int),
 	VKI_SNDRV_PCM_IOCTL_UNLINK = _VKI_IO('A', 0x61),
 };
 
@@ -2325,10 +2385,25 @@ struct vki_usbdevfs_ioctl {
 #define VKI_USBDEVFS_BULK              _VKI_IOWR('U', 2, struct vki_usbdevfs_bulktransfer)
 #define VKI_USBDEVFS_GETDRIVER         _VKI_IOW('U', 8, struct vki_usbdevfs_getdriver)
 #define VKI_USBDEVFS_SUBMITURB         _VKI_IOR('U', 10, struct vki_usbdevfs_urb)
+#define VKI_USBDEVFS_DISCARDURB        _VKI_IO('U', 11)
 #define VKI_USBDEVFS_REAPURB           _VKI_IOW('U', 12, void *)
 #define VKI_USBDEVFS_REAPURBNDELAY     _VKI_IOW('U', 13, void *)
 #define VKI_USBDEVFS_CONNECTINFO       _VKI_IOW('U', 17, struct vki_usbdevfs_connectinfo)
 #define VKI_USBDEVFS_IOCTL             _VKI_IOWR('U', 18, struct vki_usbdevfs_ioctl)
+
+#define VKI_USBDEVFS_URB_TYPE_ISO              0
+#define VKI_USBDEVFS_URB_TYPE_INTERRUPT        1
+#define VKI_USBDEVFS_URB_TYPE_CONTROL          2
+#define VKI_USBDEVFS_URB_TYPE_BULK             3
+
+// [[this is missing in usbdevice_fs.h]]
+struct vki_usbdevfs_setuppacket {
+       __vki_u8 bRequestType;
+       __vki_u8 bRequest;
+       __vki_u16 wValue;
+       __vki_u16 wIndex;
+       __vki_u16 wLength;
+};
 
 //----------------------------------------------------------------------
 // From linux-2.6.20.1/include/linux/i2c.h
@@ -2544,6 +2619,103 @@ struct	vki_iwreq
 	union	vki_iwreq_data	u;
 };
 
+/*--------------------------------------------------------------------*/
+// From linux-2.6.31.5/include/linux/perf_counter.h
+/*--------------------------------------------------------------------*/
+
+struct vki_perf_counter_attr {
+
+	/*
+	 * Major type: hardware/software/tracepoint/etc.
+	 */
+	__vki_u32			type;
+
+	/*
+	 * Size of the attr structure, for fwd/bwd compat.
+	 */
+	__vki_u32			size;
+
+	/*
+	 * Type specific configuration information.
+	 */
+	__vki_u64			config;
+
+	union {
+		__vki_u64		sample_period;
+		__vki_u64		sample_freq;
+	};
+
+	__vki_u64			sample_type;
+	__vki_u64			read_format;
+
+	__vki_u64			disabled       :  1, /* off by default        */
+					inherit	       :  1, /* children inherit it   */
+					pinned	       :  1, /* must always be on PMU */
+					exclusive      :  1, /* only group on PMU     */
+					exclude_user   :  1, /* don't count user      */
+					exclude_kernel :  1, /* ditto kernel          */
+					exclude_hv     :  1, /* ditto hypervisor      */
+					exclude_idle   :  1, /* don't count when idle */
+					mmap           :  1, /* include mmap data     */
+					comm	       :  1, /* include comm data     */
+					freq           :  1, /* use freq, not period  */
+					inherit_stat   :  1, /* per task counts       */
+					enable_on_exec :  1, /* next exec enables     */
+					task           :  1, /* trace fork/exit       */
+
+					__reserved_1   : 50;
+
+	__vki_u32			wakeup_events;	/* wakeup every n events */
+	__vki_u32			__reserved_2;
+
+	__vki_u64			__reserved_3;
+};
+
+/*--------------------------------------------------------------------*/
+// From linux-2.6.32.4/include/linux/getcpu.h
+/*--------------------------------------------------------------------*/
+
+struct vki_getcpu_cache {
+	unsigned long blob[128 / sizeof(long)];
+};
+
+//----------------------------------------------------------------------
+// From linux-2.6.33.3/include/linux/input.h
+//----------------------------------------------------------------------
+
+/*
+ * IOCTLs (0x00 - 0x7f)
+ */
+
+#define VKI_EVIOCGNAME(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x06, len)		/* get device name */
+#define VKI_EVIOCGPHYS(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x07, len)		/* get physical location */
+#define VKI_EVIOCGUNIQ(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x08, len)		/* get unique identifier */
+
+#define VKI_EVIOCGKEY(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x18, len)		/* get global keystate */
+#define VKI_EVIOCGLED(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x19, len)		/* get all LEDs */
+#define VKI_EVIOCGSND(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x1a, len)		/* get all sounds status */
+#define VKI_EVIOCGSW(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x1b, len)		/* get all switch states */
+
+#define VKI_EVIOCGBIT(ev,len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x20 + ev, len)	/* get event bits */
+
+/*
+ * Event types
+ */
+
+#define VKI_EV_SYN		0x00
+#define VKI_EV_KEY		0x01
+#define VKI_EV_REL		0x02
+#define VKI_EV_ABS		0x03
+#define VKI_EV_MSC		0x04
+#define VKI_EV_SW		0x05
+#define VKI_EV_LED		0x11
+#define VKI_EV_SND		0x12
+#define VKI_EV_REP		0x14
+#define VKI_EV_FF		0x15
+#define VKI_EV_PWR		0x16
+#define VKI_EV_FF_STATUS	0x17
+#define VKI_EV_MAX		0x1f
+#define VKI_EV_CNT		(VKI_EV_MAX+1)
 
 #endif // __VKI_LINUX_H
 
