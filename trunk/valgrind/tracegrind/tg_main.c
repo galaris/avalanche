@@ -1537,7 +1537,7 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
-                 curNode->temps[rtmp].size / 4, curNode->temps[rtmp].size / 4);
+                 curNode->temps[rtmp].size / 4);
     if (fdfuncFilter >= 0)
     {
       dumpCall();
@@ -3627,7 +3627,7 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     NSegment* seg = VG_(am_find_nsegment)(addrs[0]);
     Char format[256];
     VG_(sprintf)(format, "ASSERT(BVLT(t_%%llx_%%u_%%u, 0hex%%0%ux));\nQUERY(FALSE);\n",
-                 curNode->temps[ltmp].size / 4, curNode->temps[ltmp].size / 4);
+                 curNode->temps[ltmp].size / 4);
     if (fdfuncFilter >= 0)
     {
       dumpCall();
