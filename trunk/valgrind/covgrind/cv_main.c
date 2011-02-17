@@ -128,13 +128,7 @@ static void cv_fini(Int exitcode)
     {
       while (n != NULL)
       {
-#if defined(VGA_x86)
-        UInt addr = (UInt) n->key;
-#elif defined(VGA_amd64)
-        Addr64 addr = n->key;
-#else
-#  error Unknown arch
-#endif
+        UWord addr = n->key;
         VG_(write)(sr_Res(fd), &addr, sizeof(addr));
         n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
       }

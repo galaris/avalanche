@@ -37,7 +37,7 @@ typedef struct _replaceData replaceData;
 struct _bbNode 
 {
   struct _sizeNode* next;
-  Addr64 key;  
+  UWord key;  
 };
 
 typedef struct _bbNode bbNode;

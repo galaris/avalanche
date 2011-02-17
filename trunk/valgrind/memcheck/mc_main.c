@@ -5823,7 +5823,7 @@ static void mc_fini ( Int exitcode )
     {
       while (n != NULL)
       {
-        UInt addr = (UInt) n->key;
+        UWord addr = n->key;
         VG_(write)(sr_Res(fd), &addr, sizeof(addr));
         n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
       }
