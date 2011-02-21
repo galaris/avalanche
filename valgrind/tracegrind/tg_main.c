@@ -57,7 +57,7 @@
 #include "parser.h"
 
 //#define TAINTED_TRACE_PRINTOUT
-#define TAINTED_BLOCKS_PRINTOUT
+//#define TAINTED_BLOCKS_PRINTOUT
 //#define CALL_STACK_PRINTOUT
 
 enum {
@@ -276,7 +276,7 @@ Bool dumpCall()
         if (!isStandard)
         {
           Int l;
-          l = VG_(sprintf) (b, "%s\n", diFunctionName, obj);
+          l = VG_(sprintf) (b, "%s\n", diFunctionName);
           my_write(fdfuncFilter, b, l);
           fnNode* node;
           node = VG_(malloc)("fnNode", sizeof(fnNode));
@@ -1804,6 +1804,25 @@ UShort isPropagation2(IRExpr* arg1, IRExpr* arg2)
 }
 
 static
+UShort isPropagation3(IRExpr* arg1, IRExpr* arg2, IRExpr* arg3)
+{
+  UShort res = 0;
+  if (arg1->tag == Iex_RdTmp)
+  {
+    res = (VG_(HT_lookup)(taintedTemps, arg1->Iex.RdTmp.tmp) != NULL) ? 1 : 0;
+  }
+  if (arg2->tag == Iex_RdTmp)
+  {
+    res |= (VG_(HT_lookup)(taintedTemps, arg2->Iex.RdTmp.tmp) != NULL) ? 0x2 : 0;
+  }
+  if (arg3->tag == Iex_RdTmp)
+  {
+    res |= (VG_(HT_lookup)(taintedTemps, arg3->Iex.RdTmp.tmp) != NULL) ? 0x4 : 0;
+  }
+  return res;
+}
+
+static
 Bool firstTainted(UShort res)
 {
   return res & 0x1;
@@ -1813,6 +1832,12 @@ static
 Bool secondTainted(UShort res)
 {
   return res & 0x2;
+}
+
+static 
+Bool thirdTainted(UShort res)
+{
+  return res & 0x4;
 }
 
 static
@@ -1868,6 +1893,19 @@ void translate2(IRExpr* arg, IRExpr* value, UShort taintedness)
 }
 
 static
+void translate3(IRExpr* arg, IRExpr* value, UShort taintedness)
+{
+  if (thirdTainted(taintedness))
+  {
+    translateIRTmp(arg);
+  }
+  else
+  {
+    translateValue(arg, value);
+  }
+}
+
+static
 void printSizedTrue(UInt ltmp, Int fd)
 {
   Char s[256];
@@ -1911,6 +1949,51 @@ void printSizedFalse(UInt ltmp, Int fd)
   my_write(fd, s, l);
 }
 
+static
+void instrumentWrTmpMux0X(IRStmt* clone, IRExpr* condValue, IRExpr* value0, IRExpr* valueX)
+{
+  IRExpr *cond, *arg0, *argX;
+  cond = clone->Ist.WrTmp.data->Iex.Mux0X.cond;
+  arg0 = clone->Ist.WrTmp.data->Iex.Mux0X.expr0;
+  argX = clone->Ist.WrTmp.data->Iex.Mux0X.exprX;
+  UShort r = isPropagation3(cond, arg0, argX);
+  if (firstTainted(r) ||
+      ( (cond == 0) && secondTainted(r) ) ||
+      ( (cond != 0) && thirdTainted(r) ))
+  {
+#ifdef TAINTED_TRACE_PRINTOUT
+    ppIRStmt(clone);
+    VG_(printf) ("\n");
+#endif
+#ifdef TAINTED_BLOCKS_PRINTOUT
+    if(newSB)
+    {
+      ppIRSB(printSB);
+      VG_(printf) ("\n");
+      newSB = False;
+    }
+#endif
+    UInt l, ltmp = clone->Ist.WrTmp.tmp;
+    Char s[256];
+    taintTemp(ltmp);
+    l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF ", curblock, ltmp, curvisited);
+    my_write(fdtrace, s, l);
+    my_write(fddanger, s, l);
+    translate1(cond, condValue, r);
+    my_write(fdtrace, "=", 1);
+    my_write(fddanger, "=", 1);
+    printSizedFalse(cond->Iex.RdTmp.tmp, fdtrace);
+    printSizedFalse(cond->Iex.RdTmp.tmp, fddanger);
+    my_write(fdtrace, " THEN ", 6);
+    my_write(fddanger, " THEN ", 6);
+    translate2(arg0, value0, secondTainted(r));
+    my_write(fdtrace, " ELSE ", 6);
+    my_write(fddanger, " ELSE ", 6);
+    translate3(argX, valueX, thirdTainted(r));
+    my_write(fdtrace, " ENDIF);\n", 9);
+    my_write(fddanger, " ENDIF);\n", 9);
+  }
+}
 
 static
 void instrumentWrTmpCCall(IRStmt* clone, IRExpr* value0, IRExpr* value1, IRExpr* value2)
@@ -2523,12 +2606,19 @@ void instrumentWrTmpLongBinop(IRStmt* clone, UWord value1, UWord value2)
   }
 }
 
+/* We need to pass 64-bit value through either r0;r1 or r2;r3 - 
+   that's why formal params are value2 and then value1.
+*/
+
 static
-void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Addr64 value1, IRExpr* value2)
+void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* value2, ULong value1)
 {
-  UShort r = isPropagation2(arg1, arg2);
   UInt ltmp = clone->Ist.WrTmp.tmp;
   UInt oprt = clone->Ist.WrTmp.data->Iex.Binop.op;
+  IRExpr* arg1, *arg2;
+  arg1 = clone->Ist.WrTmp.data->Iex.Binop.arg1;
+  arg2 = clone->Ist.WrTmp.data->Iex.Binop.arg2;
+  UShort r = isPropagation2(arg1, arg2);
   if (r)
   {
     Char s[256];
@@ -2550,7 +2640,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 #endif
     switch (oprt)
     {
-      case Iop_DivModU64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
+      case Iop_DivModU64to32:	if (checkDanger && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
@@ -2582,7 +2672,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_DivModS64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
+      case Iop_DivModS64to32:	if (checkDanger && secondTainted(r) && (!enableFiltering || useFiltering()))
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
@@ -3454,16 +3544,27 @@ void instrumentPut(IRStmt* clone, IRSB* sbOut)
   IRExpr* data = clone->Ist.Put.data;
   switch (data->tag)
   {
-    case Iex_Load: 	di = unsafeIRDirty_0_N(0, "instrumentPutLoad", VG_(fnptr_to_fnentry)(&instrumentPutLoad), mkIRExprVec_3(mkIRExpr_HWord((HWord)  clone), mkIRExpr_HWord(offset), data->Iex.Load.addr));
+    case Iex_Load: 	di = unsafeIRDirty_0_N(0, "instrumentPutLoad",
+						VG_(fnptr_to_fnentry)(&instrumentPutLoad), 
+						mkIRExprVec_3(mkIRExpr_HWord((HWord)  clone), 
+								mkIRExpr_HWord(offset), data->Iex.Load.addr));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
-    case Iex_Get:      	di = unsafeIRDirty_0_N(0, "instrumentPutGet", VG_(fnptr_to_fnentry)(&instrumentPutGet), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(offset), mkIRExpr_HWord(data->Iex.Get.offset)));
+    case Iex_Get:      	di = unsafeIRDirty_0_N(0, "instrumentPutGet",
+						VG_(fnptr_to_fnentry)(&instrumentPutGet), 
+						mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(offset), 
+								mkIRExpr_HWord(data->Iex.Get.offset)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
-    case Iex_RdTmp:    	di = unsafeIRDirty_0_N(0, "instrumentPutRdTmp", VG_(fnptr_to_fnentry)(&instrumentPutRdTmp), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(offset), mkIRExpr_HWord(data->Iex.RdTmp.tmp)));
+    case Iex_RdTmp:    	di = unsafeIRDirty_0_N(0, "instrumentPutRdTmp", 
+						VG_(fnptr_to_fnentry)(&instrumentPutRdTmp), 
+						mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(offset), 
+								mkIRExpr_HWord(data->Iex.RdTmp.tmp)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
-    case Iex_Const:	di = unsafeIRDirty_0_N(0, "instrumentPutConst", VG_(fnptr_to_fnentry)(&instrumentPutConst), mkIRExprVec_2(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(offset)));
+    case Iex_Const:	di = unsafeIRDirty_0_N(0, "instrumentPutConst",
+						VG_(fnptr_to_fnentry)(&instrumentPutConst), 
+						mkIRExprVec_2(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(offset)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
     default:		break;
@@ -3570,19 +3671,31 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
   {
     case Iex_Load: 	if (data->Iex.Load.addr->tag == Iex_RdTmp)
 			{
-			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpLoad", VG_(fnptr_to_fnentry)(&instrumentWrTmpLoad), mkIRExprVec_2(mkIRExpr_HWord((HWord) clone), data->Iex.Load.addr));
+			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpLoad", 
+						 VG_(fnptr_to_fnentry)(&instrumentWrTmpLoad), 
+						 mkIRExprVec_2(mkIRExpr_HWord((HWord) clone), data->Iex.Load.addr));
                           addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 			}
                    	break;
-    case Iex_Get:  	di = unsafeIRDirty_0_N(0, "instrumentWrTmpGet", VG_(fnptr_to_fnentry)(&instrumentWrTmpGet), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(tmp), mkIRExpr_HWord(data->Iex.Get.offset)));
+    case Iex_Get:  	di = unsafeIRDirty_0_N(0, "instrumentWrTmpGet", 
+						VG_(fnptr_to_fnentry)(&instrumentWrTmpGet), 
+						mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(tmp),
+								mkIRExpr_HWord(data->Iex.Get.offset)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
-    case Iex_RdTmp:	di = unsafeIRDirty_0_N(0, "instrumentWrTmpRdTmp", VG_(fnptr_to_fnentry)(&instrumentWrTmpRdTmp), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(tmp), mkIRExpr_HWord(data->Iex.RdTmp.tmp)));
+    case Iex_RdTmp:	di = unsafeIRDirty_0_N(0, "instrumentWrTmpRdTmp",
+						VG_(fnptr_to_fnentry)(&instrumentWrTmpRdTmp), 
+						mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(tmp), 
+								mkIRExpr_HWord(data->Iex.RdTmp.tmp)));
                    	addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                    	break;
     case Iex_Unop:	if (data->Iex.Unop.arg->tag == Iex_RdTmp)
                         {
-			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpUnop", VG_(fnptr_to_fnentry)(&instrumentWrTmpUnop), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(tmp), mkIRExpr_HWord(data->Iex.Unop.arg->Iex.RdTmp.tmp), mkIRExpr_HWord(data->Iex.Unop.op)));
+			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpUnop", 
+						 VG_(fnptr_to_fnentry)(&instrumentWrTmpUnop), 
+						 mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(tmp), 
+								mkIRExpr_HWord(data->Iex.Unop.arg->Iex.RdTmp.tmp),
+								mkIRExpr_HWord(data->Iex.Unop.op)));
                    	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
  			}
  			break;
@@ -3613,48 +3726,69 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
      Each LongBinop statement is instrumented two times consequently with
    (diCounter = 1, value = arg2_value) and (diCounter = 2, value = arg1_value).
    instrumentWrTmpLongBinop only does actual work if either
-     diCounter == 1) AND arg1 is tainted
+     diCounter == 1 AND arg1 is tainted
    OR
      diCounter == 2 AND arg2 is tainted AND arg1 is NOT tainted
    to ensure that no duplicates appear in tainted trace log.
 */
 
-                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(1), value2));
-                          di2 = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(2), value1));
+                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop",
+						 VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop),
+						 mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(1), value2));
+                          di2 = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop",
+						  VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop),
+						  mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(2), value1));
                           addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                           addStmtToIRSB(sbOut, IRStmt_Dirty(di2));
 			}
 #endif
-//FIXME: rewrite with less args
-/*			else if ((data->Iex.Binop.op == Iop_DivModU64to32) || (data->Iex.Binop.op == Iop_DivModS64to32))
+			else if ((data->Iex.Binop.op == Iop_DivModU64to32) ||
+				 (data->Iex.Binop.op == Iop_DivModS64to32))
 			{
-			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpDivisionBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpDivisionBinop), mkIRExprVec_5(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg1), mkIRExpr_HWord((HWord) arg2), value1, value2));
+			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpDivisionBinop", 
+						 VG_(fnptr_to_fnentry)(&instrumentWrTmpDivisionBinop),
+						 mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), value2, value1));
                      	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-			}*/
+			}
 			else if ((data->Iex.Binop.op - Iop_INVALID <= 128) &&
                                  (typeOfIRExpr(tyenv, arg1) - Ity_INVALID <= 5) &&
                                  (typeOfIRExpr(tyenv, arg2) - Ity_INVALID <= 5))
                         //do not try to instrument floating point operations
 			{
-                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpBinop), mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), value1, value2));
+                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpBinop", 
+						 VG_(fnptr_to_fnentry)(&instrumentWrTmpBinop), 
+						 mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), value1, value2));
                    	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 			}
 			break;
-    case Iex_Const:	break;
+    case Iex_Mux0X:	arg0 = data->Iex.Mux0X.cond;
+			arg1 = data->Iex.Mux0X.expr0;
+			arg2 = data->Iex.Mux0X.exprX;
+			value0 = adjustSize(sbOut, tyenv, arg0);
+			value1 = adjustSize(sbOut, tyenv, arg1);
+			value2 = adjustSize(sbOut, tyenv, arg2);
+			di = unsafeIRDirty_0_N(0, "instrumentWrTmpMux0X",
+						VG_(fnptr_to_fnentry)(&instrumentWrTmpMux0X),
+						mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), value0, value1, value2));
+			addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+			break;
     case Iex_CCall:	if (!VG_(strcmp)(data->Iex.CCall.cee->name, "armg_calculate_condition") ||
-                            !VG_(strcmp)(data->Iex.CCall.cee->name, "amd64g_calculate_condition")) 
+			    !VG_(strcmp)(data->Iex.CCall.cee->name, "amd64g_calculate_condition")) 
 			{
-                          arg0 = data->Iex.CCall.args[0]; //ARMCondcode << 4 | c_op
+			  arg0 = data->Iex.CCall.args[0]; //ARMCondcode << 4 | c_op
 			  arg1 = data->Iex.CCall.args[1]; //condition arg1
 			  arg2 = data->Iex.CCall.args[2]; //condition arg2
 			  arg3 = data->Iex.CCall.args[3]; //something
-                          value1 = adjustSize(sbOut, tyenv, arg1);
-                          value2 = adjustSize(sbOut, tyenv, arg2);
+			  value1 = adjustSize(sbOut, tyenv, arg1);
+			  value2 = adjustSize(sbOut, tyenv, arg2);
 			  value0 = adjustSize(sbOut, tyenv, arg0);
-                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", VG_(fnptr_to_fnentry)(&instrumentWrTmpCCall), mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), value0, value1, value2));
-                   	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", 
+						 VG_(fnptr_to_fnentry)(&instrumentWrTmpCCall), 
+						 mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), value0, value1, value2));
+			  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
 			}
 			break;
+    default:		break;
   }
 }
 
