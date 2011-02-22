@@ -57,7 +57,6 @@
 #include "parser.h"
 
 //#define TAINTED_TRACE_PRINTOUT
-//#define TAINTED_BLOCKS_PRINTOUT
 //#define CALL_STACK_PRINTOUT
 
 enum {
@@ -1206,14 +1205,6 @@ void instrumentPutLoad(IRStmt* clone, UInt offset, IRExpr* loadAddr)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
     Char ss[256];
     Int l = 0;
     UWord addr = (UWord) loadAddr;
@@ -1335,14 +1326,6 @@ void instrumentPutGet(IRStmt* clone, UInt putOffset, UInt getOffset)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
     Char ss[256];
     Int l = 0;
     switch (size)
@@ -1418,14 +1401,6 @@ void instrumentPutRdTmp(IRStmt* clone, UInt offset, UInt tmp)
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
     Char ss[256];
     Int l = 0;
@@ -1514,14 +1489,6 @@ void instrumentPutConst(IRStmt* clone, UInt offset)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
   }
 }
 
@@ -1556,14 +1523,6 @@ void instrumentWrTmpLoad(IRStmt* clone, UInt tmp, IRExpr* loadAddr, IRType ty, U
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
     UWord addr = (UWord) loadAddr;
     
@@ -1618,14 +1577,6 @@ void instrumentWrTmpGet(IRStmt* clone, UInt tmp, UInt offset)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
   }
 }
 
@@ -1639,14 +1590,6 @@ void instrumentWrTmpRdTmp(IRStmt* clone, UInt ltmp, UInt rtmp)
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
     Int l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=t_%llx_%u_%u);\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited);
     my_write(fdtrace, s, l);
@@ -1663,14 +1606,6 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
     size2Node* node;
     Char s[256];
@@ -1904,14 +1839,6 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
 #if defined(VGP_x86_linux)
     size %= 3;
@@ -2617,14 +2544,6 @@ void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord v
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
     switch (oprt)
     {
       case Iop_CmpEQ64:		l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=IF ", curblock, ltmp, curvisited);
@@ -2975,14 +2894,6 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, Add
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
     switch (oprt)
     {
       case Iop_DivModU64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(r) && (!enableFiltering || useFiltering()))
@@ -3070,14 +2981,6 @@ void instrumentWrTmpBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, IRExpr* val
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
     switch (oprt)
     {
@@ -3509,14 +3412,6 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
     Char ss[256];
     Int l = 0;
     switch (size)
@@ -3642,14 +3537,6 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
     Char ss[256];
     Int l = 0;
     switch (curNode->temps[tmp].size)
@@ -3768,14 +3655,6 @@ void instrumentStoreConst(IRStmt* clone, IRExpr* addr)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
-#endif
   }
 }
 
@@ -3787,14 +3666,6 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
 #ifdef TAINTED_TRACE_PRINTOUT
     ppIRStmt(clone);
     VG_(printf) ("\n");
-#endif
-#ifdef TAINTED_BLOCKS_PRINTOUT
-    if(newSB)
-    {
-      ppIRSB(printSB);
-      VG_(printf) ("\n");
-      newSB = False;
-    }
 #endif
     Char s[256];
     Int l = VG_(sprintf)(s, "ASSERT(t_%llx_%u_%u=", curblock, tmp, curvisited);
@@ -4158,11 +4029,6 @@ IRSB* tg_instrument ( VgCallbackClosure* closure,
       /* We don't currently support this case. */
       VG_(tool_panic)("host/guest word size mismatch");
    }
-
-#ifdef TAINTED_BLOCKS_PRINTOUT   
-   newSB = True;
-   printSB = sbIn;
-#endif
 
    /* Set up SB */
    sbOut = deepCopyIRSBExceptStmts(sbIn);
