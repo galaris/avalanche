@@ -1,15 +1,12 @@
-// $Id: STP_Input.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------ STP_Input.h ---------------------------------------*/
+/*-------------------------------- RemotePluginExecutor.h --------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Ildar Isaev
-      iisaev@ispras.ru
-   Copyright (C) 2009 Nick Lugovskoy
-      lugovskoy@ispras.ru
+   Copyright (C) 2011 Michael Ermakov
+	mermakov@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -24,25 +21,26 @@
    limitations under the License.
 */
 
-#ifndef __STP_INPUT__H__
-#define __STP_INPUT__H__
+#ifndef __REMOTE_PLUGIN_EXECUTOR__H__
+#define __REMOTE_PLUGIN_EXECUTOR__H__
 
+#include "Executor.h"
 #include <string>
+#include <vector>
 
-
-class STP_Input
+class RemotePluginExecutor : public Executor
 {
 public:
-    void setFile(const char *filename)
-    { file = filename; }
-
-    const char *getFile()
-    { return file.c_str(); }
+    RemotePluginExecutor(std::vector<std::string> &_args, int fd, std::vector<char> &to_send, Kind _kind);
+    ~RemotePluginExecutor() {}
+    int run();
 
 private:
-    std::string file;
+    int remote_fd;
+    std::vector<char> files_to_send;
+    Kind kind;
 };
 
 
-#endif //__STP_INPUT__H__
+#endif //__REMOTE_PLUGIN_EXECUTOR__H__
 

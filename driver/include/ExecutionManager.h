@@ -110,7 +110,7 @@ public:
     void getCovgrindOptions(std::vector <std::string> &plugin_opts, std::string fileNameModifier, bool addNoCoverage);
 
     int calculateScore(std::string filaNameModifier = "");
-    int checkAndScore(Input* input, bool addNoCoverage, std::string fileNameModifier = "", bool first_run = false);
+    int checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, std::string fileNameModifier = "");
 
     void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
     bool dumpMCExploit(Input* input, const char* exec_log);

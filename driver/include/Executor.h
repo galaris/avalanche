@@ -1,4 +1,3 @@
-// $Id: Executor.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -29,34 +28,29 @@
 
 #include <cstdlib>
 
+enum Kind
+{
+  TRACEGRIND,
+  COVGRIND,
+  MEMCHECK
+};
 
 class Executor
 {
 public:
-    Executor(): prog(NULL), args(NULL), file_out(-1), file_err(-1), argsnum(0)
-    {}
-
-    int exec(bool setlimit);
-
-    int wait();
-
-    void redirect_stdout(char *filename);
-    
-    void redirect_stderr(char *filename);
-
-    ~Executor();
+    Executor() : args(NULL), argsnum(0) {}
+   ~Executor()
+    {
+      for(int i = 0; i < argsnum; i ++)
+      {
+        free(args[i]);
+      }
+      free(args);
+    }
 
 protected:
-    char  *prog;
     char **args;
     unsigned int argsnum;
-    pid_t child_pid;
-
-private:
-    void do_redirect(int file_to_redirect, int with_file);
-
-    int file_out;
-    int file_err;
 };
 
 
