@@ -27,7 +27,7 @@
 #ifndef __PLUGIN_EXECUTOR__H__
 #define __PLUGIN_EXECUTOR__H__
 
-#include "Executor.h"
+#include "LocalExecutor.h"
 
 #include <cstddef>
 #include <vector>
@@ -35,17 +35,8 @@
 
 class OptionConfig;
 class FileBuffer;
-class STP_Input;
 
-enum Kind
-{
-  TRACEGRIND,
-  COVGRIND,
-  MEMCHECK
-};
-
-
-class PluginExecutor : public Executor
+class PluginExecutor : public LocalExecutor
 {
 public:
     PluginExecutor(bool debug_full_enable,

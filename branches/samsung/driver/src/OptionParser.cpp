@@ -68,6 +68,15 @@ OptionConfig *OptionParser::run() const
             string host = arg_vec[i].substr(strlen("--host="));
             config->setHost(host);
         }
+        else if (arg_vec[i].find("--dist-host=") != string::npos) {
+            distHostSpecified = true;
+            string host = arg_vec[i].substr(strlen("--dist-host="));
+            config->setDistHost(host);
+        }
+        else if (arg_vec[i].find("--remote-host=") != string::npos) {
+            string host = arg_vec[i].substr(strlen("--remote-host="));
+            config->setRemoteHost(host);
+        }
         else if (arg_vec[i].find("--report-log=") != string::npos) {
             string log = arg_vec[i].substr(strlen("--report-log="));
             config->setReportLog(log);
@@ -75,11 +84,6 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i].find("--prefix=") != string::npos) {
             string prefix = arg_vec[i].substr(strlen("--prefix="));
             config->setPrefix(prefix);
-        }
-        else if (arg_vec[i].find("--dist-host=") != string::npos) {
-            distHostSpecified = true;
-            string host = arg_vec[i].substr(strlen("--dist-host="));
-            config->setDistHost(host);
         }
         else if (arg_vec[i].find("--depth=") != string::npos) {
             string depth = arg_vec[i].substr(strlen("--depth="));
@@ -123,6 +127,10 @@ OptionConfig *OptionParser::run() const
             string port = arg_vec[i].substr(strlen("--dist-port="));
             config->setDistPort(atoi(port.c_str()));
         }
+        else if (arg_vec[i].find("--remote-port=") != string::npos) {
+            string port = arg_vec[i].substr(strlen("--remote-port="));
+            config->setRemotePort(atoi(port.c_str()));
+        }
         else if (arg_vec[i].find("--stp-threads=") != string::npos) {
             string thread_num = arg_vec[i].substr(strlen("--stp-threads="));
             if (thread_num == string("auto")) {
@@ -149,6 +157,9 @@ OptionConfig *OptionParser::run() const
         }
         else if (arg_vec[i] == "--distributed") {
             config->setDistributed();
+        }
+        else if (arg_vec[i] == "--remote-valgrind") {
+            config->setRemoteValgrind();
         }
         else if (arg_vec[i] == "--agent") {
             config->setAgent();

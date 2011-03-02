@@ -27,8 +27,8 @@
 #include "Chunk.h"
 #include "OptionConfig.h"
 #include "PluginExecutor.h"
+#include "RemotePluginExecutor.h"
 #include "STP_Executor.h"
-#include "STP_Input.h"
 #include "STP_Output.h"
 #include "FileBuffer.h"
 #include "SocketBuffer.h"
@@ -80,8 +80,46 @@ pthread_cond_t finish_cond;
 
 int in_thread_creation = -1;
 
-int distfd;
+int dist_fd;
+int remote_fd;
 int agents;
+
+static int connectTo(string host, unsigned int port)
+{
+  struct sockaddr_in stSockAddr;
+  int res, socket_fd;
+ 
+  memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
+ 
+  stSockAddr.sin_family = AF_INET;
+  stSockAddr.sin_port = htons(port);
+  res = inet_pton(AF_INET, host.c_str(), &stSockAddr.sin_addr);
+ 
+  if (res < 0)
+  {
+    perror("first parameter is not a valid address family");
+    exit(EXIT_FAILURE);
+  }
+  else if (res == 0)
+  {
+    perror("second parameter does not contain valid ipaddress");
+    exit(EXIT_FAILURE);
+  }
+
+   socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+   if (socket_fd == -1)
+   {
+     perror("cannot create socket");
+     exit(EXIT_FAILURE);
+   }
+   if (connect(socket_fd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in)) < 0)
+   {
+     perror("connect failed");
+     close(socket_fd);
+     exit(EXIT_FAILURE);
+   }
+   return socket_fd;
+}
 
 int args_length;
 
@@ -123,47 +161,15 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
   
     if (is_distributed)
     {
-      struct sockaddr_in stSockAddr;
-      int res;
- 
-      memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
- 
-      stSockAddr.sin_family = AF_INET;
-      stSockAddr.sin_port = htons(opt_config->getDistPort());
-      res = inet_pton(AF_INET, opt_config->getDistHost().c_str(), &stSockAddr.sin_addr);
- 
-      if (res < 0)
-      {
-        perror("error: first parameter is not a valid address family");
-        exit(EXIT_FAILURE);
-      }
-      else if (res == 0)
-      {
-        perror("char string (second parameter does not contain valid ipaddress");
-        exit(EXIT_FAILURE);
-      }
-
-      distfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-      if (distfd == -1)
-      {
-        perror("cannot create socket");
-        exit(EXIT_FAILURE);
-      }
-    
-      res = connect(distfd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in));
- 
-      if (res < 0)
-      {
-        perror("error connect failed");
-        close(distfd);
-        exit(EXIT_FAILURE);
-      }  
-
+      dist_fd = connectTo(opt_config->getDistHost(), opt_config->getDistPort());
       LOG(logger, "Connected to server");
-      write(distfd, "m", 1);
-      read(distfd, &agents, sizeof(int));
-   }
+      write(dist_fd, "m", 1);
+      read(dist_fd, &agents, sizeof(int));
+    }
+    if (opt_config->getRemoteValgrind())
+    {
+      remote_fd = connectTo(opt_config->getRemoteHost(), opt_config->getRemotePort());
+    }
 }
 
 void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
@@ -472,7 +478,7 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   return res;
 }
 
-int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fileNameModifier, bool first_run)
+int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, string fileNameModifier)
 {
   if (config->usingSockets() || config->usingDatagrams())
   {
@@ -495,8 +501,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fil
     }
   }
   vector <string> new_prog_and_args = cur_argv;
-  
-  if (fileNameModifier != string("") && !(config->usingSockets()) && !(config->usingDatagrams()))
+  vector<char> to_send(new_prog_and_args.size() + plugin_opts.size(), '\0');
+  if (!(config->usingSockets()) && !(config->usingDatagrams()))
   {
     for (int i = 0; i < new_prog_and_args.size(); i ++)
     {
@@ -504,20 +510,53 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, string fil
       {
         if (!strcmp(new_prog_and_args[i].c_str(), input->files.at(j)->name))
         {
-          new_prog_and_args[i].append(fileNameModifier);
+          if (fileNameModifier != string(""))
+          {
+            new_prog_and_args[i].append(fileNameModifier);
+          }
+          to_send[plugin_opts.size() + i] = 1;
         }
       }
     }
   }
-  PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(),
+  for (int i = 0; i < plugin_opts.size(); i ++)
+  {
+      if (plugin_opts[i].find("--replace-date") != string::npos)
+      {
+        to_send[i] = 1;
+      }
+  }
+  Executor* plugin_exe;
+  if (!config->getRemoteValgrind())
+  {
+    plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(), config->getValgrind(),
                             new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
+  }
+  else
+  {
+    vector <string> plug_args = plugin_opts;
+    for (int i = 0; i < new_prog_and_args.size(); i ++)
+    {
+      plug_args.push_back(new_prog_and_args[i]);
+    }
+    plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, kind);
+  }
   new_prog_and_args.clear();
   plugin_opts.clear();
   bool enable_mutexes = (config->getSTPThreads() != 0) && !first_run;
   int thread_index = (fileNameModifier == string("")) ? 0 : atoi(fileNameModifier.substr(1).c_str());
   monitor->setState(CHECKER, time(NULL), thread_index);
-  int exitCode = plugin_exe.run(thread_index);
+  int exitCode;
+  if (config->getRemoteValgrind())
+  {
+    exitCode = ((RemotePluginExecutor*)plugin_exe)->run();
+  }
+  else
+  {
+    exitCode = ((PluginExecutor*)plugin_exe)->run(thread_index);
+  }
   monitor->addTime(time(NULL), thread_index);
+  delete plugin_exe;
   FileBuffer* mc_output;
   bool infoAvailable = false;
   bool sameExploit = false;
@@ -691,11 +730,9 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
     input_modifier = input_modifier_s.str();
   }
   cur_trace_log += input_modifier + string(".log");
-  STP_Input si;
-  si.setFile(cur_trace_log.c_str());
   STP_Executor stp_exe(getConfig()->getDebug(), getConfig()->getValgrind());        
   monitor->setState(STP, time(NULL), thread_index);
-  STP_Output *out = stp_exe.run(&si, thread_index);
+  STP_Output *out = stp_exe.run(cur_trace_log.c_str(), thread_index);
   monitor->addTime(time(NULL), thread_index);
   if (out == NULL)
   {
@@ -738,7 +775,7 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
       next->prediction[st_depth + cur_depth - 1] = !actual[st_depth + cur_depth - 1];
       next->predictionSize = st_depth + cur_depth;
       next->parent = first_input;
-      int score = checkAndScore(next, !trace_kind, input_modifier);
+      int score = checkAndScore(next, !trace_kind, false, config->getRemoteValgrind(), input_modifier);
       if (trace_kind && score != -1)
       {
         if (thread_index)
@@ -1020,7 +1057,7 @@ void ExecutionManager::run()
       signal(SIGALRM, alarmHandler);
     }
     initial->startdepth = config->getStartdepth();
-    int score = checkAndScore(initial, false, "", true);
+    int score = checkAndScore(initial, false, true, config->getRemoteValgrind(), "");
     basicBlocksCovered.insert(delta_basicBlocksCovered.begin(), delta_basicBlocksCovered.end());
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
@@ -1068,20 +1105,77 @@ void ExecutionManager::run()
       }
   
       getTracegrindOptions(plugin_opts);
+
+      if (runs && (config->getCheckArgv() != ""))
+      {
+        updateArgv(fi);
+      }
+
+      if (config->getRemoteValgrind())
+      {
+        plugin_opts.push_back("--log-file=execution.log");
+      }
+      vector <string> plug_args = plugin_opts;
+      for (int i = 0; i < cur_argv.size(); i ++)
+      {
+        plug_args.push_back(cur_argv[i]);
+      }
+      vector <char> to_send(plug_args.size(), '\0');
+      if (!(config->usingSockets()) && !(config->usingDatagrams()))
+      {
+        for (int i = 0; i < cur_argv.size(); i ++)
+        {
+          for (int j = 0; j < fi->files.size(); j ++)
+          {
+            if (!strcmp(cur_argv[i].c_str(), fi->files.at(j)->name))
+            {
+              to_send[plugin_opts.size() + i] = 1;
+            }
+          }
+        }
+      }
+      if (runs == 0)
+      {
+        for (int i = 0; i < plug_args.size(); i ++)
+        {
+          if ((plug_args[i].find("--mask") != string::npos) ||
+              (plug_args[i].find("--func-filter") != string::npos))
+          {
+            to_send[i] = 1;
+          }
+        }
+      }
+      Executor * plugin_exe;
+
+      if (config->getRemoteValgrind())
+      {
+        plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, TRACEGRIND);
+      }
+      else
+      {
+        plugin_exe = new PluginExecutor (config->getDebug(), config->getTraceChildren(), config->getValgrind(), cur_argv, plugin_opts, TRACEGRIND);
+      }
       
       if (runs && (config->getCheckArgv() != ""))
       {
         updateArgv(fi);
       }
       
-      PluginExecutor plugin_exe(config->getDebug(), config->getTraceChildren(), config->getValgrind(), cur_argv, plugin_opts, TRACEGRIND);
       plugin_opts.clear();
       {
         nokill = true;
       }
       time_t start_time = time(NULL);
       monitor->setState(TRACER, start_time);
-      int exitCode = plugin_exe.run();
+      int exitCode;
+      if (config->getRemoteValgrind())
+      {
+        exitCode = ((RemotePluginExecutor*)plugin_exe)->run();
+      }
+      else
+      {
+        exitCode = ((PluginExecutor*)plugin_exe)->run();
+      }
       if ((config->getCheckArgv() != ""))
       {
         if (!runs)
@@ -1092,6 +1186,7 @@ void ExecutionManager::run()
         }
       }
       monitor->addTime(time(NULL));
+      delete plugin_exe;
       if (config->getTracegrindAlarm() == 0)
       {      
         nokill = false;
@@ -1201,24 +1296,24 @@ void ExecutionManager::talkToServer()
     NET(logger, "Communicating with server");
     fd_set readfds;
     FD_ZERO(&readfds);
-    FD_SET(distfd, &readfds);
+    FD_SET(dist_fd, &readfds);
     struct timeval timer;
     timer.tv_sec = 0;
     timer.tv_usec = 0;
-    select(distfd + 1, &readfds, NULL, NULL, &timer);
+    select(dist_fd + 1, &readfds, NULL, NULL, &timer);
     int limit = config->getProtectMainAgent() ? N * agents : 1;
-    while (FD_ISSET(distfd, &readfds)) 
+    while (FD_ISSET(dist_fd, &readfds)) 
     {
       char c = '\0';
-      readFromSocket(distfd, &c, 1);
+      readFromSocket(dist_fd, &c, 1);
       if (c == 'a')
       {
         NET(logger, "Sending options and data");
-        writeToSocket(distfd, "r", 1); 
+        writeToSocket(dist_fd, "r", 1); 
         //sending "r"(responding) before data - this is to have something different from "q", so that server
         //can understand that main avalanche finished normally
         int size;
-        readFromSocket(distfd, &size, sizeof(int));
+        readFromSocket(dist_fd, &size, sizeof(int));
         while (size > 0)
         {
           if (inputs.size() <= limit)
@@ -1229,101 +1324,101 @@ void ExecutionManager::talkToServer()
           it--;
           Input* fi = it->second;
           int filenum = fi->files.size();
-          writeToSocket(distfd, &filenum, sizeof(int));
+          writeToSocket(dist_fd, &filenum, sizeof(int));
           bool sockets = config->usingSockets();
-          writeToSocket(distfd, &sockets, sizeof(bool));
+          writeToSocket(dist_fd, &sockets, sizeof(bool));
           bool datagrams = config->usingDatagrams();
-          writeToSocket(distfd, &datagrams, sizeof(bool));
+          writeToSocket(dist_fd, &datagrams, sizeof(bool));
           for (int j = 0; j < fi->files.size(); j ++)
           {
             FileBuffer* fb = fi->files.at(j);
             if (!config->usingDatagrams() && ! config->usingSockets())
             {
               int namelength = config->getFile(j).length();
-              writeToSocket(distfd, &namelength, sizeof(int));
-              writeToSocket(distfd, config->getFile(j).c_str(), namelength);
+              writeToSocket(dist_fd, &namelength, sizeof(int));
+              writeToSocket(dist_fd, config->getFile(j).c_str(), namelength);
             }
-            writeToSocket(distfd, &(fb->size), sizeof(int));
-            writeToSocket(distfd, fb->buf, fb->size);
+            writeToSocket(dist_fd, &(fb->size), sizeof(int));
+            writeToSocket(dist_fd, fb->buf, fb->size);
           }
-          writeToSocket(distfd, &fi->startdepth, sizeof(int));
+          writeToSocket(dist_fd, &fi->startdepth, sizeof(int));
           int depth = config->getDepth();
-          writeToSocket(distfd, &depth, sizeof(int));
+          writeToSocket(dist_fd, &depth, sizeof(int));
           unsigned int alarm = config->getAlarm();
-          writeToSocket(distfd, &alarm, sizeof(int));
+          writeToSocket(dist_fd, &alarm, sizeof(int));
           unsigned int tracegrindAlarm = config->getTracegrindAlarm();
-          writeToSocket(distfd, &tracegrindAlarm, sizeof(int));
+          writeToSocket(dist_fd, &tracegrindAlarm, sizeof(int));
           int threads = config->getSTPThreads();
-          writeToSocket(distfd, &threads, sizeof(int));
+          writeToSocket(dist_fd, &threads, sizeof(int));
 
           int progArgsNum = config->getProgAndArg().size();
-          writeToSocket(distfd, &progArgsNum, sizeof(int));
+          writeToSocket(dist_fd, &progArgsNum, sizeof(int));
 
           bool useMemcheck = config->usingMemcheck();
-          writeToSocket(distfd, &useMemcheck, sizeof(bool));
+          writeToSocket(dist_fd, &useMemcheck, sizeof(bool));
           bool leaks = config->checkForLeaks();
-          writeToSocket(distfd, &leaks, sizeof(bool));
+          writeToSocket(dist_fd, &leaks, sizeof(bool));
           bool traceChildren = config->getTraceChildren();
-          writeToSocket(distfd, &traceChildren, sizeof(bool));
+          writeToSocket(dist_fd, &traceChildren, sizeof(bool));
           bool checkDanger = config->getCheckDanger();
-          writeToSocket(distfd, &checkDanger, sizeof(bool));
+          writeToSocket(dist_fd, &checkDanger, sizeof(bool));
           bool debug = config->getDebug();
-          writeToSocket(distfd, &debug, sizeof(bool));
+          writeToSocket(dist_fd, &debug, sizeof(bool));
           bool verbose = config->getVerbose();
-          writeToSocket(distfd, &verbose, sizeof(bool));
+          writeToSocket(dist_fd, &verbose, sizeof(bool));
           bool suppressSubcalls = config->getSuppressSubcalls();
-          writeToSocket(distfd, &suppressSubcalls, sizeof(bool));
+          writeToSocket(dist_fd, &suppressSubcalls, sizeof(bool));
           bool STPThreadsAuto = config->getSTPThreadsAuto();
-          writeToSocket(distfd, &STPThreadsAuto, sizeof(bool));
+          writeToSocket(dist_fd, &STPThreadsAuto, sizeof(bool));
 
           if (sockets)
           {
             string host = config->getHost();
             int length = host.length();
-            writeToSocket(distfd, &length, sizeof(int));
-            writeToSocket(distfd, host.c_str(), length);
+            writeToSocket(dist_fd, &length, sizeof(int));
+            writeToSocket(dist_fd, host.c_str(), length);
             unsigned int port = config->getPort();
-            writeToSocket(distfd, &port, sizeof(int));
+            writeToSocket(dist_fd, &port, sizeof(int));
           }
 
           if (config->getInputFilterFile() != "")
           {
             FileBuffer mask(config->getInputFilterFile().c_str());
-            writeToSocket(distfd, &mask.size, sizeof(int));
-            writeToSocket(distfd, mask.buf, mask.size);
+            writeToSocket(dist_fd, &mask.size, sizeof(int));
+            writeToSocket(dist_fd, mask.buf, mask.size);
           }
           else
           {
             int z = 0;
-            writeToSocket(distfd, &z, sizeof(int));
+            writeToSocket(dist_fd, &z, sizeof(int));
           }
 
           int funcFilters = config->getFuncFilterUnitsNum();
-          writeToSocket(distfd, &funcFilters, sizeof(int));
+          writeToSocket(dist_fd, &funcFilters, sizeof(int));
           for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
           {
             string f = config->getFuncFilterUnit(i);
             int length = f.length();
-            writeToSocket(distfd, &length, sizeof(int));
-            writeToSocket(distfd, f.c_str(), length);
+            writeToSocket(dist_fd, &length, sizeof(int));
+            writeToSocket(dist_fd, f.c_str(), length);
           }
           if (config->getFuncFilterFile() != "")
           {
             FileBuffer filter(config->getFuncFilterFile().c_str());
-            writeToSocket(distfd, &filter.size, sizeof(int));
-            writeToSocket(distfd, filter.buf, filter.size);
+            writeToSocket(dist_fd, &filter.size, sizeof(int));
+            writeToSocket(dist_fd, filter.buf, filter.size);
           }
           else
           {
             int z = 0;
-            writeToSocket(distfd, &z, sizeof(int));
+            writeToSocket(dist_fd, &z, sizeof(int));
           }
 
           for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
           {
             int argsSize = it->length();
-            writeToSocket(distfd, &argsSize, sizeof(int));
-            writeToSocket(distfd, it->c_str(), argsSize);
+            writeToSocket(dist_fd, &argsSize, sizeof(int));
+            writeToSocket(dist_fd, it->c_str(), argsSize);
           }
           if (it->second != initial)
           {
@@ -1335,17 +1430,17 @@ void ExecutionManager::talkToServer()
         while (size > 0)
         {
           int tosend = 0;
-          writeToSocket(distfd, &tosend, sizeof(int));
+          writeToSocket(dist_fd, &tosend, sizeof(int));
           size--;
         }
       }
       else if (c == 'g')
       {
-        writeToSocket(distfd, "r", 1);
+        writeToSocket(dist_fd, "r", 1);
         //sending "r"(responding) before data - this is to have something different from "q", so that server
         //can understand that main avalanche finished normally
         int size;
-        readFromSocket(distfd, &size, sizeof(int));
+        readFromSocket(dist_fd, &size, sizeof(int));
         while (size > 0)
         {
           if (inputs.size() <= limit)
@@ -1359,10 +1454,10 @@ void ExecutionManager::talkToServer()
           for (int j = 0; j < fi->files.size(); j ++)
           {
             FileBuffer* fb = fi->files.at(j);
-            writeToSocket(distfd, &(fb->size), sizeof(int));
-            writeToSocket(distfd, fb->buf, fb->size);
+            writeToSocket(dist_fd, &(fb->size), sizeof(int));
+            writeToSocket(dist_fd, fb->buf, fb->size);
           }
-          writeToSocket(distfd, &fi->startdepth, sizeof(int));
+          writeToSocket(dist_fd, &fi->startdepth, sizeof(int));
           if (it->second != initial)
           {
             delete it->second;
@@ -1373,18 +1468,18 @@ void ExecutionManager::talkToServer()
         while (size > 0)
         {
           int tosend = 0;
-          writeToSocket(distfd, &tosend, sizeof(int));
+          writeToSocket(dist_fd, &tosend, sizeof(int));
           size--;
         }
       }
       else
       {
         int tosend = 0;
-        writeToSocket(distfd, &tosend, sizeof(int));
+        writeToSocket(dist_fd, &tosend, sizeof(int));
       }
       FD_ZERO(&readfds);
-      FD_SET(distfd, &readfds);
-      select(distfd + 1, &readfds, NULL, NULL, &timer);      
+      FD_SET(dist_fd, &readfds);
+      select(dist_fd + 1, &readfds, NULL, NULL, &timer);      
     }
   }
   catch (const char* msg)
@@ -1401,9 +1496,9 @@ ExecutionManager::~ExecutionManager()
 
     if (is_distributed)
     {
-      write(distfd, "q", 1);
-      shutdown(distfd, SHUT_RDWR);
-      close(distfd);
+      write(dist_fd, "q", 1);
+      shutdown(dist_fd, SHUT_RDWR);
+      close(dist_fd);
     }
 
     if (thread_num > 0)

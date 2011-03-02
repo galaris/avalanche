@@ -27,7 +27,6 @@
 
 #include "Logger.h"
 #include "STP_Executor.h"
-#include "STP_Input.h"
 #include "STP_Output.h"
 #include "TmpFile.h"
 #include "Monitor.h"
@@ -60,7 +59,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
     args[1] = strdup("-p");
 }
 
-STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
+STP_Output *STP_Executor::run(const char *file_name, int thread_index)
 {
     if (!thread_num)
     {
@@ -71,11 +70,7 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
       LOG(logger, "Thread #" << thread_index << ": Running STP");
     }
     
-    if (input == NULL) {
-        DBG(logger, "No input");
-        return NULL;
-    }
-    args[2] = strdup(input->getFile());
+    args[2] = strdup(file_name);
 
     TmpFile file_out;
     TmpFile file_err;

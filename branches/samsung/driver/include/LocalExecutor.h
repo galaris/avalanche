@@ -1,11 +1,13 @@
-// $Id: STP_Input.cpp 80 2009-10-30 18:55:50Z iisaev $
+// $Id: Executor.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*----------------------------------- STP_Input.cpp --------------------------------------*/
+/*------------------------------------- Executor.h ---------------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
+   Copyright (C) 2009 Ildar Isaev
+      iisaev@ispras.ru
    Copyright (C) 2009 Nick Lugovskoy
       lugovskoy@ispras.ru
 
@@ -21,24 +23,37 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-#include "STP_Input.h"
 
-#include <cstdio>
+#ifndef __LOCAL_EXECUTOR__H__
+#define __LOCAL_EXECUTOR__H__
 
-using namespace std;
+#include <cstdlib>
+#include "Executor.h"
 
 
-bool STP_Input::isEmpty()
+class LocalExecutor : public Executor
 {
-    FILE *fp = fopen(getFile(), "rt");
-    if (!fp) return true;
+public:
+    LocalExecutor(): prog(NULL), file_out(-1), file_err(-1) {}
 
-    bool ret = false;
+    int exec(bool setlimit);
+    int wait();
+    void redirect_stdout(char *filename);
+   
+    void redirect_stderr(char *filename);
+    ~LocalExecutor();
 
-    fseek(fp, 0, SEEK_END);
-    if (ftell(fp) == 0) ret = true;
-    fclose(fp);
+protected:
+    char  *prog;
+    pid_t child_pid;
 
-    return ret;
-}
+private:
+    void do_redirect(int file_to_redirect, int with_file);
+
+    int file_out;
+    int file_err;
+};
+
+
+#endif //__LOCAL_EXECUTOR__H__
 

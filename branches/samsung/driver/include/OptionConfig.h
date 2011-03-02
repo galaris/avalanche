@@ -45,6 +45,7 @@ public:
 		    traceChildren(false),
                     datagrams(false),
                     distributed(false), 
+                    remoteValgrind(false),
                     agent(false), 
                     useMemcheck(false),
                     suppressSubcalls(false),
@@ -58,9 +59,11 @@ public:
                     tracegrindAlarm(0),
                     host(std::string("")),
                     prefix(std::string("")),
-                    disthost(std::string("127.0.0.1")),
+                    distHost(std::string("127.0.0.1")),
                     port(65536),
-                    distport(12200),
+                    distPort(12200),
+                    remoteHost(std::string("127.0.0.1")),
+                    remotePort(15500),
                     STPThreads(0),
                     checkArgv(std::string(""))
     {}
@@ -86,8 +89,11 @@ public:
         tracegrindAlarm = opt_config->tracegrindAlarm;
         host	        = opt_config->host;
         port	        = opt_config->port;
-        disthost	= opt_config->disthost;
-        distport	= opt_config->distport;
+        distHost	= opt_config->distHost;
+        distPort	= opt_config->distPort;
+        remoteHost	= opt_config->remoteHost;
+        remotePort	= opt_config->remotePort;
+        remoteValgrind	= opt_config->remoteValgrind;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         funcFilterFile  = opt_config->funcFilterFile;
@@ -189,6 +195,12 @@ public:
     bool getDistributed() const
     { return distributed; }
 
+    void setRemoteValgrind()
+    { remoteValgrind = true; }
+    
+    bool getRemoteValgrind() const
+    { return remoteValgrind; }
+
     void setAgent()
     { agent = true; }
 
@@ -276,11 +288,17 @@ public:
     unsigned int getPort() const
     { return port; }
 
-    void setDistPort(int port)
-    { distport = port; }
+    void setDistPort(unsigned int port)
+    { distPort = port; }
 
-    int getDistPort() const
-    { return distport; }
+    unsigned int getDistPort() const
+    { return distPort; }
+
+    void setRemotePort(unsigned int port) 
+    { remotePort = port; }
+
+    unsigned int getRemotePort() const
+    { return remotePort; }
 
     void addProgAndArg(const std::string &arg)
     { prog_and_arg.push_back(arg); }
@@ -303,17 +321,23 @@ public:
     void setHost(std::string& host)
     { this->host = host; }
 
+    std::string getDistHost()
+    { return distHost; }
+
+    void setDistHost(std::string& host)
+    { distHost = host; }
+
+    std::string getRemoteHost()
+    { return remoteHost; }
+
+    void setRemoteHost(std::string& host)
+    { remoteHost = host; }
+
     std::string getPrefix()
     { return prefix; }
 
     void setPrefix(std::string& prefix)
     { this->prefix = prefix; }
-
-    std::string getDistHost()
-    { return disthost; }
-
-    void setDistHost(std::string& host)
-    { disthost = host; }
 
 private:
     bool                     debug;
@@ -328,6 +352,7 @@ private:
     bool                     dumpCalls;
     bool 		     traceChildren;
     bool                     distributed;
+    bool                     remoteValgrind;
     bool                     agent;
     bool                     STPThreadsAuto;
     bool                     protectArgName;
@@ -340,9 +365,11 @@ private:
     unsigned int             alarm;
     unsigned int             tracegrindAlarm;
     std::string		     host;
-    std::string              disthost;
+    std::string              distHost;
+    std::string              remoteHost;
     unsigned int	     port;
-    unsigned int             distport;
+    unsigned int             distPort;
+    unsigned int             remotePort;
     std::vector<std::string> funcFilterUnits;
     std::string              inputFilterFile;
     std::string              prefix;

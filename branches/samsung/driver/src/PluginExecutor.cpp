@@ -26,7 +26,6 @@
 #include "Logger.h"
 #include "PluginExecutor.h"
 #include "FileBuffer.h"
-#include "STP_Input.h"
 #include "TmpFile.h"
 #include "Monitor.h"
 

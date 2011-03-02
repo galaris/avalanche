@@ -8,7 +8,8 @@ avalanche_CFLAGS = -Wno-deprecated
 avalanche_SOURCES = \
        Chunk.cpp \
        Entry.cpp \
-       Executor.cpp \
+       LocalExecutor.cpp \
+       RemotePluginExecutor.cpp \
        ExecutionManager.cpp \
        Logger.cpp \
        OptionParser.cpp \
