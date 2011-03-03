@@ -196,10 +196,10 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
   {
     plugin_opts.push_back(string("--protect-arg-name=yes"));
   }
-  else
+/*  else
   {
     plugin_opts.push_back(string("--check-danger=no"));
-  }
+  }*/
 
   for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
   {
