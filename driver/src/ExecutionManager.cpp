@@ -169,6 +169,10 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     if (opt_config->getRemoteValgrind())
     {
       remote_fd = connectTo(opt_config->getRemoteHost(), opt_config->getRemotePort());
+      int size;
+      read(remote_fd, &size, sizeof(int));
+      printf("size=%d\n", size);
+      config->setSizeoflong(size);
     }
 }
 
@@ -446,26 +450,52 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   {
     struct stat fileInfo;
     fstat(fd, &fileInfo);
-    int size = fileInfo.st_size / sizeof(long);
+    printf("config->getSizeoflong()=%d\n", config->getSizeoflong());
+    int size = fileInfo.st_size / config->getSizeoflong();
     if (size > 0)
     {
-      unsigned long basicBlockAddrs[size];
-      read(fd, basicBlockAddrs, fileInfo.st_size);
-      close(fd);
-      if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
-      for (int i = 0; i < size; i++)
+      if (config->getSizeoflong() == 4)
       {
-        if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+        unsigned int basicBlockAddrs[size];
+        read(fd, basicBlockAddrs, fileInfo.st_size);
+        close(fd);
+        if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
+        for (int i = 0; i < size; i++)
         {
-          res++;
+          if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+          {
+            res++;
+          }
+          if(thread_num < 1)
+          {
+            basicBlocksCovered.insert(basicBlockAddrs[i]);
+          }
+          else
+          {
+            delta_basicBlocksCovered.insert(basicBlockAddrs[i]);
+          }
         }
-        if(thread_num < 1)
+      }
+      else if (config->getSizeoflong() == 8)
+      {
+        unsigned long long basicBlockAddrs[size];
+        read(fd, basicBlockAddrs, fileInfo.st_size);
+        close(fd);
+        if (enable_mutexes) pthread_mutex_lock(&add_bb_mutex);
+        for (int i = 0; i < size; i++)
         {
-          basicBlocksCovered.insert(basicBlockAddrs[i]);
-        }
-        else
-        {
-          delta_basicBlocksCovered.insert(basicBlockAddrs[i]);
+          if (basicBlocksCovered.find(basicBlockAddrs[i]) == basicBlocksCovered.end())
+          {
+            res++;
+          }
+          if(thread_num < 1)
+          {
+            basicBlocksCovered.insert(basicBlockAddrs[i]);
+          }
+          else
+          {
+            delta_basicBlocksCovered.insert(basicBlockAddrs[i]);
+          }
         }
       }
       if (enable_mutexes) pthread_mutex_unlock(&add_bb_mutex);

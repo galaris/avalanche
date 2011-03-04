@@ -40,6 +40,7 @@ public:
                     protectMainAgent(false),
                     STPThreadsAuto(false),
 		    checkDanger(false),
+                    sizeoflong(sizeof(long)),
                     verbose(false),
 		    sockets(false),
 		    traceChildren(false),
@@ -106,6 +107,7 @@ public:
         prefix          = opt_config->prefix;
         checkArgv       = opt_config->checkArgv;
         protectArgName  = opt_config->protectArgName;
+        sizeoflong      = opt_config->sizeoflong;
     }
 
     bool empty() const
@@ -140,6 +142,12 @@ public:
     
     bool getDebug() const
     { return debug; }
+
+    int getSizeoflong() const
+    { return sizeoflong; }
+
+    void setSizeoflong(int size)
+    { sizeoflong = size; }
 
     void setProtectArgName()
     { protectArgName = true; }
@@ -376,6 +384,7 @@ private:
     unsigned int             startdepth;
     unsigned int             STPThreads;
     std::string              checkArgv;
+    int                      sizeoflong;
 };
 
 
