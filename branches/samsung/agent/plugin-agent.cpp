@@ -54,7 +54,7 @@ bool no_coverage;
 bool check_prediction;
 bool dump_prediction;
 
-static int readAndExec()
+static int readAndExec(int argc, char** argv)
 {
   int length, argsnum;
   char **args;
@@ -63,7 +63,19 @@ static int readAndExec()
   readFromSocket(avalanche_fd, &kind, sizeof(int));
   readFromSocket(avalanche_fd, &argsnum, sizeof(int));
   args = (char **) calloc (argsnum + 3, sizeof(char *));
-  args[0] = strdup("./valgrind");
+
+  string argstr(argv[0]);
+  size_t sl = argstr.find_last_of('/');
+  if (sl != string::npos) 
+  {
+    args[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("valgrind")).c_str());
+  }
+  else 
+  {
+    args[0] = "valgrind";
+  }
+  argstr.clear();
+
   switch(kind)
   {
     case TRACEGRIND: args[1] = strdup("--tool=tracegrind"); 
@@ -163,6 +175,7 @@ static void passFile(const char *file_name)
   read(file_d, buf, size);
   writeToSocket(avalanche_fd, &size, sizeof(int));
   writeToSocket(avalanche_fd, buf, size);
+  free(buf);
 }
 
 static int passResult(int ret_code)
@@ -236,6 +249,9 @@ int main(int argc, char** argv)
     exit(EXIT_FAILURE);
   }
   close(listen_fd);
+
+  int size = sizeof(long);
+  writeToSocket(avalanche_fd, &size, sizeof(int));
  
   try {
     while(1)
@@ -243,7 +259,7 @@ int main(int argc, char** argv)
       no_coverage = false;
       dump_prediction = false;
       check_prediction = false;
-      int res = readAndExec();
+      int res = readAndExec(argc, argv);
       passResult(res);
     }
   }
