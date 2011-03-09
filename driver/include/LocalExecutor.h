@@ -39,8 +39,8 @@ public:
     int exec(bool setlimit);
     int wait();
     void redirect_stdout(char *filename);
-   
     void redirect_stderr(char *filename);
+    virtual int run (int thread_index = 0) { return 0; }
     ~LocalExecutor();
 
 protected:

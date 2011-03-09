@@ -36,44 +36,76 @@ using namespace std;
 
 static Logger *logger = Logger::getLogger();
 
-static int writeBuffer(int socket_fd, int length, char *buf)
+static void writeToSocket(int fd, const void* b, size_t count)
 {
-  int sent = 0, res;
-  while (sent < length)
+  char* buf = (char*) b;
+  size_t sent = 0;
+  while (sent < count)
   {
-    res = write(socket_fd, buf + sent, length - sent);
-    if (res <= 0)
+    size_t s = write(fd, buf + sent, count - sent);
+    if (s == -1)
     {
-      return 1;
+      throw "error writing to socket";
     }
-    sent += res;
+    sent += s;
   }
-  return 0;
 }
 
-static int readBuffer(int socket_fd, int length, char *buf)
+static void readFromSocket(int fd, const void* b, size_t count)
 {
-  int received = 0, res;
-  while (received < length)
+  char* buf = (char*) b;
+  size_t received = 0;
+  while (received < count)
   {
-    res = read(socket_fd, buf + received, length - received);
-    if (res <= 0)
+    size_t r = read(fd, buf + received, count - received);
+    if (r == 0)
     {
-      return 1;
+      throw "connection is down";
     }
-    received += res;
+    if (r == -1)
+    {
+      throw "error reading from socket";
+    }
+    received += r;
   }
-  return 0;
 }
 
-static int readBufferToFile(int socket_fd, int length, char *file_name)
+static void readFromSocketToFile(int socket_fd, const char *file_name, bool guard)
 {
+  if (!guard)
+  {
+    return;
+  }
+  int length;
+  readFromSocket(socket_fd, &length, sizeof(int));
   char * file_buf = (char *)malloc(length);
-  readBuffer(socket_fd, length, file_buf);
+  readFromSocket(socket_fd, file_buf, length);
   int file_fd = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
   write(file_fd, file_buf, length);
   free(file_buf);
-  return 0;
+}
+
+static void writeFromFileToSocket(int socket_fd, const char *file_name, bool guard)
+{
+  if (!guard)
+  {
+    return;
+  }
+  FileBuffer f(file_name);
+  writeToSocket(socket_fd, &(f.size), sizeof(int));
+  writeToSocket(socket_fd, f.buf, f.size);
+}
+
+bool RemotePluginExecutor::checkFlag(const char *flg_name)
+{
+  for (int i = 0; i < argsnum; i ++)
+  {
+    if(strstr(args[i], flg_name) != NULL)
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
 RemotePluginExecutor::RemotePluginExecutor(vector<string> &_args, int socket_fd, vector<char> &to_send, Kind _kind)
@@ -90,79 +122,64 @@ RemotePluginExecutor::RemotePluginExecutor(vector<string> &_args, int socket_fd,
   kind = _kind;
 }
 
-int RemotePluginExecutor::run()
+int RemotePluginExecutor::run(int thread_index)
 {
-  char util_c;
-  char *file_name;
-  int i, res, arg_length, file_length;
-  bool no_coverage = false;
-  bool check_prediction = false;
-  bool dump_prediction = false;
-  write(remote_fd, &kind, sizeof(int));
-  write(remote_fd, &argsnum, sizeof(int));
-  for (i = 0; i < argsnum; i ++)
+  int res;
+  try
   {
-    arg_length = strlen(args[i]);
-    write(remote_fd, &arg_length, sizeof(int));
-    res = writeBuffer(remote_fd, arg_length, args[i]);
-    util_c = files_to_send[i] ? '1' : '\0';
-    write(remote_fd, &util_c, 1);
-    if (!strcmp(args[i], "--no-coverage=yes"))
+    char util_c;
+    char *file_name;
+    int i, arg_length, file_length;
+    writeToSocket(remote_fd, &kind, sizeof(int));
+    writeToSocket(remote_fd, &argsnum, sizeof(int));
+    for (i = 0; i < argsnum; i ++)
     {
-      no_coverage = true;
-    }
-    if (!strcmp(args[i], "--check-prediction=yes"))
-    {
-      check_prediction = true;
-    }
-    if (!strcmp(args[i], "--dump-prediction=yes"))
-    {
-      dump_prediction = true;
-    }
-    if (util_c)
-    {
-      char *eq_sign = strchr(args[i], '=');
-      if (eq_sign != NULL)
+      arg_length = strlen(args[i]);
+      writeToSocket(remote_fd, &arg_length, sizeof(int));
+      writeToSocket(remote_fd, args[i], arg_length);
+      util_c = files_to_send[i] ? '1' : '\0';
+      writeToSocket(remote_fd, &util_c, 1);
+      if (util_c)
       {
-        eq_sign ++;
-        file_name = eq_sign;
+        char *eq_sign = strchr(args[i], '=');
+        if (eq_sign != NULL)
+        {
+          eq_sign ++;
+          file_name = eq_sign;
+        }
+        else
+        {
+          file_name = args[i];
+        }
+        FileBuffer f(file_name);
+        writeToSocket(remote_fd, &(f.size), sizeof(int));
+        writeToSocket(remote_fd, f.buf, f.size);
       }
-      else
-      {
-        file_name = args[i];
-      }
-      FileBuffer f(file_name);
-      write(remote_fd, &(f.size), sizeof(int));
-      writeBuffer(remote_fd, f.size, f.buf);
+    }
+    writeFromFileToSocket(remote_fd, "prediction.log", checkFlag("--check-prediction=yes"));
+    writeFromFileToSocket(remote_fd, "replace_data", checkFlag("--replace=yes") || checkFlag("--replace=replace_data"));
+    writeFromFileToSocket(remote_fd, "arg_lengths", checkFlag("--check-argv="));
+    readFromSocket(remote_fd, &res, sizeof(int));
+    switch (kind)
+    {
+      case TRACEGRIND: readFromSocketToFile(remote_fd, "trace.log", true);
+                       readFromSocketToFile(remote_fd, "dangertrace.log", checkFlag("--check-danger=yes"));
+                       readFromSocketToFile(remote_fd, "actual.log", checkFlag("--dump-prediction=yes"));
+                       readFromSocketToFile(remote_fd, "calldump.log", checkFlag("--dump-file=calldump.log"));
+                       readFromSocketToFile(remote_fd, "replace_data", checkFlag("--sockets=yes") || checkFlag("--datagrams=yes"));
+                       readFromSocketToFile(remote_fd, "argv.log", checkFlag("--check-argv="));
+                       break;
+      case COVGRIND:   
+      case MEMCHECK:   readFromSocketToFile(remote_fd, "basic_blocks.log", !checkFlag("--no-coverage=yes"));
+                       readFromSocketToFile(remote_fd, "execution.log", true);
+                       break;
+      default:         break;
     }
   }
-  if (check_prediction)
+  catch(...)
   {
-    FileBuffer f("prediction.log");
-    write(remote_fd, &(f.size), sizeof(int));
-    writeBuffer(remote_fd, f.size, f.buf);
-  }
-  read(remote_fd, &res, sizeof(int));
-  switch (kind)
-  {
-    case TRACEGRIND: read(remote_fd, &file_length, sizeof(int));
-                     readBufferToFile(remote_fd, file_length, "trace.log");
-                     if (dump_prediction)
-                     {
-                       read(remote_fd, &file_length, sizeof(int));
-                       readBufferToFile(remote_fd, file_length, "actual.log");
-                     }
-                     break;
-    case COVGRIND:   
-    case MEMCHECK:   if (!no_coverage)
-                     {
-                       read(remote_fd, &file_length, sizeof(int));
-                       readBufferToFile(remote_fd, file_length, "basic_blocks.log");
-                     }
-                     read(remote_fd, &file_length, sizeof(int));
-                     readBufferToFile(remote_fd, file_length, "execution.log");
-                     break;
-    default:         break;
+    NET(logger, "Connection with remote plugin agent is down");
+    return 1;
   }
   return res;
 }

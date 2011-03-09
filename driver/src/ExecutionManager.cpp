@@ -450,7 +450,7 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   {
     struct stat fileInfo;
     fstat(fd, &fileInfo);
-    printf("config->getSizeoflong()=%d\n", config->getSizeoflong());
+//    printf("config->getSizeoflong()=%d\n", config->getSizeoflong());
     int size = fileInfo.st_size / config->getSizeoflong();
     if (size > 0)
     {
@@ -549,13 +549,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
       }
     }
   }
-  for (int i = 0; i < plugin_opts.size(); i ++)
-  {
-      if (plugin_opts[i].find("--replace-date") != string::npos)
-      {
-        to_send[i] = 1;
-      }
-  }
   Executor* plugin_exe;
   if (!config->getRemoteValgrind())
   {
@@ -577,13 +570,10 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   int thread_index = (fileNameModifier == string("")) ? 0 : atoi(fileNameModifier.substr(1).c_str());
   monitor->setState(CHECKER, time(NULL), thread_index);
   int exitCode;
-  if (config->getRemoteValgrind())
+  exitCode = plugin_exe->run();
+  if (exitCode == 1)
   {
-    exitCode = ((RemotePluginExecutor*)plugin_exe)->run();
-  }
-  else
-  {
-    exitCode = ((PluginExecutor*)plugin_exe)->run(thread_index);
+    return -1;
   }
   monitor->addTime(time(NULL), thread_index);
   delete plugin_exe;
@@ -806,7 +796,11 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
       next->predictionSize = st_depth + cur_depth;
       next->parent = first_input;
       int score = checkAndScore(next, !trace_kind, false, config->getRemoteValgrind(), input_modifier);
-      if (trace_kind && score != -1)
+      if (score == -1)
+      {
+        return -1;
+      }
+      if (trace_kind)
       {
         if (thread_index)
         {
@@ -938,7 +932,10 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
     while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
     {
       dtrace.cutQueryAndDump("curdtrace.log");
-      processQuery(first_input, actual, first_depth, cur_depth ++);
+      if (processQuery(first_input, actual, first_depth, cur_depth ++) == -1)
+      {
+        break;
+      }
     }
   }
   trace_kind = true;
@@ -948,7 +945,10 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
   {
     depth++;
     trace.cutQueryAndDump("curtrace.log", true);
-    processQuery(first_input, actual, first_depth, depth - 1);
+    if (processQuery(first_input, actual, first_depth, depth - 1) == -1)
+    {
+      return -1;
+    }
   }
   delete []actual;
   return depth;
@@ -1088,6 +1088,10 @@ void ExecutionManager::run()
     }
     initial->startdepth = config->getStartdepth();
     int score = checkAndScore(initial, false, true, config->getRemoteValgrind(), "");
+    if (config->getRemoteValgrind() && (score < 0))
+    {
+      return;
+    }
     basicBlocksCovered.insert(delta_basicBlocksCovered.begin(), delta_basicBlocksCovered.end());
     LOG(logger, "score=" << score);
     inputs.insert(make_pair(Key(score, 0), initial));
@@ -1145,6 +1149,12 @@ void ExecutionManager::run()
       {
         plugin_opts.push_back("--log-file=execution.log");
       }
+
+      if (runs && (config->getCheckArgv() != ""))
+      {
+        updateArgv(fi);
+      }
+
       vector <string> plug_args = plugin_opts;
       for (int i = 0; i < cur_argv.size(); i ++)
       {
@@ -1185,12 +1195,7 @@ void ExecutionManager::run()
       {
         plugin_exe = new PluginExecutor (config->getDebug(), config->getTraceChildren(), config->getValgrind(), cur_argv, plugin_opts, TRACEGRIND);
       }
-      
-      if (runs && (config->getCheckArgv() != ""))
-      {
-        updateArgv(fi);
-      }
-      
+            
       plugin_opts.clear();
       {
         nokill = true;
@@ -1198,13 +1203,10 @@ void ExecutionManager::run()
       time_t start_time = time(NULL);
       monitor->setState(TRACER, start_time);
       int exitCode;
-      if (config->getRemoteValgrind())
+      exitCode = plugin_exe->run(); 
+      if (exitCode == 1)
       {
-        exitCode = ((RemotePluginExecutor*)plugin_exe)->run();
-      }
-      else
-      {
-        exitCode = ((PluginExecutor*)plugin_exe)->run();
+        break;
       }
       if ((config->getCheckArgv() != ""))
       {
@@ -1265,6 +1267,10 @@ void ExecutionManager::run()
       {
         LOG(logger, "no QUERY's found\n");
       }
+      if (depth == -1)
+      {
+        break;
+      }
       runs++;
       if (delete_fi)
       {
@@ -1285,7 +1291,7 @@ void ExecutionManager::run()
     }
 }
 
-void writeToSocket(int fd, const void* b, size_t count)
+static void writeToSocket(int fd, const void* b, size_t count)
 {
   char* buf = (char*) b;
   size_t sent = 0;
@@ -1300,7 +1306,7 @@ void writeToSocket(int fd, const void* b, size_t count)
   }
 }
 
-void readFromSocket(int fd, const void* b, size_t count)
+static void readFromSocket(int fd, const void* b, size_t count)
 {
   char* buf = (char*) b;
   size_t received = 0;
@@ -1529,6 +1535,13 @@ ExecutionManager::~ExecutionManager()
       write(dist_fd, "q", 1);
       shutdown(dist_fd, SHUT_RDWR);
       close(dist_fd);
+    }
+    
+    if (config->getRemoteValgrind())
+    {
+      kind = UNID;
+      write(remote_fd, &kind, sizeof(int));
+      close(remote_fd);
     }
 
     if (thread_num > 0)

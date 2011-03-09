@@ -44,8 +44,11 @@ enum Kind
 {
   TRACEGRIND,
   COVGRIND,
-  MEMCHECK
+  MEMCHECK,
+  UNID
 };
+
+#define DEBUG
 
 int avalanche_fd;
 pid_t pid = 0;
@@ -53,6 +56,65 @@ Kind kind;
 bool no_coverage;
 bool check_prediction;
 bool dump_prediction;
+bool check_danger;
+bool dump_calls;
+bool network;
+bool check_argv;
+
+static void parseArg(char *arg)
+{
+  if (!strcmp(arg, "--no-coverage=yes"))
+  {
+    no_coverage = true;
+  }
+  else if (!strcmp(arg, "--check-prediction=yes"))
+  {
+    check_prediction = true;
+  }
+  else if (!strcmp(arg, "--dump-prediction=yes"))
+  {
+    dump_prediction = true;
+  }
+  else if (!strcmp(arg, "--check-danger=yes"))
+  {
+    check_danger = true;
+  }
+  else if (!strcmp(arg, "--dump-file=calldump.log"))
+  {
+    dump_calls = true;
+  }
+  else if (!strcmp(arg, "--sockets=yes") || !strcmp(arg, "--datagrams=yes"))
+  {
+    network = true;
+  }
+  else if (strstr(arg, "--check-argv="))
+  {
+    check_argv = true;
+  }
+}
+
+static void readToFile(char *file_name)
+{
+  int length;
+  readFromSocket(avalanche_fd, &length, sizeof(int));
+  char *file_buf = (char *) malloc(length);
+  readFromSocket(avalanche_fd, file_buf, length);
+  int file_d = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXG);
+  if (file_d < 0)
+  {
+    free(file_buf);
+    throw file_name;
+  }
+  if (write(file_d, file_buf, length) < length)
+  {
+    free(file_buf);
+    close(file_d);
+    throw "error writing to file";
+  }
+  close(file_d);
+  free(file_buf);
+}
+      
 
 static int readAndExec(int argc, char** argv)
 {
@@ -61,9 +123,12 @@ static int readAndExec(int argc, char** argv)
   char util_c;
   no_coverage = false;
   readFromSocket(avalanche_fd, &kind, sizeof(int));
+  if (kind == UNID)
+  {
+    return -2;
+  }
   readFromSocket(avalanche_fd, &argsnum, sizeof(int));
   args = (char **) calloc (argsnum + 3, sizeof(char *));
-
   string argstr(argv[0]);
   size_t sl = argstr.find_last_of('/');
   if (sl != string::npos) 
@@ -72,7 +137,7 @@ static int readAndExec(int argc, char** argv)
   }
   else 
   {
-    args[0] = "valgrind";
+    args[0] = strdup("valgrind");
   }
   argstr.clear();
 
@@ -92,22 +157,10 @@ static int readAndExec(int argc, char** argv)
     args[i] = (char *) malloc(length + 1);
     readFromSocket(avalanche_fd, args[i], length);
     args[i][length] = '\0';
-    if (!strcmp(args[i], "--no-coverage=yes"))
-    {
-      no_coverage = true;
-    }
-    if (!strcmp(args[i], "--check-prediction=yes"))
-    {
-      check_prediction = true;
-    }
-    if (!strcmp(args[i], "--dump-prediction=yes"))
-    {
-      dump_prediction = true;
-    }
+    parseArg(args[i]);
     readFromSocket(avalanche_fd, &util_c, 1);
     if (util_c)
     {
-      readFromSocket(avalanche_fd, &length, sizeof(int));
       char * file_name = strchr(args[i], '=');
       if (file_name == NULL)
       {
@@ -117,34 +170,33 @@ static int readAndExec(int argc, char** argv)
       {
         file_name ++;
       }
-      char *file_buf = (char *) malloc(length);
-      readFromSocket(avalanche_fd, file_buf, length);
-      int file_d = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXG);
-      write(file_d, file_buf, length);
-      close(file_d);
-      free(file_buf);
+      readToFile(file_name);
     }
   }
   if (check_prediction)
   {
-    readFromSocket(avalanche_fd, &length, sizeof(int));
-    char *file_buf = (char *) malloc(length);
-    readFromSocket(avalanche_fd, file_buf, length);
-    int file_d = open("prediction.log", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXG);
-    write(file_d, file_buf, length);
-    close(file_d);
-    free(file_buf);
+    readToFile("prediction.log");
+  }
+  if (network)
+  {
+    readToFile("replace_data");
+  }
+  if (check_argv)
+  {
+    readToFile("arg_lengths");
   }
   args[argsnum + 2] = NULL;
-  for (int i = 0; i < argsnum + 2; i ++)
-  {
-    cout << args[i] << " ";
-  }
-  cout << endl;
   pid = fork();
   if (pid == 0)
   {
-    cout << "redirecting stdout and stderr" << endl << "starting plugin" << endl;
+#ifdef DEBUG
+    cout << endl << "executing command: " << endl;
+    for (int i = 0; i < argsnum + 2; i ++)
+    {
+      cout << args[i] << " ";
+    }
+    cout << endl;
+#endif
     int tmpout_fd = open("tmp_stdout", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
     int tmperr_fd = open("tmp_stderr", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
     dup2(tmpout_fd, STDOUT_FILENO);
@@ -155,27 +207,56 @@ static int readAndExec(int argc, char** argv)
   }
   int status;
   pid_t ret_proc = ::waitpid(pid, &status, 0);
-  cout << "plugin finished work" << endl;
-  //if (ret_proc == (pid_t)(-1)) return -1;
+#ifdef DEBUG
+  cout << "plugin finished work";
+#endif
+  if (ret_proc == (pid_t)(-1)) 
+  {
+    return 1;
+  }
   for (int i = 0; i < argsnum + 2; i ++)
   {
     free(args[i]);
   }
   free(args);
+#ifdef DEBUG
+  if (!WIFEXITED(status))
+  {
+    cout << " (crashed)" << endl;
+  }
+  else 
+  {
+    cout << endl;
+  }
+#endif
   return ((WIFEXITED(status)) ? 0 : -1);
 }
 
-static void passFile(const char *file_name)
+static void writeFromFile(const char *file_name)
 {
   int file_d = open(file_name, O_RDONLY, S_IRWXG | S_IRWXO | S_IRWXU);
+  if (file_d < 0)
+  {
+    throw file_name;
+  }
   struct stat file_info;
-  fstat(file_d, &file_info);
+  if (fstat(file_d, &file_info) < 0)
+  {
+    close(file_d);
+    throw "fstat failed";
+  }
   int size = file_info.st_size;
   char *buf = (char*) malloc (size);
-  read(file_d, buf, size);
+  if (read(file_d, buf, size) < size)
+  {
+    free(buf);
+    close(file_d);
+    throw "error reading from file";
+  }
   writeToSocket(avalanche_fd, &size, sizeof(int));
   writeToSocket(avalanche_fd, buf, size);
   free(buf);
+  close(file_d);
 }
 
 static int passResult(int ret_code)
@@ -183,18 +264,34 @@ static int passResult(int ret_code)
   writeToSocket(avalanche_fd, &ret_code, sizeof(int));
   switch(kind)
   {
-    case TRACEGRIND: passFile("trace.log");
+    case TRACEGRIND: writeFromFile("trace.log");
+                     if (check_danger)
+                     {
+                       writeFromFile("dangertrace.log");
+                     }
                      if (dump_prediction)
                      {
-                       passFile("actual.log");
+                       writeFromFile("actual.log");
+                     }
+                     if (dump_calls)
+                     {
+                       writeFromFile("calldump.log");
+                     }
+                     if (network)
+                     {
+                       writeFromFile("replace_data");
+                     }
+                     if (check_argv)
+                     {
+                       writeFromFile("argv.log");
                      }
                      break;
     case COVGRIND:
     case MEMCHECK:   if (!no_coverage)
                      {
-                       passFile("basic_blocks.log");
+                       writeFromFile("basic_blocks.log");
                      }
-                     passFile("execution.log");
+                     writeFromFile("execution.log");
                      break;
     default:         break;
   }
@@ -250,23 +347,32 @@ int main(int argc, char** argv)
   }
   close(listen_fd);
 
-  int size = sizeof(long);
-  writeToSocket(avalanche_fd, &size, sizeof(int));
- 
   try {
+    int size = sizeof(long);
+    writeToSocket(avalanche_fd, &size, sizeof(int));
     while(1)
     {
       no_coverage = false;
       dump_prediction = false;
       check_prediction = false;
+      check_danger = false;
+      dump_calls = false;
+      network = false;
+      check_argv = false;
       int res = readAndExec(argc, argv);
+      if (res == -2)
+      {
+        cout << "end of communication: no more requests" << endl;
+        break;
+      }
       passResult(res);
     }
   }
-  catch(...)
+  catch(const char * error_msg)
   {
-    cout << "end of communication" << endl;
+    cout << "end of communication: " << error_msg << endl;
   }
+  shutdown(avalanche_fd, SHUT_RDWR);
   unlink("tmp_stdout");
   unlink("tmp_stderr");
   return 0;
