@@ -32,7 +32,8 @@ enum Kind
 {
   TRACEGRIND,
   COVGRIND,
-  MEMCHECK
+  MEMCHECK,
+  UNID
 };
 
 class Executor
@@ -47,6 +48,7 @@ public:
       }
       free(args);
     }
+    virtual int run(int thread_index = 0) = 0;
 
 protected:
     char **args;
