@@ -108,6 +108,7 @@ public:
         checkArgv       = opt_config->checkArgv;
         protectArgName  = opt_config->protectArgName;
         sizeoflong      = opt_config->sizeoflong;
+        envParams    = opt_config->envParams;
     }
 
     bool empty() const
@@ -283,6 +284,15 @@ public:
 
     int getFuncFilterUnitsNum()
     { return funcFilterUnits.size(); }
+    
+    void addEnvParam(const std::string &name)
+    { envParams.push_back(name); }
+    
+    std::string getEnvParam(int index)
+    { return envParams.at(index); }
+    
+    int getEnvParamsNum()
+    { return envParams.size(); }
 
     void setTracegrindAlarm(unsigned int alarm)
     { this->tracegrindAlarm = alarm; }
@@ -385,6 +395,7 @@ private:
     unsigned int             STPThreads;
     std::string              checkArgv;
     int                      sizeoflong;
+    std::vector<std::string> envParams;
 };
 
 
