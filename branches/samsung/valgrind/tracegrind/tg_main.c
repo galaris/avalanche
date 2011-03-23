@@ -41,6 +41,7 @@
 #include "pub_tool_vki.h"
 #include "pub_tool_vkiscnums.h"
 #include "pub_tool_libcbase.h"
+#include "pub_tool_libcproc.h"
 #include "pub_tool_libcprint.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_libcassert.h"
@@ -48,6 +49,7 @@
 #include "pub_tool_threadstate.h"
 #include "pub_tool_debuginfo.h"
 #include "pub_tool_stacktrace.h"
+#include "pub_tool_libcbase.h"
 #include "libvex_ir.h"
 
 #include <avalanche.h>
@@ -165,6 +167,11 @@ IRSB* printSB;
 Int fdfuncFilter = -1;
 
 Bool inputFilterEnabled;
+Int envpChecked = 1;
+Bool envpFirstRun = False;
+Bool checkEnvp = False;
+Int envpOffset = 0;
+Bool reachedMain;
 
 VgHashTable taintedMemory;
 VgHashTable taintedRegisters;
@@ -247,6 +254,29 @@ Bool getFunctionName(Addr addr, Bool onlyEntry, Bool showOffset)
   if (continueFlag)
   {
     return True;
+  }
+  return False;
+}
+
+static
+Bool checkCallStack(Char * funcName)
+{
+#define STACK_LOOKUP_DEPTH 30
+  Addr ips[STACK_LOOKUP_DEPTH];
+  Addr sps[STACK_LOOKUP_DEPTH];
+  Addr fps[STACK_LOOKUP_DEPTH];
+  Int found = VG_(get_StackTrace) (VG_(get_running_tid) (), ips, STACK_LOOKUP_DEPTH, sps, fps, 0);
+#undef STACK_LOOKUP_DEPTH
+  Int i;
+  for (i = 0; i < found; i ++)
+  {
+    if (getFunctionName(ips[i], False, False))
+    {
+      if (VG_(strcmp) (diFunctionName, funcName))
+      {
+        return True;
+      }
+    }
   }
   return False;
 }
@@ -583,6 +613,29 @@ void taintMemoryFromArgv(HWord key, HWord offset)
   VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_argv_dot_log[0hex%%08x];\n", memory + 1, memory);
 #elif defined(VGA_amd64)
   VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_argv_dot_log[0hex%%08x];\n", memory + 1, memory);
+#endif
+  memory++;
+  Int l = VG_(sprintf)(ss, format, key, offset);
+  my_write(fdtrace, ss, l);
+  my_write(fddanger, ss, l);
+}
+
+static
+void taintMemoryFromEnvp(HWord key, HWord offset)
+{
+  SizeT s = sizeof(taintedNode);
+  taintedNode* node;
+  node = VG_(malloc)("taintMemoryNode", s);
+  node->key = key;
+  node->filename = "envp_dot_log";
+  node->offset = offset;
+  VG_(HT_add_node) (taintedMemory, node);
+  Char ss[256];
+  Char format[256];
+#if defined(VGA_x86)
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_envp_dot_log[0hex%%08x];\n", memory + 1, memory);
+#elif defined(VGA_amd64)
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_envp_dot_log[0hex%%08x];\n", memory + 1, memory);
 #endif
   memory++;
   Int l = VG_(sprintf)(ss, format, key, offset);
@@ -1593,6 +1646,20 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
   taintedNode* t = VG_(HT_lookup)(taintedMemory, loadAddr);
   if (t != NULL)
   {
+    /*if (checkEnvp && (t->filename != NULL))
+    {
+      if (VG_(strcmp) (t->filename, "envp_dot_log") == 0)
+      {
+        if (checkCallStack("main"))
+        {
+          reachedMain = True;
+        }
+        if (!reachedMain)
+        {
+          return;
+        }
+      }
+    }*/
     Char s[1024];
     Int l = 0;
     taintTemp(tmp);
@@ -4755,14 +4822,7 @@ Int filenum = 0;
 
 static Bool tg_process_cmd_line_option(Char* arg)
 {
-  Char* inputfile;
-  Char* addr;
-  Char* filtertype;
-  Char* funcname;
-  Char* funcfilterfile;
-  Char* inputfilterfile;
-  Char* dumpfile;
-  Char* checkArgv;
+  Char* argValue;
   if (VG_INT_CLO(arg, "--startdepth", depth))
   {
     depth -= 1;
@@ -4776,28 +4836,28 @@ static Bool tg_process_cmd_line_option(Char* arg)
     }
     return True;
   }
-  else if (VG_STR_CLO(arg, "--port", addr))
+  else if (VG_STR_CLO(arg, "--port", argValue))
   {
-    port = (UShort) VG_(strtoll10)(addr, NULL);
+    port = (UShort) VG_(strtoll10)(argValue, NULL);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--func-name", funcname))
+  else if (VG_STR_CLO(arg, "--func-name", argValue))
   {
-    parseFnName(funcname);
+    parseFnName(argValue);
     enableFiltering = True;
     return True;
   }
-  else if (VG_STR_CLO(arg, "--func-filter-file", funcfilterfile))
+  else if (VG_STR_CLO(arg, "--func-filter-file", argValue))
   {
-    Int fd = sr_Res(VG_(open)(funcfilterfile, VKI_O_RDWR, 0));
+    Int fd = sr_Res(VG_(open)(argValue, VKI_O_RDWR, 0));
     parseFuncFilterFile(fd);
     enableFiltering = True;
     VG_(close)(fd);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--mask", inputfilterfile))
+  else if (VG_STR_CLO(arg, "--mask", argValue))
   {
-    if (!parseMask(inputfilterfile))
+    if (!parseMask(argValue))
     {
       VG_(printf)("couldn't parse mask file\n");
       VG_(exit)(1);
@@ -4807,24 +4867,24 @@ static Bool tg_process_cmd_line_option(Char* arg)
     inputFilterEnabled = True;
     return True;
   }
-  else if (VG_STR_CLO(arg, "--host", addr))
+  else if (VG_STR_CLO(arg, "--host", argValue))
   {
-    Char* dot = VG_(strchr)(addr, '.');
+    Char* dot = VG_(strchr)(argValue, '.');
     *dot = '\0';
-    ip1 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
+    ip1 = (UShort) VG_(strtoll10)(argValue, NULL);
+    argValue = dot + 1;
+    dot = VG_(strchr)(argValue, '.');
     *dot = '\0';
-    ip2 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
+    ip2 = (UShort) VG_(strtoll10)(argValue, NULL);
+    argValue = dot + 1;
+    dot = VG_(strchr)(argValue, '.');
     *dot = '\0';
-    ip3 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    ip4 = (UShort) VG_(strtoll10)(addr, NULL);
+    ip3 = (UShort) VG_(strtoll10)(argValue, NULL);
+    argValue = dot + 1;
+    ip4 = (UShort) VG_(strtoll10)(argValue, NULL);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--file", inputfile))
+  else if (VG_STR_CLO(arg, "--file", argValue))
   {
     if (inputfiles == NULL)
     {
@@ -4832,14 +4892,14 @@ static Bool tg_process_cmd_line_option(Char* arg)
     }
     stringNode* node;
     node = VG_(malloc)("stringNode", sizeof(stringNode));
-    node->key = hashCode(inputfile);
-    node->filename = inputfile;
+    node->key = hashCode(argValue);
+    node->filename = argValue;
     node->declared = False;
     node->filenum = filenum++;
     VG_(HT_add_node)(inputfiles, node);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--check-argv", checkArgv))
+  else if (VG_STR_CLO(arg, "--check-argv", argValue))
   {
     Int fdargv = sr_Res(VG_(open) ("argv.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
     my_write(fdtrace, "file_argv_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
@@ -4860,7 +4920,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
     {
       argFilterUnits[i] = -1;
     }
-    if (!VG_(strcmp) (checkArgv, "all"))
+    if (!VG_(strcmp) (argValue, "all"))
     {
       for (i = 0; i < argc; i ++)
       {
@@ -4869,7 +4929,7 @@ static Bool tg_process_cmd_line_option(Char* arg)
     }
     else
     {
-      parseArgvMask(checkArgv, argFilterUnits);
+      parseArgvMask(argValue, argFilterUnits);
     }
     for (i = 0; i < argc; i ++)
     {
@@ -4914,14 +4974,90 @@ static Bool tg_process_cmd_line_option(Char* arg)
     VG_(close) (fdargl);
     return True;
   }
+  else if (VG_STR_CLO(arg, "--check-envp", argValue))
+  {
+    Int i, j, length, envpOffset = 0;
+    Int fdenvp, fdenvp_info;
+    if (checkEnvp)
+    {
+      fdenvp = sr_Res(VG_(open) ("envp.log", VKI_O_APPEND | VKI_O_CREAT | VKI_O_WRONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    }
+    else
+    {
+      fdenvp = sr_Res(VG_(open) ("envp.log", VKI_O_TRUNC | VKI_O_CREAT | VKI_O_WRONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+      checkEnvp = True;
+      my_write(fdtrace, "file_envp_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
+      my_write(fddanger, "file_envp_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
+    }
+    if (envpFirstRun)
+    {
+      if (!envpChecked)
+      {
+        fdenvp_info = sr_Res(VG_(open) ("envp_lengths", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_WRONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+        envpChecked ++;
+      }
+      else
+      {
+        fdenvp_info = sr_Res(VG_(open) ("envp_lengths", VKI_O_APPEND | VKI_O_WRONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+      }
+    }
+    else
+    {
+      fdenvp_info = sr_Res(VG_(open) ("envp_lengths", VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+      for (i = 0; i < envpChecked; i ++)
+      {
+        VG_(read) (fdenvp_info, &length, sizeof(int));
+      }
+      envpChecked ++;
+    }
+    Bool foundParam = False;
+    for (i = 0; VG_(client_envp)[i] != NULL; i ++)
+    {
+      Char * eqPos = VG_(strchr) (VG_(client_envp)[i], '=');
+      if (!VG_(strncmp) (argValue, VG_(client_envp)[i], (Int) (eqPos - VG_(client_envp)[i])))
+      {
+        foundParam = True;
+        if (envpFirstRun)
+        {
+          for (j = 1; eqPos[j] != NULL; j ++)
+          {
+            taintMemoryFromEnvp(eqPos + j, envpOffset ++);
+            VG_(write) (fdenvp, eqPos + j, 1);
+          }
+          j --;
+          VG_(write) (fdenvp_info, &j, sizeof(int));
+        }
+        else
+        {
+          for (j = 1; j <= length; j ++)
+          {
+            taintMemoryFromEnvp(eqPos + j, envpOffset ++);
+          }
+        }
+      }
+    }
+    VG_(close) (fdenvp);
+    VG_(close) (fdenvp_info);
+    if (!foundParam)
+    {
+      VG_(printf) ("Environment parameter not found\n");
+      VG_(exit) (1);
+    }
+    return True;
+  }
   else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))
   {
     return True;
   }
-  else if (VG_STR_CLO(arg, "--dump-file", dumpfile))
+  else if (VG_STR_CLO(arg, "--dump-file", argValue))
   {
-    fdfuncFilter = sr_Res(VG_(open) (dumpfile, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
+    fdfuncFilter = sr_Res(VG_(open) (argValue, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
                               VKI_S_IRUSR | VKI_S_IWUSR | VKI_S_IRGRP | VKI_S_IWGRP | VKI_S_IROTH | VKI_S_IWOTH));
+    return True;
+  }
+  else if (VG_BOOL_CLO(arg, "--envp-first-run", envpFirstRun))
+  {
+    envpChecked = 0;
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))

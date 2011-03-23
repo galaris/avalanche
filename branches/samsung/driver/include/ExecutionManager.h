@@ -115,8 +115,10 @@ public:
     void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
     bool dumpMCExploit(Input* input, const char* exec_log);
     void dumpExploitArgv();
+    void dumpExploitEnvp(Input* input);
 
     bool updateArgv(Input* input);
+    bool updateEnvp(Input* input);
 
     int checkDivergence(Input* first_input, int score);
 

@@ -36,9 +36,10 @@ private:
   FileBuffer* trace;
   std::vector<std::pair<int, int> > exploitGroups;
   bool argvSpecified;
+  bool envpSpecified;
  
 public:
-  Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool argvSpecified = false);
+  Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _argvSpecified, bool _envpSpecified);
   ~Chunk();
 
   void addGroup(int exploitNum, int inputNum);
