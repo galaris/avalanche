@@ -49,7 +49,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
                            const string &install_dir):
                                debug_full(debug_full_enable)
 {
-    prog = strdup((install_dir + "stp").c_str());
+    prog = strdup((install_dir + "../lib/avalanche/stp").c_str());
 
     argsnum = 4;
 

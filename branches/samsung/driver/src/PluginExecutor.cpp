@@ -57,7 +57,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
         LOG(logger, "No program name");
         return;
     }
-    prog = strdup((install_dir + "valgrind").c_str());
+    prog = strdup((install_dir + "../lib/avalanche/valgrind").c_str());
 
     // last NULL element is needed by execvp()
     argsnum = cmd.size() + tg_args.size() + 4;
