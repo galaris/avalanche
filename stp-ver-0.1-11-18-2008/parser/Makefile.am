@@ -1,4 +1,5 @@
-bin_PROGRAMS = stp
+pkglibdir = $(libdir)/avalanche
+pkglib_PROGRAMS = stp
 
 INCLUDES = -I../sat/mtl -I../sat/core -I../sat/simp
 YFLAGS = -d -v

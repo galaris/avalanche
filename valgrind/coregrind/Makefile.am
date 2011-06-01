@@ -29,8 +29,9 @@ EXTRA_DIST = \
 # The launcher.  Built for the primary target only.
 #----------------------------------------------------------------------------
 
-bin_PROGRAMS = \
-	valgrind \
+pkglib_PROGRAMS = \
+	valgrind
+noinst_PROGRAMS = \
 	no_op_client_for_valgrind
 
 if VGCONF_OS_IS_LINUX
@@ -401,7 +402,7 @@ libreplacemalloc_toolpreload_ppc64_aix5_a_AR = $(AR) -X64 cru
 # vgpreload_core-<platform>.a
 #----------------------------------------------------------------------------
 
-noinst_PROGRAMS  = vgpreload_core-@VGCONF_ARCH_PRI@-@VGCONF_OS@.so
+noinst_PROGRAMS += vgpreload_core-@VGCONF_ARCH_PRI@-@VGCONF_OS@.so
 if VGCONF_HAVE_PLATFORM_SEC
 noinst_PROGRAMS += vgpreload_core-@VGCONF_ARCH_SEC@-@VGCONF_OS@.so
 endif

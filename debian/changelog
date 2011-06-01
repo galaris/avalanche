@@ -1,3 +1,9 @@
+avalanche (0.5~svn20110601) unstable; urgency=low
+
+  * Packaging fixed - files conflicting with valgrind package removed/renamed.
+
+ -- Denis Sidorov <sidorov.denis@gmail.com>  Wed, 01 Jun 2011 20:31:05 +0400
+
 avalanche (0.5~svn20110526) unstable; urgency=low
 
   * Initial Release.
