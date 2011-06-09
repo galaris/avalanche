@@ -187,7 +187,7 @@ static int readAndExec(int argc, char** argv)
   size_t sl = argstr.find_last_of('/');
   if (sl != string::npos) 
   {
-    args[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("valgrind")).c_str());
+    args[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("../lib/avalanche/valgrind")).c_str());
   }
   else 
   {

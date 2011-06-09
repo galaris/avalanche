@@ -1,3 +1,9 @@
+avalanche (0.5~svn20110609) unstable; urgency=low
+
+  * Path to valgrind in plugin-agent fixed, README.arm added
+
+ -- Denis Sidorov <sidorov.denis@gmail.com>  Thu, 09 Jun 2011 17:20:35 +0400
+
 avalanche (0.5~svn20110601) unstable; urgency=low
 
   * Packaging fixed - files conflicting with valgrind package removed/renamed.
