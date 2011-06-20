@@ -1,8 +1,7 @@
-// $Id: STP_Input.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------ STP_Input.h ---------------------------------------*/
+/*------------------------------------- Executor.h ---------------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
@@ -15,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,25 +23,36 @@
    limitations under the License.
 */
 
-#ifndef __STP_INPUT__H__
-#define __STP_INPUT__H__
+#ifndef __LOCAL_EXECUTOR__H__
+#define __LOCAL_EXECUTOR__H__
 
-#include <string>
+#include <cstdlib>
+#include "Executor.h"
 
 
-class STP_Input
+class LocalExecutor : public Executor
 {
 public:
-    void setFile(const char *filename)
-    { file = filename; }
+    LocalExecutor(): prog(NULL), file_out(-1), file_err(-1) {}
 
-    const char *getFile()
-    { return file.c_str(); }
+    int exec(bool setlimit);
+    int wait();
+    void redirect_stdout(char *filename);
+    void redirect_stderr(char *filename);
+    virtual int run (int thread_index = 0) { return 0; }
+    ~LocalExecutor();
+
+protected:
+    char  *prog;
+    pid_t child_pid;
 
 private:
-    std::string file;
+    void do_redirect(int file_to_redirect, int with_file);
+
+    int file_out;
+    int file_err;
 };
 
 
-#endif //__STP_INPUT__H__
+#endif //__LOCAL_EXECUTOR__H__
 

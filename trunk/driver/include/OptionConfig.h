@@ -1,4 +1,3 @@
-// $Id: OptionConfig.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -15,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -39,17 +38,20 @@ public:
                     debug(false),
                     protectMainAgent(false),
                     STPThreadsAuto(false),
-		    checkDanger(false),
+		                checkDanger(false),
+                    sizeoflong(sizeof(long)),
                     verbose(false),
-		    sockets(false),
-		    traceChildren(false),
+                    sockets(false),
+                    traceChildren(false),
                     datagrams(false),
                     distributed(false), 
+                    remoteValgrind(false),
                     agent(false), 
                     useMemcheck(false),
                     suppressSubcalls(false),
                     dumpCalls(false),
                     leaks(false),
+                    protectArgName(false),
                     funcFilterFile(std::string("")),
                     depth(100),
                     startdepth(1),
@@ -57,10 +59,13 @@ public:
                     tracegrindAlarm(0),
                     host(std::string("")),
                     prefix(std::string("")),
-                    disthost(std::string("127.0.0.1")),
+                    distHost(std::string("127.0.0.1")),
                     port(65536),
-                    distport(12200),
-                    STPThreads(0)
+                    distPort(12200),
+                    remoteHost(std::string("127.0.0.1")),
+                    remotePort(15500),
+                    STPThreads(0),
+                    checkArgv(std::string(""))
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -84,8 +89,11 @@ public:
         tracegrindAlarm = opt_config->tracegrindAlarm;
         host	        = opt_config->host;
         port	        = opt_config->port;
-        disthost	= opt_config->disthost;
-        distport	= opt_config->distport;
+        distHost	= opt_config->distHost;
+        distPort	= opt_config->distPort;
+        remoteHost	= opt_config->remoteHost;
+        remotePort	= opt_config->remotePort;
+        remoteValgrind	= opt_config->remoteValgrind;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         funcFilterFile  = opt_config->funcFilterFile;
@@ -96,6 +104,9 @@ public:
         STPThreads	= opt_config->STPThreads;
         STPThreadsAuto	= opt_config->STPThreadsAuto;
         prefix          = opt_config->prefix;
+        checkArgv       = opt_config->checkArgv;
+        protectArgName  = opt_config->protectArgName;
+        sizeoflong      = opt_config->sizeoflong;
     }
 
     bool empty() const
@@ -131,6 +142,18 @@ public:
     bool getDebug() const
     { return debug; }
 
+    int getSizeoflong() const
+    { return sizeoflong; }
+
+    void setSizeoflong(int size)
+    { sizeoflong = size; }
+
+    void setProtectArgName()
+    { protectArgName = true; }
+    
+    bool getProtectArgName() const
+    { return protectArgName; }
+
     void setSTPThreadsAuto()
     { STPThreadsAuto = true; }
     
@@ -148,6 +171,12 @@ public:
 
     bool getProtectMainAgent() const
     { return protectMainAgent; }
+
+    void setCheckArgv(const std::string &arg)
+    { checkArgv = arg; }
+
+    std::string getCheckArgv() const
+    { return checkArgv; }
 
     void setDumpCalls()
     { dumpCalls = true; }
@@ -172,6 +201,12 @@ public:
     
     bool getDistributed() const
     { return distributed; }
+
+    void setRemoteValgrind()
+    { remoteValgrind = true; }
+    
+    bool getRemoteValgrind() const
+    { return remoteValgrind; }
 
     void setAgent()
     { agent = true; }
@@ -260,11 +295,17 @@ public:
     unsigned int getPort() const
     { return port; }
 
-    void setDistPort(int port)
-    { distport = port; }
+    void setDistPort(unsigned int port)
+    { distPort = port; }
 
-    int getDistPort() const
-    { return distport; }
+    unsigned int getDistPort() const
+    { return distPort; }
+
+    void setRemotePort(unsigned int port) 
+    { remotePort = port; }
+
+    unsigned int getRemotePort() const
+    { return remotePort; }
 
     void addProgAndArg(const std::string &arg)
     { prog_and_arg.push_back(arg); }
@@ -287,33 +328,41 @@ public:
     void setHost(std::string& host)
     { this->host = host; }
 
+    std::string getDistHost()
+    { return distHost; }
+
+    void setDistHost(std::string& host)
+    { distHost = host; }
+
+    std::string getRemoteHost()
+    { return remoteHost; }
+
+    void setRemoteHost(std::string& host)
+    { remoteHost = host; }
+
     std::string getPrefix()
     { return prefix; }
 
     void setPrefix(std::string& prefix)
     { this->prefix = prefix; }
 
-    std::string getDistHost()
-    { return disthost; }
-
-    void setDistHost(std::string& host)
-    { disthost = host; }
-
 private:
     bool                     debug;
     bool                     protectMainAgent;
     bool                     verbose;
-    bool		     sockets;
+    bool                     sockets;
     bool                     datagrams;
     bool                     useMemcheck;
     bool                     checkDanger;
     bool                     leaks;
     bool                     suppressSubcalls;
     bool                     dumpCalls;
-    bool 		     traceChildren;
+    bool 	                   traceChildren;
     bool                     distributed;
+    bool                     remoteValgrind;
     bool                     agent;
     bool                     STPThreadsAuto;
+    bool                     protectArgName;
     std::string              reportLog;
     std::string              funcFilterFile;
     std::size_t              depth;
@@ -322,15 +371,19 @@ private:
     std::vector<std::string> files;
     unsigned int             alarm;
     unsigned int             tracegrindAlarm;
-    std::string		     host;
-    std::string              disthost;
-    unsigned int	     port;
-    unsigned int             distport;
+    std::string	             host;
+    std::string              distHost;
+    std::string              remoteHost;
+    unsigned int             port;
+    unsigned int             distPort;
+    unsigned int             remotePort;
     std::vector<std::string> funcFilterUnits;
     std::string              inputFilterFile;
     std::string              prefix;
     unsigned int             startdepth;
     unsigned int             STPThreads;
+    std::string              checkArgv;
+    int                      sizeoflong;
 };
 
 

@@ -50,8 +50,7 @@ dist_noinst_DATA = $(SUPP_FILES)
 
 pkglib_DATA = default.supp
 
-pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = valgrind.pc
+noinst_DATA = valgrind.pc
 
 BUILT_SOURCES  = default.supp valgrind.pc
 CLEANFILES     = default.supp

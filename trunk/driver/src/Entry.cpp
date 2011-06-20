@@ -14,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -64,7 +64,7 @@ extern vector<Chunk*> report;
 extern int in_thread_creation;
 
 int thread_num;
-extern int distfd;
+extern int dist_fd;
 
 static void printHelpBanner()
 {
@@ -179,9 +179,9 @@ void sig_hndlr(int signo)
 {
   if (opt_config->getDistributed())
   {
-    write(distfd, "q", 1);
-    shutdown(distfd, SHUT_RDWR);
-    close(distfd);
+    write(dist_fd, "q", 1);
+    shutdown(dist_fd, SHUT_RDWR);
+    close(dist_fd);
   }
   if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
   {

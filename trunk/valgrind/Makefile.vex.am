@@ -14,7 +14,7 @@ EXTRA_DIST = \
 	newline.txt \
 	auxprogs/genoffsets.c
 
-pkginclude_HEADERS = \
+noinst_HEADERS = \
 	pub/libvex.h \
 	pub/libvex_basictypes.h \
 	pub/libvex_emwarn.h \
@@ -25,9 +25,7 @@ pkginclude_HEADERS = \
 	pub/libvex_guest_ppc64.h \
 	pub/libvex_guest_arm.h \
 	pub/libvex_ir.h \
-	pub/libvex_trc_values.h
-
-noinst_HEADERS = \
+	pub/libvex_trc_values.h \
 	priv/main_globals.h \
 	priv/main_util.h \
 	priv/ir_match.h \

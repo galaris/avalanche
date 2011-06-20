@@ -9,7 +9,7 @@
    which dumps addresses of all executed basic blocks
    in Valgrind IR
 
-   Copyright (C) 2009 Ildar Isaev
+   Copyright (C) 2009-2011 Ildar Isaev
       iisaev@ispras.ru
 
    This program is free software; you can redistribute it and/or

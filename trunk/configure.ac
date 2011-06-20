@@ -1,4 +1,4 @@
-AC_INIT([avalanche], [0.4])
+AC_INIT([avalanche], [0.5])
 AM_INIT_AUTOMAKE
 AC_PROG_CXX
 AC_PROG_CC

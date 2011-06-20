@@ -1,4 +1,3 @@
-// $Id: OptionParser.cpp 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -15,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -68,6 +67,15 @@ OptionConfig *OptionParser::run() const
             string host = arg_vec[i].substr(strlen("--host="));
             config->setHost(host);
         }
+        else if (arg_vec[i].find("--dist-host=") != string::npos) {
+            distHostSpecified = true;
+            string host = arg_vec[i].substr(strlen("--dist-host="));
+            config->setDistHost(host);
+        }
+        else if (arg_vec[i].find("--remote-host=") != string::npos) {
+            string host = arg_vec[i].substr(strlen("--remote-host="));
+            config->setRemoteHost(host);
+        }
         else if (arg_vec[i].find("--report-log=") != string::npos) {
             string log = arg_vec[i].substr(strlen("--report-log="));
             config->setReportLog(log);
@@ -75,11 +83,6 @@ OptionConfig *OptionParser::run() const
         else if (arg_vec[i].find("--prefix=") != string::npos) {
             string prefix = arg_vec[i].substr(strlen("--prefix="));
             config->setPrefix(prefix);
-        }
-        else if (arg_vec[i].find("--dist-host=") != string::npos) {
-            distHostSpecified = true;
-            string host = arg_vec[i].substr(strlen("--dist-host="));
-            config->setDistHost(host);
         }
         else if (arg_vec[i].find("--depth=") != string::npos) {
             string depth = arg_vec[i].substr(strlen("--depth="));
@@ -123,6 +126,10 @@ OptionConfig *OptionParser::run() const
             string port = arg_vec[i].substr(strlen("--dist-port="));
             config->setDistPort(atoi(port.c_str()));
         }
+        else if (arg_vec[i].find("--remote-port=") != string::npos) {
+            string port = arg_vec[i].substr(strlen("--remote-port="));
+            config->setRemotePort(atoi(port.c_str()));
+        }
         else if (arg_vec[i].find("--stp-threads=") != string::npos) {
             string thread_num = arg_vec[i].substr(strlen("--stp-threads="));
             if (thread_num == string("auto")) {
@@ -134,14 +141,24 @@ OptionConfig *OptionParser::run() const
                 config->setSTPThreads(atoi(thread_num.c_str()));
             }
         }
+        else if (arg_vec[i].find("--check-argv=") != string::npos) {
+            string argv_mask = arg_vec[i].substr(strlen("--check-argv="));
+            config->setCheckArgv(argv_mask);
+        }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
+        }
+        else if (arg_vec[i] == "--protect-arg-name") {
+            config->setProtectArgName();
         }
         else if (arg_vec[i] == "--protect-main-agent") {
             config->setProtectMainAgent();
         }
         else if (arg_vec[i] == "--distributed") {
             config->setDistributed();
+        }
+        else if (arg_vec[i] == "--remote-valgrind") {
+            config->setRemoteValgrind();
         }
         else if (arg_vec[i] == "--agent") {
             config->setAgent();
@@ -192,9 +209,9 @@ OptionConfig *OptionParser::run() const
         return NULL;
     }
 
-    if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams()) {
+    if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams() && (config->getCheckArgv() == "")) {
         delete config;
-        cout << "no input files or sockets specified\n";
+        cout << "no input files or sockets specified and command line option checking is not enabled\n";
         return NULL;
     }
     else if (config->usingSockets() && ((config->getPort() == 65536) || (config->getHost() == ""))) {
@@ -206,7 +223,12 @@ OptionConfig *OptionParser::run() const
         delete config;
         cout << "you cannot specify '--filename' and '--sockets' or '--datagrams' at the same time\n";
         return NULL;
-    }   
+    }
+    else if (config->getRemoteValgrind() && (config->getSTPThreads() != 0)){
+        delete config;
+        cout << "you cannot use remote valgrind plugin agent with STP parallelization enabled\n";
+        return NULL;
+    }
     reportDummyOptions(config);
     return config;
 }

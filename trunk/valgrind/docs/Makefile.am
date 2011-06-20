@@ -175,6 +175,7 @@ print-docs:
 # because otherwise it seems that automake thinks it should
 # be the one to handle the else/endif parts, not GNU make
 # as we intend.
+ ifeq ($(BUILD_ALL_DOCS),yes)
 install-data-hook:
 	if test -r html ; then \
 		mkdir -p $(DESTDIR)$(datadir)/doc/valgrind; \
@@ -195,6 +196,7 @@ install-data-hook:
 		mkdir -p $(DESTDIR)$(datadir)/doc/valgrind; \
 		cp index.ps $(DESTDIR)$(datadir)/doc/valgrind/valgrind_manual.ps; \
 	fi
+ endif
  endif
 
 # This is done at 'make dist' time.  It builds the html docs, print

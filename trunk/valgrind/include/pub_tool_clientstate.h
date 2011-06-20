@@ -40,6 +40,9 @@
 /* Args for the client. */
 extern XArray* /* of HChar* */ VG_(args_for_client);
 
+/* Pointer (in client stack) to argv data */
+extern HChar** VG_(client_argv);
+
 /* Args for V.  This is the concatenation of the following:
    - contents of ~/.valgrindrc
    - contents of $VALGRIND_OPTS
