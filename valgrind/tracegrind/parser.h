@@ -53,6 +53,7 @@ struct _offsetPair
 typedef struct _offsetPair offsetPair;
 
 Bool parseMask(Char* filename);
+Bool parseArgvMask(Char* str, Int* argvFilterUnits);
 Bool checkInputOffset(Int curfilenum, ULong offs);
 void printInputOffsets (void);
 void parseFnName (Char* fnName);

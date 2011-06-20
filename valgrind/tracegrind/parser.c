@@ -283,6 +283,43 @@ Bool leaveFnName (Char* fnName)
   return True;
 }
 
+Bool parseArgvMask(Char* str, Int* argFilterUnits)
+{
+  Int i, curOffset = 0;
+  Char curStr[16];
+  Char** endPtr = VG_(malloc) ("endPtr", sizeof (Char*));
+  *endPtr = curStr;
+  for (;;)
+  {
+    if (VG_(isspace) (*str) || (*str == '\0'))
+    {
+      curStr[curOffset] = '\0';
+      curOffset = 0;
+      Int index = VG_(strtoll10) (curStr, endPtr);
+      if (*endPtr == curStr)
+      {
+        return False;
+      }
+      argFilterUnits[index - 1] = 1;
+      if (*str == 0)
+      {
+        break;
+      }
+      str ++;
+    }
+    else if (VG_(isdigit) (*str))
+    {
+      curStr[curOffset ++] = *(str ++);
+    }
+    else
+    {
+      return False;
+    }
+  }
+  VG_(free) (endPtr);
+  return True;
+}
+
 Bool parseMask(Char* filename)
 {
   inputFilter = VG_(newXA)(VG_(malloc), "inputFilter", VG_(free), sizeof(XArray*));

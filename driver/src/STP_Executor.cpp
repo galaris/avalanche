@@ -1,5 +1,3 @@
-// $Id: STP_Executor.cpp 80 2009-10-30 18:55:50Z iisaev $
-
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -16,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,7 +25,6 @@
 
 #include "Logger.h"
 #include "STP_Executor.h"
-#include "STP_Input.h"
 #include "STP_Output.h"
 #include "TmpFile.h"
 #include "Monitor.h"
@@ -50,7 +47,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
                            const string &install_dir):
                                debug_full(debug_full_enable)
 {
-    prog = strdup((install_dir + "stp").c_str());
+    prog = strdup((install_dir + "../lib/avalanche/stp").c_str());
 
     argsnum = 4;
 
@@ -60,7 +57,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
     args[1] = strdup("-p");
 }
 
-STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
+STP_Output *STP_Executor::run(const char *file_name, int thread_index)
 {
     if (!thread_num)
     {
@@ -71,11 +68,7 @@ STP_Output *STP_Executor::run(STP_Input *input, int thread_index)
       LOG(logger, "Thread #" << thread_index << ": Running STP");
     }
     
-    if (input == NULL) {
-        DBG(logger, "No input");
-        return NULL;
-    }
-    args[2] = strdup(input->getFile());
+    args[2] = strdup(file_name);
 
     TmpFile file_out;
     TmpFile file_err;

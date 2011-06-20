@@ -1,4 +1,3 @@
-// $Id: PluginExecutor.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -15,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,7 +26,7 @@
 #ifndef __PLUGIN_EXECUTOR__H__
 #define __PLUGIN_EXECUTOR__H__
 
-#include "Executor.h"
+#include "LocalExecutor.h"
 
 #include <cstddef>
 #include <vector>
@@ -35,17 +34,8 @@
 
 class OptionConfig;
 class FileBuffer;
-class STP_Input;
 
-enum Kind
-{
-  TRACEGRIND,
-  COVGRIND,
-  MEMCHECK
-};
-
-
-class PluginExecutor : public Executor
+class PluginExecutor : public LocalExecutor
 {
 public:
     PluginExecutor(bool debug_full_enable,

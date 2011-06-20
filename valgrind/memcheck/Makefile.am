@@ -8,10 +8,8 @@ EXTRA_DIST = docs/mc-manual.xml docs/mc-tech-docs.xml
 # Headers
 #----------------------------------------------------------------------------
 
-pkginclude_HEADERS = \
-	memcheck.h
-
 noinst_HEADERS = \
+	memcheck.h \
 	mc_include.h
 
 #----------------------------------------------------------------------------

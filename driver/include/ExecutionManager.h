@@ -1,4 +1,3 @@
-// $Id: ExecutionManager.h 80 2009-10-30 18:55:50Z iisaev $
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
@@ -6,16 +5,18 @@
 /*----------------------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Ildar Isaev
+   Copyright (C) 2009-2011 Ildar Isaev
       iisaev@ispras.ru
    Copyright (C) 2009 Nick Lugovskoy
       lugovskoy@ispras.ru
+   Copyright (C) 2010-2011 Mikhail Ermakov
+      mermakov@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -110,10 +111,13 @@ public:
     void getCovgrindOptions(std::vector <std::string> &plugin_opts, std::string fileNameModifier, bool addNoCoverage);
 
     int calculateScore(std::string filaNameModifier = "");
-    int checkAndScore(Input* input, bool addNoCoverage, std::string fileNameModifier = "", bool first_run = false);
+    int checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, std::string fileNameModifier = "");
 
     void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
     bool dumpMCExploit(Input* input, const char* exec_log);
+    void dumpExploitArgv();
+
+    bool updateArgv(Input* input);
 
     int checkDivergence(Input* first_input, int score);
 
@@ -128,6 +132,7 @@ public:
 private:
     OptionConfig *config;
     std::multimap<Key, Input*, cmp> inputs;
+    std::vector <std::string> cur_argv;
     std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
     int exploits;

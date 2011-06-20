@@ -1,9 +1,7 @@
-// $Id: Executor.cpp 80 2009-10-30 18:55:50Z iisaev $
-
 /*----------------------------------------------------------------------------------------*/
 /*------------------------------------- AVALANCHE ----------------------------------------*/
 /*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------ Executor.cpp --------------------------------------*/
+/*------------------------------------ LocalExecutor.cpp ---------------------------------*/
 /*----------------------------------------------------------------------------------------*/
 
 /*
@@ -16,7 +14,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,7 +25,7 @@
 
 
 #include "Logger.h"
-#include "Executor.h"
+#include "LocalExecutor.h"
 
 #include <cerrno>
 #include <cstring>
@@ -43,10 +41,9 @@
 
 using namespace std;
 
-
 static Logger *logger = Logger::getLogger();
 
-int Executor::exec(bool setlimit)
+int LocalExecutor::exec(bool setlimit)
 {
     child_pid = fork();
 
@@ -77,7 +74,7 @@ int Executor::exec(bool setlimit)
     return execvp(prog, args);
 }
 
-int Executor::wait()
+int LocalExecutor::wait()
 {
     int   status;
     //LOG(logger, "Waiting for child_pid=" << child_pid);
@@ -96,21 +93,21 @@ int Executor::wait()
     }
 }
 
-void Executor::redirect_stdout(char *filename)
+void LocalExecutor::redirect_stdout(char *filename)
 {
     file_out = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
     if (file_out == -1)
         LOG(logger, "Cannot open " << filename << strerror(errno));
 }
 
-void Executor::redirect_stderr(char *filename)
+void LocalExecutor::redirect_stderr(char *filename)
 {
     file_err = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
     if (file_err == -1)
         LOG(logger, "Cannot open " << filename << strerror(errno));
 }
 
-void Executor::do_redirect(int file_to_redirect, int new_file)
+void LocalExecutor::do_redirect(int file_to_redirect, int new_file)
 {
     if (new_file == -1) return;
 
@@ -118,7 +115,7 @@ void Executor::do_redirect(int file_to_redirect, int new_file)
     close(new_file);
 }
 
-Executor::~Executor()
+LocalExecutor::~LocalExecutor()
 { 
     if (file_out != -1) 
     {
@@ -129,10 +126,5 @@ Executor::~Executor()
       close(file_err);
     }
     if (prog != NULL) free(prog);
-    for(int i = 0; i < argsnum; i ++)
-    {
-      free(args[i]);
-    }
-    free(args);
 }
 
