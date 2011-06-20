@@ -46,7 +46,6 @@
 #include <string>
 #include <vector>
 #include <set>
-#include <fstream>
 
 #define N 5
 
@@ -84,9 +83,6 @@ int in_thread_creation = -1;
 int dist_fd;
 int remote_fd;
 int agents;
-
-int argv_file_index = -1;
-int envp_file_index = -1;
 
 static int connectTo(string host, unsigned int port)
 {
@@ -204,6 +200,10 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
   {
     plugin_opts.push_back(string("--protect-arg-name=yes"));
   }
+/*  else
+  {
+    plugin_opts.push_back(string("--check-danger=no"));
+  }*/
 
   for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
   {
@@ -212,11 +212,6 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
   if (config->getFuncFilterFile() != "")
   {
     plugin_opts.push_back(string("--func-filter-file=") + config->getFuncFilterFile());
-  }
-  
-  for (int i = 0; i < config->getEnvParamsNum(); i ++)
-  {
-    plugin_opts.push_back(string("--check-envp=") + config->getEnvParam(i));
   }
 
   if (config->getInputFilterFile() != "")
@@ -353,11 +348,7 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
   else
   {
     int f_num = input->files.size();
-    if (config->getCheckArgv() != "")
-    {
-      f_num --;
-    }
-    if (config->getEnvParamsNum() != 0)
+    if ((config->getCheckArgv() != ""))
     {
       f_num --;
     }
@@ -369,13 +360,9 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
       input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
     }
   }
-  if (config->getCheckArgv() != "")
+  if ((config->getCheckArgv() != ""))
   {
     dumpExploitArgv();
-  }
-  if (config->getEnvParamsNum() != 0)
-  {
-    dumpExploitEnvp(input);
   }
 }
 
@@ -398,32 +385,6 @@ void ExecutionManager::dumpExploitArgv()
   close(fd);
 }
 
-void ExecutionManager::dumpExploitEnvp(Input* input)
-{
-  if (envp_file_index == -1)
-  {
-    return;
-  }
-  stringstream ss(stringstream::in | stringstream::out);
-  ss << config->getPrefix() << "exploit_" << exploits << "_envp";
-  REPORT(logger, "Dumping exploit argv to file " << ss.str());
-  int fd = open(ss.str().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-  int fd_lengths = open("envp_lengths", O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
-  int length;
-  char * buf = input->files.at(envp_file_index)->buf;
-  for (int i = 0; i < config->getEnvParamsNum(); i ++)
-  {
-    write(fd, (config->getEnvParam(i)).c_str(), (config->getEnvParam(i)).size());
-    write(fd, "=", 1);
-    read(fd_lengths, &length, sizeof(int));
-    write(fd, buf, length);
-    buf += length;
-    write(fd, "\n", 1);
-  }
-  close(fd);
-  close(fd_lengths);
-}
-    
 bool ExecutionManager::dumpMCExploit(Input* input, const char *exec_log)
 {
   FileBuffer* mc_output = new FileBuffer(exec_log);
@@ -562,21 +523,11 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
   string cv_exec_file = string("execution") + fileNameModifier + string(".log");
   
-  if (!first_run)
+  if (!first_run && (config->getCheckArgv() != ""))
   {
-    if (config->getCheckArgv() != "")
+    if (!updateArgv(input))
     {
-      if (!updateArgv(input))
-      {
-        return -1;
-      }
-    }
-    if (config->getEnvParamsNum() != 0)
-    {
-      if (!config->getRemoteValgrind())
-      {
-        updateEnvp(input);
-      }
+      return -1;
     }
   }
   vector <string> new_prog_and_args = cur_argv;
@@ -647,10 +598,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     {
       chunk_file_num --;
     }
-    if ((config->getEnvParamsNum() != 0))
-    {
-      chunk_file_num --;
-    }
     FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
     infoAvailable = cv_output->filterCovgrindOutput();
     if (infoAvailable)
@@ -667,14 +614,14 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
       if (!sameExploit) 
       {
         Chunk* ch;
-        ch = new Chunk(cv_output, exploits, chunk_file_num, (config->getCheckArgv() != ""), (config->getEnvParamsNum() != 0));
+        ch = new Chunk(cv_output, exploits, chunk_file_num, (config->getCheckArgv() != ""));
         report.push_back(ch);
       }
     }
     else
     {
       Chunk* ch;
-      ch = new Chunk(NULL, exploits, chunk_file_num, (config->getCheckArgv() != ""), (config->getEnvParamsNum() != 0));
+      ch = new Chunk(NULL, exploits, chunk_file_num, (config->getCheckArgv() != ""));
       report.push_back(ch);
     }
     dumpExploit(input, cv_output, infoAvailable, sameExploit, exploit_group);
@@ -1040,29 +987,10 @@ int ExecutionManager::requestNonZeroInput()
   return 0;
 }
 
-bool ExecutionManager::updateEnvp(Input* input)
+/*bool valid_char(char value)
 {
-  int fd = open("envp_lengths", O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
-  string name, value;
-  int length;
-  int i = 0, j, k;
-  char * envp_val = input->files.at(envp_file_index)->buf;
-  for (k = 0; k < config->getEnvParamsNum(); k ++)
-  {
-    name = config->getEnvParam(k);
-    read(fd, &length, sizeof(int));
-    for (j = 0; j < length; j ++)
-    {
-      value.push_back(envp_val[i + j]);
-    }
-    i += j;
-//    LOG(logger, "Setting " << name << " = " << value);
-    setenv(name.c_str(), value.c_str(), 1);
-    value.clear();
-  }
-  close(fd);
-  return true;
-}
+  return (value >= 0x20) && (value <= 0x7d);
+}*/
 
 bool ExecutionManager::updateArgv(Input* input)
 {
@@ -1070,7 +998,7 @@ bool ExecutionManager::updateArgv(Input* input)
 //  int ctrl_counter = 0;
 //  bool reached_zero = false;
 //  bool reached_normal = false;
-  char* argv_val = input->files.at(argv_file_index)->buf;
+  char* argv_val = input->files.at(input->files.size() - 1)->buf;
   string spaced_mask = string(" ") + config->getCheckArgv() + " ";
   char buf[16];
 /*  if ((!valid_char(argv_val[0]) || (argv_val[0] == ' ')) && (argv_val[0] != 0))
@@ -1209,30 +1137,24 @@ void ExecutionManager::run()
           plugin_opts.push_back("--check-prediction=yes");
         }
       }
-      if (!runs && (config->getEnvParamsNum() != 0))
-      {
-        plugin_opts.push_back(string("--envp-first-run=yes"));
-      }
   
       getTracegrindOptions(plugin_opts);
+
+      if (runs && (config->getCheckArgv() != ""))
+      {
+        updateArgv(fi);
+      }
 
       if (config->getRemoteValgrind())
       {
         plugin_opts.push_back("--log-file=execution.log");
       }
 
-      if (runs)
+      if (runs && (config->getCheckArgv() != ""))
       {
-        if (config->getCheckArgv() != "")
-        {
-          updateArgv(fi);
-        }
-        if ((config->getEnvParamsNum() != 0) && !config->getRemoteValgrind())
-        {
-          updateEnvp(fi);
-        }
+        updateArgv(fi);
       }
-      
+
       vector <string> plug_args = plugin_opts;
       for (int i = 0; i < cur_argv.size(); i ++)
       {
@@ -1281,26 +1203,18 @@ void ExecutionManager::run()
       time_t start_time = time(NULL);
       monitor->setState(TRACER, start_time);
       int exitCode;
-      exitCode = plugin_exe->run();
+      exitCode = plugin_exe->run(); 
       if (exitCode == 1)
       {
         break;
       }
-      if (!runs)
+      if ((config->getCheckArgv() != ""))
       {
-        if (config->getCheckArgv() != "")
+        if (!runs)
         {
-          string file("argv.log");
-          config->addFile(file);
+          string argv_file("argv.log");
+          config->addFile(argv_file);
           fi->files.push_back(new FileBuffer("argv.log"));
-          argv_file_index = fi->files.size() - 1;
-        }
-        if (config->getEnvParamsNum() != 0)
-        {
-          string file("envp.log");
-          config->addFile(file);
-          fi->files.push_back(new FileBuffer("envp.log"));
-          envp_file_index = fi->files.size() - 1;
         }
       }
       monitor->addTime(time(NULL));

@@ -146,10 +146,6 @@ OptionConfig *OptionParser::run() const
             string argv_mask = arg_vec[i].substr(strlen("--check-argv="));
             config->setCheckArgv(argv_mask);
         }
-        else if (arg_vec[i].find("--check-envp=") != string::npos) {
-            string envp = arg_vec[i].substr(strlen("--check-envp="));
-            config->addEnvParam(envp);
-        }
         else if (arg_vec[i] == "--debug") {
             config->setDebug();
         }
@@ -214,10 +210,9 @@ OptionConfig *OptionParser::run() const
         return NULL;
     }
 
-    if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams() && 
-        (config->getCheckArgv() == "") && (config->getEnvParamsNum() == 0)) {
+    if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams() && (config->getCheckArgv() == "")) {
         delete config;
-        cout << "no input files or sockets specified and command line option/environment checking is not enabled\n";
+        cout << "no input files or sockets specified and command line option checking is not enabled\n";
         return NULL;
     }
     else if (config->usingSockets() && ((config->getPort() == 65536) || (config->getHost() == ""))) {
