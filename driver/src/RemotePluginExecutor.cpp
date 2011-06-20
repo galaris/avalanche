@@ -35,7 +35,6 @@
 using namespace std;
 
 static Logger *logger = Logger::getLogger();
-static bool check_envp = false;
 
 static void writeToSocket(int fd, const void* b, size_t count)
 {
@@ -157,14 +156,9 @@ int RemotePluginExecutor::run(int thread_index)
         writeToSocket(remote_fd, f.buf, f.size);
       }
     }
-    if (!check_envp)
-    {
-      check_envp = checkFlag("--check-envp=");
-    }
     writeFromFileToSocket(remote_fd, "prediction.log", checkFlag("--check-prediction=yes"));
     writeFromFileToSocket(remote_fd, "replace_data", checkFlag("--replace=yes") || checkFlag("--replace=replace_data"));
     writeFromFileToSocket(remote_fd, "arg_lengths", checkFlag("--check-argv="));
-    writeFromFileToSocket(remote_fd, "envp.log", check_envp && !checkFlag("--envp-first-run=yes"));
     readFromSocket(remote_fd, &res, sizeof(int));
     switch (kind)
     {
@@ -173,8 +167,6 @@ int RemotePluginExecutor::run(int thread_index)
                        readFromSocketToFile(remote_fd, "actual.log", checkFlag("--dump-prediction=yes"));
                        readFromSocketToFile(remote_fd, "calldump.log", checkFlag("--dump-file=calldump.log"));
                        readFromSocketToFile(remote_fd, "replace_data", checkFlag("--sockets=yes") || checkFlag("--datagrams=yes"));
-                       readFromSocketToFile(remote_fd, "envp.log", checkFlag("--envp-first-run=yes"));
-                       readFromSocketToFile(remote_fd, "envp_lengths", checkFlag("--envp-first-run=yes"));
                        readFromSocketToFile(remote_fd, "argv.log", checkFlag("--check-argv="));
                        break;
       case COVGRIND:   

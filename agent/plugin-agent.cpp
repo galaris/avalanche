@@ -60,9 +60,6 @@ bool check_danger;
 bool dump_calls;
 bool network;
 bool check_argv;
-bool envp_first_run;
-bool check_envp;
-vector <string> envp;
 
 static void parseArg(char *arg)
 {
@@ -94,17 +91,6 @@ static void parseArg(char *arg)
   {
     check_argv = true;
   }
-  else if (strstr(arg, "--check-envp=") && envp_first_run)
-  {
-    string str_arg = string(arg);
-    envp.push_back(str_arg.substr(strlen("--check-envp=")));
-    check_envp = true;
-  }
-  else if (!strcmp(arg, "--envp-first-run=yes"))
-  {
-    envp_first_run = true;
-  }
-  
 }
 
 static void readToFile(char *file_name)
@@ -113,11 +99,11 @@ static void readToFile(char *file_name)
   readFromSocket(avalanche_fd, &length, sizeof(int));
   char *file_buf = (char *) malloc(length);
   readFromSocket(avalanche_fd, file_buf, length);
-  int file_d = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+  int file_d = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXG);
   if (file_d < 0)
   {
     free(file_buf);
-    throw "error opening file";
+    throw file_name;
   }
   if (write(file_d, file_buf, length) < length)
   {
@@ -128,47 +114,7 @@ static void readToFile(char *file_name)
   close(file_d);
   free(file_buf);
 }
-
-static void setEnvp()
-{
-  int fdenvp_lengths = open("envp_lengths", O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
-  int fdenvp = open("envp.log", O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
-  int length;
-  char buf[256];
-  string error_msg = "";
-  if ((fdenvp_lengths < 0) || (fdenvp < 0))
-  {
-    throw "error opening file";
-  }
-  for (vector <string>::iterator i = envp.begin(); i != envp.end(); i ++)
-  {
-    if (read(fdenvp_lengths, &length, sizeof(int)) < 0)
-    {
-      error_msg = "error reading from file";
-      break;
-    }
-    if (read(fdenvp, buf, length) < 0)
-    {
-      error_msg = "error reading from file";
-      break;
-    }
-    buf[length] = '\0';
-    if (setenv((*i).c_str(), buf, 1) < 0)
-    {
-      error_msg = "setenv failed";
-      break;
-    }
-#ifdef DEBUG
-    cout << "setting " << *i << " = " << string(buf) << endl;
-#endif
-  }
-  close(fdenvp);
-  close(fdenvp_lengths);
-  if (error_msg != string(""))
-  {
-    throw error_msg.c_str();
-  }
-}
+      
 
 static int readAndExec(int argc, char** argv)
 {
@@ -239,11 +185,6 @@ static int readAndExec(int argc, char** argv)
   {
     readToFile("arg_lengths");
   }
-  if (check_envp && !envp_first_run)
-  {
-    readToFile("envp.log");
-    setEnvp();
-  }
   args[argsnum + 2] = NULL;
   pid = fork();
   if (pid == 0)
@@ -260,8 +201,8 @@ static int readAndExec(int argc, char** argv)
     int tmperr_fd = open("tmp_stderr", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
     dup2(tmpout_fd, STDOUT_FILENO);
     dup2(tmperr_fd, STDERR_FILENO);
-    close(tmpout_fd);
-    close(tmperr_fd);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
     execvp(args[0], args);
   }
   int status;
@@ -339,14 +280,6 @@ static int passResult(int ret_code)
                      if (network)
                      {
                        writeFromFile("replace_data");
-                     }
-                     if (envp_first_run)
-                     {
-                       writeFromFile("envp.log");
-                     }
-                     if (envp_first_run)
-                     {
-                       writeFromFile("envp_lengths");
                      }
                      if (check_argv)
                      {
@@ -426,7 +359,6 @@ int main(int argc, char** argv)
       dump_calls = false;
       network = false;
       check_argv = false;
-      envp_first_run = false;
       int res = readAndExec(argc, argv);
       if (res == -2)
       {

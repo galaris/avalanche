@@ -37,9 +37,8 @@ using namespace std;
 
 static Logger* logger = Logger::getLogger();
 
-Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _argvSpecified, bool _envpSpecified) :
-                                                              argvSpecified(_argvSpecified),
-                                                              envpSpecified(_envpSpecified)
+Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _argvSpecified) :
+                                                              argvSpecified(_argvSpecified)
 {
   if (trace == NULL)
   {
@@ -98,25 +97,6 @@ void Chunk::print(string prefix, int chunkNum, int fd)
         out << " : ";
       }
       out << prefix << "exploit_" << exploitNum << "_argv";
-    }
-    if (envpSpecified)
-    {
-      if (inputNum)
-      {
-        if (argvSpecified)
-        {
-          out << " , ";
-        }
-        else
-        {
-          out << " : ";
-        }
-      }
-      else if (argvSpecified)
-      {
-        out << " , ";
-      }
-      out << prefix << "exploit_" << exploitNum << "_envp";
     }
   }
   if (trace != NULL)
