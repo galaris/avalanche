@@ -2854,6 +2854,27 @@ void instrumentWrTmpCCall(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord size,
   }
 }
 
+#if defined(VGP_x86_linux)
+static
+void instrumentWrTmpLongBinop(IRStmt* clone, UInt oprt, UInt ltmp, IRExpr* arg1, IRExpr* arg2, UInt value1LowerBytes, UInt value1UpperBytes, UInt value2LowerBytes, UInt value2UpperBytes)
+
+{
+  UShort r = isPropagation2(arg1, arg2);
+  if (r)
+  {
+    Addr64 value1 = (((Addr64) value1UpperBytes) << 32) ^ value1LowerBytes;
+    Addr64 value2 = (((Addr64) value2UpperBytes) << 32) ^ value2LowerBytes;
+#elif defined(VGP_amd64_linux)
+static
+void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* arg1, IRExpr* arg2, UWord value1, UWord value2)
+
+{
+  UInt ltmp = clone->Ist.WrTmp.tmp;
+  UInt oprt = clone->Ist.WrTmp.data->Iex.Binop.op;
+  UShort r = isPropagation2(arg1, arg2);
+  if (r)
+  {
+#elif defined(VGP_arm_linux)
 static void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong value)
 {
   IRExpr* arg1 = clone->Ist.WrTmp.data->Iex.Binop.arg1;
@@ -2880,6 +2901,7 @@ static void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong val
   UInt oprt = clone->Ist.WrTmp.data->Iex.Binop.op;
   if ((firstT && (diCounter == 1)) || (secondT && (diCounter == 2) && (!firstT)))
   {
+#endif
     Char s[256];
     Int l = 0;
     if ((oprt != Iop_Shr64) && (oprt != Iop_Sar64) && (oprt != Iop_Shl64))
@@ -3096,7 +3118,7 @@ static void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong val
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_Sar64:		if (!firstT)
+      case Iop_Sar64:		if (!firstTainted(r))
 				{
 				  break;
 				}
@@ -3113,7 +3135,7 @@ static void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong val
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
-      case Iop_Shl64: 		if (!firstT)
+      case Iop_Shl64: 		if (!firstTainted(r))
 				{
 				  return;
 				}
@@ -3147,7 +3169,7 @@ static void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong val
 				  my_write(fddanger, s, l);
 				}
 				break;
-      case Iop_Shr64: 		if (!firstT)
+      case Iop_Shr64: 		if (!firstTainted(r))
 				{
 				  return;
 				}
@@ -3231,7 +3253,7 @@ static void instrumentWrTmpLongBinop(IRStmt* clone, IRExpr* diCounter, ULong val
    that's why formal params are value2 and then value1.
 */
 
-#ifdef VGP_arm_linux
+#if defined(VGP_arm_linux)
 static
 void instrumentWrTmpDivisionBinop(IRStmt* clone, IRExpr* value2, ULong value1)
 {
@@ -4311,6 +4333,7 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
       			    (data->Iex.Binop.op == Iop_DivU64) ||
       			    (data->Iex.Binop.op == Iop_DivS64))
 			{
+#if defined(VGP_arm_linux)
 /*
      Each LongBinop statement is instrumented two times consequently with
    (diCounter = 1, value = arg2_value) and (diCounter = 2, value = arg1_value).
@@ -4329,11 +4352,28 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
 						  mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(2), value1));
                           addStmtToIRSB(sbOut, IRStmt_Dirty(di));
                           addStmtToIRSB(sbOut, IRStmt_Dirty(di2));
-			}
+#elif defined(VGP_x86_linux)
+                          ULong value1UpperBytes = (((Addr64) arg1) & ((Addr64) 0xffffffff00000000)) >> 32;
+                          ULong value1LowerBytes = ((Addr64) arg1) & ((Addr64) 0x00000000ffffffff);
+                          ULong value2UpperBytes = (((Addr64) arg2) & ((Addr64) 0xffffffff00000000)) >> 32;
+                          ULong value2LowerBytes = ((Addr64) arg2) & ((Addr64) 0x00000000ffffffff);
+                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), 
+                                                  mkIRExprVec_9(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord(data->Iex.Binop.op), 
+                                                                mkIRExpr_HWord(tmp), mkIRExpr_HWord((HWord) arg1), 
+                                                                mkIRExpr_HWord((HWord) arg2), value1LowerBytes, value1UpperBytes, 
+                                                                value2LowerBytes, value2UpperBytes));
+                   	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+#elif defined(VGP_amd64_linux)
+                          di = unsafeIRDirty_0_N(0, "instrumentWrTmpLongBinop", VG_(fnptr_to_fnentry)(&instrumentWrTmpLongBinop), 
+                                                 mkIRExprVec_5(mkIRExpr_HWord((HWord) clone), mkIRExpr_HWord((HWord) arg1), 
+                                                 mkIRExpr_HWord((HWord) arg2), value1, value2));
+                   	  addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+#endif
+                        }
 			else if ((data->Iex.Binop.op == Iop_DivModU64to32) ||
 				 (data->Iex.Binop.op == Iop_DivModS64to32))
 			{
-#ifdef VGP_arm_linux
+#if defined(VGP_arm_linux)
 			  di = unsafeIRDirty_0_N(0, "instrumentWrTmpDivisionBinop", 
 						 VG_(fnptr_to_fnentry)(&instrumentWrTmpDivisionBinop),
 						 mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), value2, value1));
