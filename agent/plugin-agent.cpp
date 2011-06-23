@@ -33,8 +33,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
-
+#include <cstdlib>
 #include <vector>
+#include <unistd.h>
 
 #include "util.h"
 
@@ -116,7 +117,7 @@ static void readToFile(char *file_name)
 }
       
 
-static int readAndExec(int argc, char** argv)
+static int readAndExec(const string &progDir, int argc, char** argv)
 {
   int length, argsnum;
   char **args;
@@ -129,17 +130,8 @@ static int readAndExec(int argc, char** argv)
   }
   readFromSocket(avalanche_fd, &argsnum, sizeof(int));
   args = (char **) calloc (argsnum + 3, sizeof(char *));
-  string argstr(argv[0]);
-  size_t sl = argstr.find_last_of('/');
-  if (sl != string::npos) 
-  {
-    args[0] = strdup((char*) (argstr.substr(0, sl + 1) + string("../lib/avalanche/valgrind")).c_str());
-  }
-  else 
-  {
-    args[0] = strdup("valgrind");
-  }
-  argstr.clear();
+  string valgrindPath = progDir + "../lib/avalanche/valgrind";
+  args[0] = strdup(valgrindPath.c_str());
 
   switch(kind)
   {
@@ -298,6 +290,26 @@ static int passResult(int ret_code)
   return 0;
 }
 
+static string findInPath(const string &name)
+{
+  const char *var = getenv("PATH");
+  if (var == NULL || var[0] == '\0') return string();
+
+  string dirs = var;
+  for (size_t beginPos = 0; beginPos < dirs.size(); ) {
+    size_t colonPos = dirs.find(':', beginPos);
+    size_t endPos = (colonPos == string::npos) ? dirs.size() : colonPos;
+    string dir = dirs.substr(beginPos, endPos - beginPos);
+    string fileName = dir + "/" + name;
+    if (access(fileName.c_str(), X_OK) == 0) {
+      return fileName;
+    }
+    beginPos = endPos + 1;
+  }
+
+  return string();
+}
+
 int main(int argc, char** argv)
 {
   if (argc != 2)
@@ -305,6 +317,15 @@ int main(int argc, char** argv)
     cout << "usage: plugin-agent <port number>" << endl;
     exit(EXIT_FAILURE);
   }
+
+  string progName = argv[0];
+  size_t slashPos = progName.find_last_of('/');
+  if (slashPos == string::npos) {
+    progName = findInPath(progName);
+    slashPos = progName.find_last_of('/');
+  }
+  string progDir = progName.substr(0, slashPos + 1);
+
   int port = atoi(argv[1]);
  
   int listen_fd;
@@ -359,7 +380,7 @@ int main(int argc, char** argv)
       dump_calls = false;
       network = false;
       check_argv = false;
-      int res = readAndExec(argc, argv);
+      int res = readAndExec(progDir, argc, argv);
       if (res == -2)
       {
         cout << "end of communication: no more requests" << endl;
