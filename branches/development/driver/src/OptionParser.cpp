@@ -38,8 +38,9 @@ static bool distPortSpecified;
 
 OptionParser::OptionParser(int argc, char *argv[])
 {
-    for (int i = 0; i < argc; i++)
-        arg_vec.push_back(string(argv[i]));
+    setProgName(argv[0]);
+    for (int i = 1; i < argc; i++)
+        args.push_back(string(argv[i]));
 }
 
 OptionConfig *OptionParser::run() const
@@ -49,43 +50,43 @@ OptionConfig *OptionParser::run() const
     distHostSpecified = false;
     distPortSpecified = false;
     bool fileSpecified = false;
-    size_t sl = arg_vec[0].find_last_of('/');
+    size_t sl = progName.find_last_of('/');
     if (sl != string::npos) {
-        config->setValgrind(arg_vec[0].substr(0, sl + 1));
+        config->setValgrind(progName.substr(0, sl + 1));
     }
     else {
         config->setValgrind("");
     }
 
-    for (size_t i = 1; i < arg_vec.size(); i++) {
-        if (arg_vec[i].find("--filename=") != string::npos) {
-            string filename = arg_vec[i].substr(strlen("--filename="));
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i].find("--filename=") != string::npos) {
+            string filename = args[i].substr(strlen("--filename="));
             config->addFile(filename);
             fileSpecified = true;
         }
-        else if (arg_vec[i].find("--host=") != string::npos) {
-            string host = arg_vec[i].substr(strlen("--host="));
+        else if (args[i].find("--host=") != string::npos) {
+            string host = args[i].substr(strlen("--host="));
             config->setHost(host);
         }
-        else if (arg_vec[i].find("--dist-host=") != string::npos) {
+        else if (args[i].find("--dist-host=") != string::npos) {
             distHostSpecified = true;
-            string host = arg_vec[i].substr(strlen("--dist-host="));
+            string host = args[i].substr(strlen("--dist-host="));
             config->setDistHost(host);
         }
-        else if (arg_vec[i].find("--remote-host=") != string::npos) {
-            string host = arg_vec[i].substr(strlen("--remote-host="));
+        else if (args[i].find("--remote-host=") != string::npos) {
+            string host = args[i].substr(strlen("--remote-host="));
             config->setRemoteHost(host);
         }
-        else if (arg_vec[i].find("--report-log=") != string::npos) {
-            string log = arg_vec[i].substr(strlen("--report-log="));
+        else if (args[i].find("--report-log=") != string::npos) {
+            string log = args[i].substr(strlen("--report-log="));
             config->setReportLog(log);
         }
-        else if (arg_vec[i].find("--prefix=") != string::npos) {
-            string prefix = arg_vec[i].substr(strlen("--prefix="));
+        else if (args[i].find("--prefix=") != string::npos) {
+            string prefix = args[i].substr(strlen("--prefix="));
             config->setPrefix(prefix);
         }
-        else if (arg_vec[i].find("--depth=") != string::npos) {
-            string depth = arg_vec[i].substr(strlen("--depth="));
+        else if (args[i].find("--depth=") != string::npos) {
+            string depth = args[i].substr(strlen("--depth="));
             if (depth == string("infinity")) {
                 config->setDepth(0);
             }
@@ -93,45 +94,45 @@ OptionConfig *OptionParser::run() const
                 config->setDepth(atoi(depth.c_str()));
             }
         }
-        else if (arg_vec[i].find("--startdepth=") != string::npos) {
-            string depth = arg_vec[i].substr(strlen("--startdepth="));
+        else if (args[i].find("--startdepth=") != string::npos) {
+            string depth = args[i].substr(strlen("--startdepth="));
             config->setStartdepth(atoi(depth.c_str()));
         }
-        else if (arg_vec[i].find("--alarm=") != string::npos) {
-            string alarm = arg_vec[i].substr(strlen("--alarm="));
+        else if (args[i].find("--alarm=") != string::npos) {
+            string alarm = args[i].substr(strlen("--alarm="));
             config->setAlarm(atoi(alarm.c_str()));
         }
-        else if (arg_vec[i].find("--func-name=") != string::npos) {
-            string name = arg_vec[i].substr(strlen("--func-name="));
+        else if (args[i].find("--func-name=") != string::npos) {
+            string name = args[i].substr(strlen("--func-name="));
             config->addFuncFilterUnit(name);
         }
-        else if (arg_vec[i].find("--func-file=") != string::npos) {
-            string fname = arg_vec[i].substr(strlen("--func-file="));
+        else if (args[i].find("--func-file=") != string::npos) {
+            string fname = args[i].substr(strlen("--func-file="));
             config->setFuncFilterFile(fname);
         }
-        else if (arg_vec[i].find("--mask=") != string::npos) {
-            string fname = arg_vec[i].substr(strlen("--mask="));
+        else if (args[i].find("--mask=") != string::npos) {
+            string fname = args[i].substr(strlen("--mask="));
             config->setInputFilterFile(fname);
         }
-        else if (arg_vec[i].find("--tracegrind-alarm=") != string::npos) {
-            string alarm = arg_vec[i].substr(strlen("--tracegrind-alarm="));
+        else if (args[i].find("--tracegrind-alarm=") != string::npos) {
+            string alarm = args[i].substr(strlen("--tracegrind-alarm="));
             config->setTracegrindAlarm(atoi(alarm.c_str()));
         }
-        else if (arg_vec[i].find("--port=") != string::npos) {
-            string port = arg_vec[i].substr(strlen("--port="));
+        else if (args[i].find("--port=") != string::npos) {
+            string port = args[i].substr(strlen("--port="));
             config->setPort(atoi(port.c_str()));
         }
-        else if (arg_vec[i].find("--dist-port=") != string::npos) {
+        else if (args[i].find("--dist-port=") != string::npos) {
             distPortSpecified = true;
-            string port = arg_vec[i].substr(strlen("--dist-port="));
+            string port = args[i].substr(strlen("--dist-port="));
             config->setDistPort(atoi(port.c_str()));
         }
-        else if (arg_vec[i].find("--remote-port=") != string::npos) {
-            string port = arg_vec[i].substr(strlen("--remote-port="));
+        else if (args[i].find("--remote-port=") != string::npos) {
+            string port = args[i].substr(strlen("--remote-port="));
             config->setRemotePort(atoi(port.c_str()));
         }
-        else if (arg_vec[i].find("--stp-threads=") != string::npos) {
-            string thread_num = arg_vec[i].substr(strlen("--stp-threads="));
+        else if (args[i].find("--stp-threads=") != string::npos) {
+            string thread_num = args[i].substr(strlen("--stp-threads="));
             if (thread_num == string("auto")) {
                 config->setSTPThreadsAuto();
                 config->setSTPThreads(sysconf(_SC_NPROCESSORS_ONLN));
@@ -141,61 +142,61 @@ OptionConfig *OptionParser::run() const
                 config->setSTPThreads(atoi(thread_num.c_str()));
             }
         }
-        else if (arg_vec[i].find("--check-argv=") != string::npos) {
-            string argv_mask = arg_vec[i].substr(strlen("--check-argv="));
+        else if (args[i].find("--check-argv=") != string::npos) {
+            string argv_mask = args[i].substr(strlen("--check-argv="));
             config->setCheckArgv(argv_mask);
         }
-        else if (arg_vec[i] == "--debug") {
+        else if (args[i] == "--debug") {
             config->setDebug();
         }
-        else if (arg_vec[i] == "--protect-arg-name") {
+        else if (args[i] == "--protect-arg-name") {
             config->setProtectArgName();
         }
-        else if (arg_vec[i] == "--protect-main-agent") {
+        else if (args[i] == "--protect-main-agent") {
             config->setProtectMainAgent();
         }
-        else if (arg_vec[i] == "--distributed") {
+        else if (args[i] == "--distributed") {
             config->setDistributed();
         }
-        else if (arg_vec[i] == "--remote-valgrind") {
+        else if (args[i] == "--remote-valgrind") {
             config->setRemoteValgrind();
         }
-        else if (arg_vec[i] == "--agent") {
+        else if (args[i] == "--agent") {
             config->setAgent();
         }
-        else if (arg_vec[i] == "--check-danger") {
+        else if (args[i] == "--check-danger") {
             config->setCheckDanger();
         }
-        else if (arg_vec[i] == "--trace-children") {
+        else if (args[i] == "--trace-children") {
             config->setTraceChildren();
         }
-        else if (arg_vec[i] == "--suppress-subcalls") {
+        else if (args[i] == "--suppress-subcalls") {
             config->setSuppressSubcalls();
         }
-        else if (arg_vec[i] == "--dump-calls") {
+        else if (args[i] == "--dump-calls") {
             config->setDumpCalls();
         }
-        else if (arg_vec[i] == "--verbose") {
+        else if (args[i] == "--verbose") {
             config->setVerbose();
         }
-        else if (arg_vec[i] == "--use-memcheck") {
+        else if (args[i] == "--use-memcheck") {
             config->setUsingMemcheck();
         }
-        else if (arg_vec[i] == "--leaks") {
+        else if (args[i] == "--leaks") {
             config->setLeaks();
         }
-        else if (arg_vec[i] == "--sockets") {
+        else if (args[i] == "--sockets") {
             config->setUsingSockets();
         }
-        else if (arg_vec[i] == "--datagrams") {
+        else if (args[i] == "--datagrams") {
             config->setUsingDatagrams();
         }
-        else if (arg_vec[i] == "--help") {
+        else if (args[i] == "--help") {
             delete config;
             return NULL;
         }
         else
-            config->addProgAndArg(arg_vec[i]);
+            config->addProgAndArg(args[i]);
     }
 
     if (config->getAgent() && config->getDistributed()) {
@@ -271,4 +272,33 @@ void OptionParser::reportDummyOptions(OptionConfig* config) const
             cout << *i << endl;
         }
     }
+}
+
+static string findInPath(const string &name)
+{
+    const char *var = getenv("PATH");
+    if (var == NULL || var[0] == '\0') return string();
+
+    string dirs = var;
+    for (size_t beginPos = 0; beginPos < dirs.size(); ) {
+        size_t colonPos = dirs.find(':', beginPos);
+        size_t endPos = (colonPos == string::npos) ? dirs.size() : colonPos;
+        string dir = dirs.substr(beginPos, endPos - beginPos);
+        string fileName = dir + "/" + name;
+        if (access(fileName.c_str(), X_OK) == 0) {
+            return fileName;
+        }
+        beginPos = endPos + 1;
+    }
+
+    return string();
+}
+
+void OptionParser::setProgName(const string &path)
+{
+    if (path.find_last_of('/') == string::npos) {
+        progName = findInPath(path);
+    } else {
+        progName = path;
+    } 
 }
