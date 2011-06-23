@@ -39,8 +39,12 @@ public:
     OptionConfig *run() const;
     void reportDummyOptions(OptionConfig* config) const;
 
+protected:
+    void setProgName(const std::string &path);
+
 private:
-    std::vector<std::string> arg_vec;
+    std::string progName;
+    std::vector<std::string> args;
 };
 
 

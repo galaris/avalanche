@@ -180,8 +180,9 @@ bool FileBuffer::filterCovgrindOutput()
 {
   char* checkPId = buf;
   int eqNum = 0;
-  while (checkPId != NULL)
+  for (;;)
   {
+    if (*checkPId == '\0') return false;
     if (*checkPId == '=') eqNum ++;
     if (eqNum == 4) break;
     checkPId ++;
