@@ -33,12 +33,12 @@ This README file describes the steps to build and run Avalanche on ARM.
   $ debian/rules build
   $ sudo debian/rules binary
 
-- Find the avalanche_0.5~YYYYMMDD_ARCH.deb file in the parent directory
-  (where YYYYMMDD is the date, and ARCH is the target architecture - e.g.
-  i386 or armel):
+- Find the avalanche_VERSION_ARCH.deb file in the parent directory (where
+  VERSION is avalanche version number, e.g. 0.5.0, and ARCH is the target
+  architecture - e.g. i386 or armel):
 
-  $ ls ../avalanche_0.5*.deb
-  ../avalanche_0.5~svn20110601_i386.deb
+  $ ls ../avalanche_*.deb
+  ../avalanche_0.5.0_i386.deb
 
 3. RUNNING AVALANCHE FOR ARM/LINUX IN "SPLIT" MODE
 
