@@ -176,9 +176,19 @@ OptionConfig *OptionParser::run() const
         else if (args[i] == "--dump-calls") {
             config->setDumpCalls();
         }
-        else if (args[i] == "--verbose") {
-            config->setVerbose();
+
+        // Verbose options
+
+        else if (args [i] == "--verbose" || args [i] == "-v") {
+            config->setVerbose ();
         }
+        else if (args[i] == "--program-output") {
+            config->setProgramOutput ();
+        }
+        else if (args[i] == "--network-log") {
+            config->setNetworkLog ();
+        }
+
         else if (args[i] == "--use-memcheck") {
             config->setUsingMemcheck();
         }
@@ -195,11 +205,16 @@ OptionConfig *OptionParser::run() const
             delete config;
             return NULL;
         }
-        else
-            config->addProgAndArg(args[i]);
-    }
+        else {
+            // Program name and arguments
 
-    if (config->getAgent() && config->getDistributed()) {
+            config->addProgAndArg(args[i]);
+            for (size_t j = i + 1; j < arg_vec.size(); j++)
+                config->addProgAndArg(arg_vec[j]);
+            break;
+        }
+    }
+        if (config->getAgent() && config->getDistributed()) {
         delete config;
         cout << "you cannot specify '--agent' and '--distributed' at the same time\n";
     }

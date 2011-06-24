@@ -63,10 +63,11 @@ string SimpleMonitor::getStats(time_t global_time)
     result << module_name[i] << ": " << module_time[i];
     if (global_time != 0)
     {
-      result << " (" << 100 * ((double) module_time[i]) / global_time << "%)";
+      result << " (" << 100 * ((double) module_time[i]) / global_time << " %)";
     }
     result << ((i < MODULE_COUNT - 1) ? ", " : "");
   }
+  result << ".";
   return result.str();
 }
 

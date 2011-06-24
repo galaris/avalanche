@@ -114,7 +114,7 @@ public:
     int checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, std::string fileNameModifier = "");
 
     void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
-    bool dumpMCExploit(Input* input, const char* exec_log);
+    void dumpMemoryError (Input * input, FileBuffer * mc_output, bool sameExploit, int exploitGroup);
     void dumpExploitArgv();
 
     bool updateArgv(Input* input);
@@ -124,6 +124,8 @@ public:
     void updateInput(Input* input);
 
     void talkToServer();
+
+		int getMemchecks ();
 
     OptionConfig* getConfig() { return config; }
 
@@ -136,6 +138,7 @@ private:
     std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
     int exploits;
+		int memchecks;
     int divergences;
 };
 

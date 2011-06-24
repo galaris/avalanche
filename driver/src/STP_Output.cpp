@@ -35,7 +35,7 @@ STP_Output::~STP_Output()
 {
     if (unlink(file) == -1)
     {
-        ERR(logger, "Cannot delete file " << file <<":"<< strerror(errno));
+        LOG(Logger :: ERROR, "Cannot delete file " << file <<":"<< strerror(errno));
     }
     if (file != NULL)
     {

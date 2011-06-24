@@ -25,6 +25,9 @@
 #define __FILE_BUFFER__H__
 
 #include <stddef.h>
+#include <string>
+
+using namespace std;
 
 class FileBuffer
 {
@@ -45,6 +48,8 @@ public:
 
   FileBuffer(const FileBuffer& other);
 
+  FileBuffer(string str);
+
   virtual FileBuffer* forkInput(char* stpOutputFile);
 
   virtual void dumpFile(const char* name = NULL);
@@ -53,7 +58,17 @@ public:
 
   virtual void applySTPSolution(char* buf);
   
-  bool filterCovgrindOutput();
+  bool filterCovgrindOutput ();
+  char * filterMemcheckOutput (long errors);
+
+  // Return the number after first appearence of 'str' in 'buf'
+  long filterCount (const char * str);
+
+  // Get call stack from 'position' in 'buf'
+  string getCallStack (int & position);
+  string getErrorType (int & position);
+
+  string getBuf ();
 
   ~FileBuffer();
 

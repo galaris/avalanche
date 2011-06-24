@@ -37,7 +37,7 @@ using namespace std;
 
 static Logger* logger = Logger::getLogger();
 
-Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _argvSpecified) :
+Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _argvSpecified, bool exploitType) :
                                                               argvSpecified(_argvSpecified)
 {
   if (trace == NULL)
@@ -49,6 +49,7 @@ Chunk::Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _argvSpecifie
     this->trace = new FileBuffer(*trace);
   }
   exploitGroups.push_back(make_pair(exploitNum, inputNum));
+  isExploit = exploitType;
 }
 
 Chunk::~Chunk()
@@ -60,7 +61,7 @@ void Chunk::addGroup(int exploitNum, int inputNum)
 {
   exploitGroups.push_back(make_pair(exploitNum, inputNum));
 }
-  
+ 
 FileBuffer* Chunk::getTrace()
 {
   return trace;
@@ -69,8 +70,12 @@ FileBuffer* Chunk::getTrace()
 void Chunk::print(string prefix, int chunkNum, int fd)
 {
   ostringstream out;
-  out << "chunk " << chunkNum << ": ";
-  for (vector<pair<int, int> >::iterator it = exploitGroups.begin(); it != exploitGroups.end(); it++)
+  out << "  Chunk " << chunkNum << ": ";
+
+  string errorType = isExploit ? "exploit" : "memcheck";
+
+  for (vector <pair <int, int> > :: iterator it = exploitGroups.begin (); 
+    it != exploitGroups.end (); it++)
   {
     if (it != exploitGroups.begin())
     {
@@ -78,17 +83,18 @@ void Chunk::print(string prefix, int chunkNum, int fd)
     }
     int exploitNum = it->first;
     int inputNum = it->second;
+
     if (inputNum > 0)
     {
       for (int i = 0; i < inputNum - 1; i++)
       {
-        out << prefix << "exploit_" << exploitNum << "_" << i << " + ";
+        out << prefix << errorType << "_" << exploitNum << "_" << i << " + ";
       }
-      out << prefix << "exploit_" << exploitNum << "_" << inputNum - 1;
+      out << prefix << errorType << "_" << exploitNum << "_" << inputNum - 1;
     }
     else if (inputNum == -1)
     {
-      out << prefix << "exploit_" << exploitNum;
+      out << prefix << errorType << "_" << exploitNum;
     }
     if (argvSpecified)
     {
@@ -96,7 +102,7 @@ void Chunk::print(string prefix, int chunkNum, int fd)
       {
         out << " : ";
       }
-      out << prefix << "exploit_" << exploitNum << "_argv";
+      out << prefix << errorType << "_" << exploitNum << "_argv";
     }
   }
   if (trace != NULL)
@@ -105,11 +111,11 @@ void Chunk::print(string prefix, int chunkNum, int fd)
   }
   else
   {
-    out << " - No stack trace available";
+    out << " - no stack trace available.";
   }
   if (fd == -1)
   {
-    REPORT(logger, out.str());
+    LOG (Logger :: JOURNAL, out.str ());
   }
   else
   {
