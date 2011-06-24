@@ -209,8 +209,8 @@ OptionConfig *OptionParser::run() const
             // Program name and arguments
 
             config->addProgAndArg(args[i]);
-            for (size_t j = i + 1; j < arg_vec.size(); j++)
-                config->addProgAndArg(arg_vec[j]);
+            for (size_t j = i + 1; j < args.size(); j++)
+                config->addProgAndArg(args[j]);
             break;
         }
     }
