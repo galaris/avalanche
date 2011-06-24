@@ -75,7 +75,10 @@ static void printHelpBanner()
         "    --use-memcheck               Use memcheck instead of covgrind\n"
         "    --leaks                      Check for memory leaks\n"
         "                                 (ignored if '--use-memcheck' isn't specified)\n"
-        "    --verbose                    Much more detailed avalanche output\n" 
+        "    --verbose, -v                Printing information about iteration (depth, heuristic), exploits/memchecks\n"
+        "                                 (time, output file)\n" 
+        "    --program-output             Show program output at logs\n" 
+        "    --network-log                Show network logs\n" 
         "    --debug                      Save some debugging information - divergent inputs, etc.\n" 
         "    --depth=<number>             The number of conditions collected during one run of tracegrind\n"
         "                                 (default is 100). May be used in the form '--depth=infinity',\n"
@@ -84,13 +87,13 @@ static void printHelpBanner()
         "    --filename=<input_file>      The path to the file with the input data for the application being tested\n"
         "    --trace-children             Run valgrind plugins with '--trace-children=yes' option\n"
         "    --check-danger               Emit special constraints for memory access operations\n"
-	"                                 and divisions (slows down the analysis)\n"
-	"    --dump-calls                 Dump the list of functions manipulating with tainted data to calldump.log\n"
-	"    --func-name=<name>           The name of function that should be used for separate function analysis\n"
-	"    --func-file=<name>           The path to the file with the list of functions that\n"
-	"                                 should be used for separate function analysis\n"
-	"    --mask=<mask_file>           The path to the file with input mask\n"
-	"    --suppress-subcalls          Ignore conditions in a nested function calls during separate analysis\n"
+        "                                 and divisions (slows down the analysis)\n"
+        "    --dump-calls                 Dump the list of functions manipulating with tainted data to calldump.log\n"
+        "    --func-name=<name>           The name of function that should be used for separate function analysis\n"
+        "    --func-file=<name>           The path to the file with the list of functions that\n"
+        "                                 should be used for separate function analysis\n"
+        "    --mask=<mask_file>           The path to the file with input mask\n"
+        "    --suppress-subcalls          Ignore conditions in a nested function calls during separate analysis\n"
         "    --stp-threads=<number>       The number of STP queries handled simultaneously. May be used in the form\n"
         "                                 '--stp-threads=auto'. In this case the number of CPU cores is taken.\n"
         "    --report-log=<filename>      Dump exploits report to the specified file\n"
@@ -152,27 +155,39 @@ void cleanUp()
 
 void reportResults()
 {
-  time_t end_time = time(NULL);
-  LOG(logger, "Time statistics:\ntotal: " << end_time - monitor->getGlobalStartTime() << ", "
-                                          << monitor->getStats(end_time - monitor->getGlobalStartTime()));
-  if (opt_config->getReportLog() == string(""))
+  // Exploits report
+
+  int fd = -1;
+  bool toFile = (opt_config -> getReportLog() != string (""));
+
+  if (toFile)
+    fd = open (opt_config -> getReportLog().c_str(), 
+      O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+
+  if (!toFile)
   {
-    REPORT(logger, "\nExploits report:");
-    for (int i = 0; i < report.size(); i++)
-    {
-      report.at(i)->print(opt_config->getPrefix(), i);
-    }
-    REPORT(logger, "");
+    LOG (Logger :: REPORT, "\nUnique error(s) found: " << report.size () << ".");
   }
-  else
+
+  if (report.size () > 0)
   {
-    int fd = open(opt_config->getReportLog().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-    for (int i = 0; i < report.size(); i++)
+    for (int i = 0; i < report.size (); i++)
     {
-      report.at(i)->print(opt_config->getPrefix(), i, fd);
+      report.at (i) -> print (opt_config -> getPrefix (), i, fd);
     }
+  }
+
+  if (toFile)
     close(fd);
-  }  
+
+  // Time statistics
+
+  time_t end_time = time (NULL);
+  LOG (Logger :: REPORT, "\nTime statistics: " 
+    << end_time - monitor -> getGlobalStartTime () << " sec, "
+    << monitor -> getStats (end_time - monitor -> getGlobalStartTime ()));
+
+  LOG (Logger :: REPORT, "");
 }
 
 void sig_hndlr(int signo)
@@ -214,7 +229,10 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    if (opt_config->getVerbose()) logger->enableVerbose();
+    if (opt_config -> getVerbose ()) logger -> setVerbose ();
+    if (opt_config -> getDebug ()) logger -> setDebug ();
+    if (opt_config -> getProgramOutput ()) logger -> setProgramOutput ();
+    if (opt_config -> getNetworkLog ()) logger -> setNetworkLog ();
 
     thread_num = opt_config->getSTPThreads();
     string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") : string("covgrind"));
@@ -232,8 +250,8 @@ int main(int argc, char *argv[])
     time_t work_start_time = time(NULL);
     string t = string(ctime(&work_start_time));
 
-    LOG(logger, "Avalanche, a dynamic analysis tool.");
-    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));
+    LOG (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
+    LOG (Logger :: VERBOSE, ""); // new line
   
     em = new ExecutionManager(opt_config);
     em->run();

@@ -33,6 +33,8 @@
 #include <fcntl.h>
 #include <iostream>
 
+using namespace std;
+
 FileBuffer::FileBuffer(const char* name)
 {
   this->name = strdup(name);
@@ -55,6 +57,14 @@ FileBuffer::FileBuffer(const FileBuffer& other)
   {
     this->buf[i] = other.buf[i];
   }
+}
+
+FileBuffer :: FileBuffer (string str) // it is not filename! It is string for 'buf'
+{
+  this -> name = "none";
+  this -> size = str.size ();
+  this -> buf = (char *) malloc (size + 1);
+  strcpy (this -> buf, (char *) str.c_str ());
 }
 
 FileBuffer* FileBuffer::forkInput(char* stpOutputFile)
@@ -230,6 +240,99 @@ bool FileBuffer::filterCovgrindOutput()
   size = i;
   free(new_buf);
   return true;
+}
+
+// FilterCount
+
+long FileBuffer :: filterCount (const char * str) // "possibly lost: ", "ERROR SUMMARY: ", "definitely lost: "
+{
+  long number = -1;
+  char * find = NULL;
+  find = strstr (buf, str);
+
+  if (find != NULL)
+  {
+    number = strtol (find + strlen (str), NULL, 10);
+  }  
+  return number;
+}
+
+// Memcheck error call stack
+
+string FileBuffer :: getErrorType (int & position)
+{
+  int end;
+
+  string errorType;
+
+  int memcheckTypes = 11;
+
+  string valgrindMemcheckType [memcheckTypes];
+  valgrindMemcheckType [0] = " contains unaddressable byte(s)";
+  valgrindMemcheckType [1] = "Use of uninitialised value of size";
+  valgrindMemcheckType [2] = "Conditional jump or move depends on uninitialised value(s)";
+  valgrindMemcheckType [3] = "Syscall param";
+  valgrindMemcheckType [4] = " byte(s) found during client check request";
+  valgrindMemcheckType [5] = "Invalid ";
+  valgrindMemcheckType [6] = "Mismatched free() / delete / delete []";
+  valgrindMemcheckType [7] = "Jump to the invalid address stated on the next line";
+  valgrindMemcheckType [8] = "Source and destination overlap in";
+  valgrindMemcheckType [9] = "Illegal memory pool address";
+  valgrindMemcheckType [10] = " loss record ";
+
+  for (int i = 0; i < memcheckTypes; i++)
+  {
+    int found = string (buf).find (valgrindMemcheckType [i], position);
+
+    if (found != string :: npos) // if found
+    {
+      int j, k, l, m;
+      for (k = found; buf [k] != '='; k++);
+      for (j = found; buf [j] != '='; j--);
+      
+      errorType = string (buf).substr (j + 2, k - j - 3);
+
+      position = k;
+    }
+  }
+  return errorType;
+}
+
+// Memcheck error call stack
+
+string FileBuffer :: getCallStack (int & position)
+{
+  int end;
+
+  string callStack;
+
+  // Call stack parsing
+
+  int l; 
+
+  for (l = position; !(buf [l] == '=' && buf [l + 2] == '\n'); l++);
+
+  callStack = string (buf).substr (position, l - position) + " ";
+
+  position = l;
+
+  // Deletion PID from Memcheck log
+
+  int begin = 0;
+  do
+  {
+    end = callStack.find ("== ");
+    callStack.replace (begin, end - begin + 2, "");
+    begin = callStack.find ("==");
+  }
+  while (begin != string :: npos);
+
+  return callStack;
+}
+
+string FileBuffer :: getBuf ()
+{
+  return string (buf);
 }
 
 bool operator == (const FileBuffer& arg1, const FileBuffer& arg2)

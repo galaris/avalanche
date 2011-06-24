@@ -45,15 +45,15 @@ static Logger *logger = Logger::getLogger();
 
 
 PluginExecutor::PluginExecutor(bool debug_full_enabled,
-			       bool traceChildren,
+                               bool traceChildren,
                                const string &install_dir,
                                const vector<string> &cmd,
                                const vector<string> &tg_args,
-			       Kind kind): 
+                               Kind kind): 
                                    debug_full(debug_full_enabled), traceChildren(traceChildren), kind(kind)
 {
     if (cmd.size() < 1) {
-        LOG(logger, "No program name");
+        LOG(Logger :: ERROR, "No program name");
         return;
     }
     prog = strdup((install_dir + "../lib/avalanche/valgrind").c_str());
@@ -94,15 +94,20 @@ int PluginExecutor::run(int thread_index)
 {
     if (prog == NULL)
         return NULL;
-    
+
+    char * pluginName = "Unknown";
+
+    switch (kind)
+    {
+      case TRACEGRIND: pluginName = "Tracegrind"; break;
+      case MEMCHECK: pluginName = "Memcheck"; break;
+      case COVGRIND: pluginName = "Covgrind";
+    }
+
     if (!thread_num)
-    {
-      LOG(logger, "Running plugin kind=" << kind);
-    }
+      LOG (Logger :: DEBUG, "Running plugin " << pluginName << ".");
     else
-    {
-      LOG(logger, "Thread #" << thread_index << ": Running plugin kind=" << kind);
-    }
+      LOG (Logger :: DEBUG, "Thread #" << thread_index << ": Running plugin " << pluginName << ".");
 
     TmpFile file_out;
     TmpFile file_err;
@@ -114,7 +119,7 @@ int PluginExecutor::run(int thread_index)
     monitor->setPID(child_pid, thread_index);
     if (ret == -1) 
     {
-      ERR(logger, "Problem in execution: " << strerror(errno));
+      LOG(Logger :: ERROR, "Problem in execution: " << strerror(errno));
       if (kind == MEMCHECK)
       {
         output = new FileBuffer(file_err.exportFile());
@@ -128,7 +133,7 @@ int PluginExecutor::run(int thread_index)
     {
       if (!monitor->getKilledStatus())
       {
-        LOG(logger, "exited on signal");
+        LOG(Logger :: DEBUG, "Exited on signal.");
         if (kind == MEMCHECK)
         {
           output = new FileBuffer(file_err.exportFile());
@@ -148,12 +153,12 @@ int PluginExecutor::run(int thread_index)
       
     switch (kind)
     {
-      case TRACEGRIND: LOG(logger, msg.str().append("Tracegrind is finished"));
-		       break;
-      case MEMCHECK:   LOG(logger, msg.str().append("Memcheck is finished"));
+      case TRACEGRIND: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
+                       break;
+      case MEMCHECK:   LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
                        output = new FileBuffer(file_err.exportFile());
                        break;
-      case COVGRIND:   LOG(logger, msg.str().append("Covgrind is finished"));
+      case COVGRIND:   LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
     }
 
     return 0;

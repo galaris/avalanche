@@ -297,7 +297,8 @@ int main(int argc, char** argv)
         {
           int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads;
           int argsnum, filtersNum, filterlength, masklength;
-          bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls, STPThreadsAuto;
+          bool useMemcheck, leaks, traceChildren, checkDanger, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
+					int verboseLevel;
           filenum = 0;
           try 
           { 
@@ -345,7 +346,9 @@ int main(int argc, char** argv)
             pass(*fd, &traceChildren, sizeof(bool));
             pass(*fd, &checkDanger, sizeof(bool));
             pass(*fd, &debug, sizeof(bool));
-            pass(*fd, &verbose, sizeof(bool));
+						pass(*fd, &verboseLevel, sizeof(int));
+						pass(*fd, &programOutput, sizeof(bool));
+						pass(*fd, &networkLog, sizeof(bool));
             pass(*fd, &suppressSubcalls, sizeof(bool));
             pass(*fd, &STPThreadsAuto, sizeof(bool));
 

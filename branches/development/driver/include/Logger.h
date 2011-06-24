@@ -6,7 +6,7 @@
 
 /*
    Copyright (C) 2009 Nick Lugovskoy
-      lugovskoy@ispras.ru
+	  lugovskoy@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -31,60 +31,59 @@
 
 class Logger
 {
-public:
-    enum Level { LEV_ALWAYS, LEV_INFO, LEV_DEBUG, LEV_ERROR, LEV_NET };
-
-    Logger(): enable_verbose(false)
-    {}
-
-    void enableVerbose()
-    { enable_verbose = true; }
-    
-    static Logger *getLogger();
-
-    void write(Level level,
-               const std::string &msg,
-               const char *file, std::size_t line) const;
-
 private:
-    bool enable_verbose;
+
+	bool verbose;
+	bool debug;
+	bool programOutput;
+	bool networkLog;
+
+public:
+
+	enum Level 
+	{
+		JOURNAL, 
+		VERBOSE, 
+		PROGRAM_OUTPUT,
+		NETWORK_LOG,
+		ERROR,
+		REPORT, // printing final report
+		DEBUG
+	};
+
+	Logger (): verbose (false), debug (false), programOutput (false), 
+		networkLog (false) {}
+
+	void setVerbose ();
+	void setDebug ();
+	void setProgramOutput ();
+	void setNetworkLog ();
+	
+	static Logger * getLogger ();
+
+	void write (Level level, const std::string &msg, const char *file, 
+		std::size_t line) const;
 };
 
-#define REPORT(logger, msg) \
-    do { \
-        std::ostringstream log_buf; \
-        log_buf << msg; \
-        logger->write(Logger::LEV_ALWAYS, log_buf.str(), __FILE__, __LINE__);\
-    } while (0)
+// Printing log message
 
-#define NET(logger, msg) \
-    do { \
-        std::ostringstream log_buf; \
-        log_buf << msg; \
-        logger->write(Logger::LEV_NET, log_buf.str(), __FILE__, __LINE__);\
-    } while (0)
+#define LOG(level, msg) \
+	do { \
+		std :: ostringstream log_buf; \
+		log_buf << msg; \
+		logger -> write (level, log_buf.str (), __FILE__, __LINE__); \
+	} while (0)
 
-#define LOG(logger, msg) \
-    do { \
-        std::ostringstream log_buf; \
-        log_buf << msg; \
-        logger->write(Logger::LEV_INFO, log_buf.str(), __FILE__, __LINE__);\
-    } while (0)
+// Printing log message with time
 
-#define DBG(logger, msg) \
-    do { \
-        std::ostringstream log_buf; \
-        log_buf << msg; \
-        logger->write(Logger::LEV_DEBUG, log_buf.str(), __FILE__, __LINE__);\
-    } while (0)
-
-#define ERR(logger, msg) \
-    do { \
-        std::ostringstream log_buf; \
-        log_buf << msg; \
-        logger->write(Logger::LEV_ERROR, log_buf.str(), __FILE__, __LINE__);\
-    } while (0)
-
+#define LOG_TIME(level, msg) \
+	do { \
+		time_t tt = time (NULL); \
+		string t = string (ctime (& tt)); \
+		std :: ostringstream log_buf; \
+		log_buf << msg << " \033[2m" << t.substr (0, t.size() - 1) << "\033[0m"; \
+		logger -> write (level, log_buf.str (), __FILE__, __LINE__); \
+	} while (0)
 
 #endif //__LOGGER__H__
 

@@ -51,7 +51,7 @@ TmpFile::TmpFile(): is_exported(false), is_good(true)
     if (!fp) 
     {
         is_good = false;
-        ERR(logger, "Cannot open file " << filename << ":" << strerror(errno));
+        LOG (Logger :: ERROR, "Cannot open file " << filename << ":" << strerror(errno));
     }
     else
     {
@@ -73,7 +73,7 @@ void TmpFile::remove()
     if (is_good != true) return;
 
     if (::unlink(filename) == -1)
-        ERR(logger, "Cannot delete file " << filename <<":"<< strerror(errno));
+        LOG (Logger :: ERROR, "Cannot delete file " << filename <<":"<< strerror(errno));
 }
 
 void TmpFile::print() const
@@ -86,7 +86,7 @@ void TmpFile::print() const
         char buf[65536];
 
         in_file.getline(buf, 65536);
-        DBG(logger, buf);
+        LOG (Logger :: DEBUG, buf);
     }
     in_file.close();
 }

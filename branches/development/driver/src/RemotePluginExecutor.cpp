@@ -178,7 +178,7 @@ int RemotePluginExecutor::run(int thread_index)
   }
   catch(...)
   {
-    NET(logger, "Connection with remote plugin agent is down");
+    LOG(Logger::NETWORK_LOG, "Connection with remote plugin agent is down");
     return 1;
   }
   return res;

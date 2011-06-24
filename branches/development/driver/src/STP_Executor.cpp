@@ -61,11 +61,11 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
 {
     if (!thread_num)
     {
-      LOG(logger, "Running STP");
+      LOG(Logger :: DEBUG, "Running STP.");
     }
     else
     {
-      LOG(logger, "Thread #" << thread_index << ": Running STP");
+      LOG(Logger :: DEBUG, "Thread #" << thread_index << ": Running STP.");
     }
     
     args[2] = strdup(file_name);
@@ -80,7 +80,7 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
     monitor->setPID(child_pid, thread_index);
  
     if (ret == -1) {
-        ERR(logger, "Problem in execution: " << strerror(errno));
+        LOG(Logger :: ERROR, "Problem in execution: " << strerror(errno));
         return NULL;
     }
 
@@ -88,21 +88,21 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
     if (ret == -1) {
         if (!monitor->getKilledStatus())
         {
-          ERR(logger, "Problem in waiting: " << strerror(errno));
+          LOG(Logger :: ERROR, "Problem in waiting: " << strerror(errno));
         }
         return NULL;
     }
     if (!thread_num)
     {
-      LOG(logger, "STP is finished");
+      LOG(Logger :: DEBUG, "STP is finished.");
     }
     else
     {
-      LOG(logger, "Thread #" << thread_index << ": STP is finished");
+      LOG(Logger :: DEBUG, "Thread #" << thread_index << ": STP is finished.");
     }
 
     if (ret != 0) {
-        LOG(logger, "STP exits with code " << ret);
+        LOG(Logger :: DEBUG, "STP exits with code " << ret);
         return NULL;
     }
 

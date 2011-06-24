@@ -38,11 +38,13 @@ public:
                     debug(false),
                     protectMainAgent(false),
                     STPThreadsAuto(false),
-		                checkDanger(false),
-                    sizeoflong(sizeof(long)),
-                    verbose(false),
+                    checkDanger(false),
+                    verbose (false),
+                    programOutput (false),
+                    networkLog (false),
                     sockets(false),
                     traceChildren(false),
+                    sizeoflong(sizeof(long)),
                     datagrams(false),
                     distributed(false), 
                     remoteValgrind(false),
@@ -78,6 +80,8 @@ public:
         agent           = opt_config->agent;
         checkDanger     = opt_config->checkDanger;
         verbose         = opt_config->verbose;
+        programOutput   = opt_config->programOutput;
+        networkLog      = opt_config->networkLog;
         sockets         = opt_config->sockets;
         datagrams       = opt_config->datagrams;
         depth           = opt_config->depth;
@@ -192,10 +196,22 @@ public:
      
     void setVerbose()
     { verbose = true; }
-    
-    bool getVerbose() const
-    { return verbose; }
 
+		bool getVerbose()
+		{ return verbose; }
+    
+    void setProgramOutput()
+    { programOutput = true; }
+
+		bool getProgramOutput()
+		{ return programOutput; }
+    
+    void setNetworkLog()
+    { networkLog = true; }
+
+		bool getNetworkLog ()
+		{ return networkLog; }
+    
     void setDistributed()
     { distributed = true; }
     
@@ -350,7 +366,9 @@ private:
     bool                     debug;
     bool                     protectMainAgent;
     bool                     verbose;
-    bool                     sockets;
+    bool                     programOutput;
+    bool                     networkLog;
+    bool		     sockets;
     bool                     datagrams;
     bool                     useMemcheck;
     bool                     checkDanger;

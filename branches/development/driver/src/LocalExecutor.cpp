@@ -59,7 +59,7 @@ int LocalExecutor::exec(bool setlimit)
         args_log.append(" ");
         args_log.append(args[i]);
     }
-    LOG(logger, "Executing command: " << prog << ", with args: " << args_log);
+    LOG(Logger::DEBUG, "Executing command: " << prog << ", with args: " << args_log);
     
     do_redirect(STDOUT_FILENO, file_out); file_out = -1;
     do_redirect(STDERR_FILENO, file_err); file_err = -1;
@@ -97,14 +97,14 @@ void LocalExecutor::redirect_stdout(char *filename)
 {
     file_out = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
     if (file_out == -1)
-        LOG(logger, "Cannot open " << filename << strerror(errno));
+        LOG(Logger::JOURNAL, "Cannot open " << filename << strerror(errno));
 }
 
 void LocalExecutor::redirect_stderr(char *filename)
 {
     file_err = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
     if (file_err == -1)
-        LOG(logger, "Cannot open " << filename << strerror(errno));
+        LOG(Logger::JOURNAL, "Cannot open " << filename << strerror(errno));
 }
 
 void LocalExecutor::do_redirect(int file_to_redirect, int new_file)
