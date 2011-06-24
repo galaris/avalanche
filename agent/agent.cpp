@@ -207,8 +207,7 @@ int main(int argc, char** argv)
 
     int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm;
     int threads, argsnum, masklength, filtersNum, flength, received, net_fd;
-    bool useMemcheck, leaks, traceChildren, checkDanger, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
-		int verboseLevel;
+    bool useMemcheck, leaks, traceChildren, checkDanger, verbose, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
   
     readFromSocket(fd, &file_num, sizeof(int));
     if (file_num == -1)
@@ -231,7 +230,7 @@ int main(int argc, char** argv)
     readFromSocket(fd, &traceChildren, sizeof(bool));
     readFromSocket(fd, &checkDanger, sizeof(bool));
     readFromSocket(fd, &debug, sizeof(bool));
-    readFromSocket(fd, &verboseLevel, sizeof(int));
+    readFromSocket(fd, &verbose, sizeof(bool));
     readFromSocket(fd, &programOutput, sizeof(bool));
     readFromSocket(fd, &networkLog, sizeof(bool));
     readFromSocket(fd, &suppressSubcalls, sizeof(bool));
@@ -322,17 +321,9 @@ int main(int argc, char** argv)
     {
       avalanche_argv[av_argc++] = "--debug";
     }
-    if (verboseLevel == 1)
+    if (verbose)
     {
       avalanche_argv[av_argc++] = "-v";
-    }
-    if (verboseLevel == 2)
-    {
-      avalanche_argv[av_argc++] = "-v1";
-    }
-    if (verboseLevel == 3)
-    {
-      avalanche_argv[av_argc++] = "-v2";
     }
     if (programOutput)
     {
