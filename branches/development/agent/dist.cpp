@@ -295,7 +295,7 @@ int main(int argc, char** argv)
         }
         for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end();)
         {
-          int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads;
+          int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, dirLength;
           int argsnum, filtersNum, filterlength, masklength;
           bool useMemcheck, leaks, traceChildren, checkDanger, verbose, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
           filenum = 0;
@@ -345,9 +345,9 @@ int main(int argc, char** argv)
             pass(*fd, &traceChildren, sizeof(bool));
             pass(*fd, &checkDanger, sizeof(bool));
             pass(*fd, &debug, sizeof(bool));
-						pass(*fd, &verbose, sizeof(bool));
-						pass(*fd, &programOutput, sizeof(bool));
-						pass(*fd, &networkLog, sizeof(bool));
+            pass(*fd, &verbose, sizeof(bool));
+            pass(*fd, &programOutput, sizeof(bool));
+            pass(*fd, &networkLog, sizeof(bool));
             pass(*fd, &suppressSubcalls, sizeof(bool));
             pass(*fd, &STPThreadsAuto, sizeof(bool));
 
@@ -377,6 +377,12 @@ int main(int argc, char** argv)
             if (filterlength != 0)
             {
               pass(*fd, filterlength);
+            }
+ 
+            pass(*fd, &dirLength, sizeof(int));
+            if (dirLength != 0)
+            {
+              pass(*fd, dirLength);
             }
 
             for (int i = 0; i < argsnum; i++)

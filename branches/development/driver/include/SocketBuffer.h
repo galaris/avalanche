@@ -36,7 +36,7 @@ public:
 
   SocketBuffer(const SocketBuffer& other);
 
-  virtual FileBuffer* forkInput(char* stpOutputFile);
+  virtual FileBuffer* forkInput(std::string stpFileName);
 
   virtual void dumpFile(char* name = NULL);
   

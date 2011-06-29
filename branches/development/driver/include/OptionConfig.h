@@ -54,6 +54,7 @@ public:
                     dumpCalls(false),
                     leaks(false),
                     protectArgName(false),
+                    cleanUp(true),
                     funcFilterFile(std::string("")),
                     depth(100),
                     startdepth(1),
@@ -63,11 +64,13 @@ public:
                     prefix(std::string("")),
                     distHost(std::string("127.0.0.1")),
                     port(65536),
-                    distPort(12200),
+                    distPort(65536),
                     remoteHost(std::string("127.0.0.1")),
-                    remotePort(15500),
+                    remotePort(65536),
                     STPThreads(0),
-                    checkArgv(std::string(""))
+                    checkArgv(std::string("")),
+                    resultDir(std::string("")),
+                    agentDir(std::string(""))
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -91,13 +94,13 @@ public:
         files           = opt_config->files;
         alarm           = opt_config->alarm;
         tracegrindAlarm = opt_config->tracegrindAlarm;
-        host	        = opt_config->host;
-        port	        = opt_config->port;
-        distHost	= opt_config->distHost;
-        distPort	= opt_config->distPort;
-        remoteHost	= opt_config->remoteHost;
-        remotePort	= opt_config->remotePort;
-        remoteValgrind	= opt_config->remoteValgrind;
+        host            = opt_config->host;
+        port            = opt_config->port;
+        distHost        = opt_config->distHost;
+        distPort        = opt_config->distPort;
+        remoteHost      = opt_config->remoteHost;
+        remotePort      = opt_config->remotePort;
+        remoteValgrind  = opt_config->remoteValgrind;
         useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         funcFilterFile  = opt_config->funcFilterFile;
@@ -105,12 +108,15 @@ public:
         suppressSubcalls= opt_config->suppressSubcalls;
         dumpCalls       = opt_config->dumpCalls;
         inputFilterFile = opt_config->inputFilterFile;
-        STPThreads	= opt_config->STPThreads;
+        STPThreads      = opt_config->STPThreads;
         STPThreadsAuto	= opt_config->STPThreadsAuto;
         prefix          = opt_config->prefix;
         checkArgv       = opt_config->checkArgv;
         protectArgName  = opt_config->protectArgName;
         sizeoflong      = opt_config->sizeoflong;
+        cleanUp         = opt_config->cleanUp;
+        resultDir       = opt_config->resultDir;
+        agentDir        = opt_config->agentDir;
     }
 
     bool empty() const
@@ -139,6 +145,18 @@ public:
 
     void setReportLog(std::string reportLog)
     { this->reportLog = reportLog; }
+
+    const std::string getResultDir() const
+    { return resultDir; }
+
+    void setResultDir(std::string resultDir)
+    { this->resultDir = resultDir; }
+
+    const std::string getAgentDir() const
+    { return agentDir; }
+
+    void setAgentDir(std::string agentDir)
+    { this->agentDir = agentDir; }
 
     void setDebug()
     { debug = true; }
@@ -197,20 +215,20 @@ public:
     void setVerbose()
     { verbose = true; }
 
-		bool getVerbose()
-		{ return verbose; }
+    bool getVerbose()
+    { return verbose; }
     
     void setProgramOutput()
     { programOutput = true; }
 
-		bool getProgramOutput()
-		{ return programOutput; }
+    bool getProgramOutput()
+    { return programOutput; }
     
     void setNetworkLog()
     { networkLog = true; }
 
-		bool getNetworkLog ()
-		{ return networkLog; }
+    bool getNetworkLog ()
+    { return networkLog; }
     
     void setDistributed()
     { distributed = true; }
@@ -250,6 +268,12 @@ public:
     
     bool getCheckDanger() const
     { return checkDanger; }
+    
+    void disableCleanUp()
+    { cleanUp = false; }
+    
+    bool enabledCleanUp()
+    { return cleanUp; }
 
     void setUsingSockets()
     { sockets = true; }
@@ -363,44 +387,184 @@ public:
     { this->prefix = prefix; }
 
 private:
+    /* Enable DEBUG logging level.
+       Disabled by default (false). */
     bool                     debug;
+
+    /* Enable minimum limit for number of inputs in main avalanche:
+         no inputs are given to agents as long as there are more than
+         5 * number_of_agents.
+       Disabled by default (false). */
     bool                     protectMainAgent;
+
+    /* Enable VERBOSE logging level.
+       Disabled by default (false). */
     bool                     verbose;
+
+    /* Enable PROGRAM_OUTPUT logging level.
+       Disabled by default (false). */
     bool                     programOutput;
+
+    /* Enable NETWORK logging level.
+       Disabled by default (false). */
     bool                     networkLog;
+
+    /* Set avalanche to trace data from TCP sockets.
+       Not set by default (false). */
     bool		     sockets;
+
+    /* Set avalanche to trace data from UDP sockets.
+       Not set by default (false). */
     bool                     datagrams;
+
+    /* Use memcheck instead of covgrind.
+       Not set by default (false). */
     bool                     useMemcheck;
+
+    /* Enable dangertrace.log parsing.
+       Disabled by default (false). */
     bool                     checkDanger;
+
+    /* Add --check-leak=yes in memcheck options.
+       Not used by default (false). */
     bool                     leaks;
+
+    /* Enable ignoring QUERY's in nested calls during 
+         separate function analysis.
+       Disabled by default (false). */
     bool                     suppressSubcalls;
+
+    /* Enable dumping names of functions containing QUERY's.
+         Causes avalanche to run a single iteration, dumps calls
+         in calldump.log.
+       Disabled by default (false). */
     bool                     dumpCalls;
-    bool 	                   traceChildren;
+
+    /* Enable child processes analysis.
+       Disabled by defualt (false). */
+    bool                     traceChildren;
+
+    /* Set avalanche to run in distributed mode.
+       Not set by defualt (false). */
     bool                     distributed;
+
+    /* Set avalanche to run in split mode.
+       Not set by default (false). */
     bool                     remoteValgrind;
+
+    /* Set avalanche to agent mode.
+         Causes avalanche to request a knew input when all existing
+         have score=0.
+       Not set by defualt (false). */
     bool                     agent;
+
+    /* Enable automatic detection of STP threads number.
+       Not set by default (false). */
     bool                     STPThreadsAuto;
+
+    /* Enable extra protection for command line arguments:
+         for arguments starting with arg_name=arg_value only arg_value
+         can be modified by avalanche.
+       Disabled by default (false). */
     bool                     protectArgName;
+    
+    /* Enable removal of /tmp/avalanche-XXXXXX/ upon finishing the analysis.
+       Enabled by default (true). */
+    bool                     cleanUp;
+    
+    /* Path to folder to store exploits, memchecks, stacktraces and calldump. 
+       Not set by default (""). */
+    std::string              resultDir;
+
+    /* Path to folder to store exploits, memchecks, stacktraces and calldump
+         for av-agent. 
+       Not set by default (""). */
+    std::string              agentDir;
+    
+    /* Path to folder to store exploits, memchecks, stacktraces and calldump
+         for plugin-agent.
+       Not set by default (""). */
     std::string              reportLog;
+
+    /* Path to file with list of function names for separate function analysis.
+       Not set by default (""). */
     std::string              funcFilterFile;
+
+    /* Maximum depth (number of QUERY's) for tracegrind.
+       Set to 100 by default. */
     std::size_t              depth;
+
+    /* Path to valgrind binary.
+       Set automatically. */
     std::string              valgrind;
+
+    /* Path to analyzed executable and arguments.
+       Not set by default. */
     std::vector<std::string> prog_and_arg;
+
+    /* Input files to be considered tainted data source.
+       Not set by default. */
     std::vector<std::string> files;
+
+    /* Covgrind/memcheck timeout in seconds.
+       Set to 300 by default. */
     unsigned int             alarm;
+
+    /* Tracegrind timeout in seconds.
+       Not set by default. */
     unsigned int             tracegrindAlarm;
+
+    /* IPv4 address for network connection for --sockets/--datagrams.
+       Not set by default. */
     std::string	             host;
+
+    /* av-dist IPv4.
+       Set to 127.0.0.1 by default. */
     std::string              distHost;
+
+    /* plugin-agent IPv4.
+       Set to 127.0.0.1 by default. */
     std::string              remoteHost;
+
+    /* Port number for network connection for --sockets/datagrams.
+       Set to 65536 by default. */
     unsigned int             port;
+
+    /* av-dist port number.
+       Set to 65536 by default. */
     unsigned int             distPort;
+
+    /* plugin-agent port number.
+       Set to 65536 by default. */
     unsigned int             remotePort;
+
+    /* Function names to be used for separate function analysis.
+       Not set by default. */
     std::vector<std::string> funcFilterUnits;
+
+    /* Path to file containing mask for input filtering.
+       Not set by default. */
     std::string              inputFilterFile;
+
+    /* Prefix added to exploits, memchecks and stacktraces file names.
+       Not set by default (""). */
     std::string              prefix;
+
+    /* Initial depth (number of first QUERY to be used).
+       Set to 1 by default. */
     unsigned int             startdepth;
+
+    /* Number of STP threads.
+       Not set by default (0). */
     unsigned int             STPThreads;
+
+    /* String containing argument numbers (1,2,...) to be checked 
+         as a source of tainted data.
+       Not set by default (""). */
     std::string              checkArgv;
+
+    /* Pointer size synchronization for split mode.
+       Set automatically. */
     int                      sizeoflong;
 };
 

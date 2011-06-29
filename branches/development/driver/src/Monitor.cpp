@@ -37,8 +37,9 @@ Monitor::Monitor(string checker_name, time_t _global_start_time) : is_killed(fal
   module_name[STP] = "stp";
 }
 
+
 SimpleMonitor::SimpleMonitor(string checker_name, time_t _global_start_time) : Monitor(checker_name, _global_start_time), 
-                                                         current_state(OUT)
+                                                         current_state(OUT), cur_tmp_stdout(NULL), cur_tmp_stderr(NULL)
 {
   for (int i = 0; i < MODULE_COUNT; i ++)
   {
@@ -54,6 +55,26 @@ void SimpleMonitor::addTime(time_t end_time, unsigned int thread_index)
     current_state = OUT;
   }
 }
+
+void SimpleMonitor::setTmpFiles(TmpFile* tmp_stdout, TmpFile* tmp_stderr)
+{
+  if (cur_tmp_stdout != NULL) 
+  {
+    delete cur_tmp_stdout;
+    delete cur_tmp_stderr;
+  }
+  cur_tmp_stdout = tmp_stdout;
+  cur_tmp_stderr = tmp_stderr;
+}
+
+void SimpleMonitor::removeTmpFiles()
+{
+  delete cur_tmp_stdout;
+  delete cur_tmp_stderr;
+  cur_tmp_stdout = NULL;
+  cur_tmp_stderr = NULL;
+}
+
             
 string SimpleMonitor::getStats(time_t global_time)
 {
@@ -104,6 +125,7 @@ ParallelMonitor::ParallelMonitor(string checker_name, time_t _global_start_time,
     current_state[i] = OUT;
     checker_start_time[i] = stp_start_time[i] = 0;
   }
+
 }
 
 ParallelMonitor::~ParallelMonitor()
@@ -136,6 +158,25 @@ void ParallelMonitor::setState(state _state, time_t _start_time, unsigned int th
   {
     tracer_start_time = _start_time;
   }
+}
+
+void ParallelMonitor::setTmpFiles(TmpFile* tmp_stdout, TmpFile* tmp_stderr)
+{
+  pthread_mutex_lock(&add_time_mutex);
+  tmp_files.push_back(make_pair(tmp_stdout, tmp_stderr));
+  pthread_mutex_unlock(&add_time_mutex);
+}
+
+void ParallelMonitor::removeTmpFiles()
+{
+  pthread_mutex_lock(&add_time_mutex);
+  for (vector<pair<TmpFile*, TmpFile*> >::iterator i = tmp_files.begin(); i != tmp_files.end(); i ++)
+  {
+    delete i->first;
+    delete i->second;
+  }
+  tmp_files.clear();
+  pthread_mutex_unlock(&add_time_mutex);
 }
 
 void ParallelMonitor::addTime(time_t end_time, unsigned int thread_index)

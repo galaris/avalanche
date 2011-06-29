@@ -59,6 +59,9 @@
 #include "copy.h"
 #include "parser.h"
 
+#define PERM_R_W VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP | \
+                 VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP
+
 //#define TAINTED_TRACE_PRINTOUT
 //#define CALL_STACK_PRINTOUT
 
@@ -160,6 +163,9 @@ VgHashTable funcNames;
 
 Char* diFunctionName;
 Char* diVarName;
+
+Char* checkArgvList;
+Char* tempDir;
 
 Bool newSB;
 IRSB* printSB;
@@ -319,6 +325,26 @@ Bool dumpCall()
     return True;
   }
   return False;
+}
+
+static
+Char* concatTempDir(Char* fileName)
+{
+  Char* result;
+  if (tempDir == NULL)
+  {
+    result = VG_(malloc)(fileName, VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, fileName);
+  }
+  else
+  {
+    Int length = VG_(strlen)(tempDir);
+    result = VG_(malloc)(fileName, length + VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, tempDir);
+    VG_(strcpy)(result + length, fileName);
+    result[length + VG_(strlen)(fileName)] = '\0';
+  }
+  return result;
 }
 
 static
@@ -578,13 +604,21 @@ void taintMemoryFromArgv(HWord key, HWord offset)
   node->key = key;
   node->filename = "argv_dot_log";
   node->offset = offset;
-  VG_(HT_add_node) (taintedMemory, node);
+  VG_(HT_add_node)(taintedMemory, node);
   Char ss[256];
   Char format[256];
-#if defined(VGA_x86)
-  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := file_argv_dot_log[0hex%%08x];\n", memory + 1, memory);
-#elif defined(VGA_amd64)
-  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := file_argv_dot_log[0hex%%08x];\n", memory + 1, memory);
+  Char argvFileBuf[256];
+  Char* argvFile = concatTempDir("argv.log");
+  Char* hyphenPos = VG_(strchr)(argvFile, '-');
+#define TEMP_SEGMENT_SIZE 6
+  Char tempSegment[TEMP_SEGMENT_SIZE + 1];
+  VG_(strncpy)(tempSegment, hyphenPos + 1, TEMP_SEGMENT_SIZE);
+  tempSegment[TEMP_SEGMENT_SIZE] = '\0';
+  VG_(sprintf)(argvFileBuf, "file__slash_tmp_slash_avalanche_hyphen_%s_slash_argv_dot_log", tempSegment);
+#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(32) OF BITVECTOR(8) = memory_%d WITH [0hex%%08x] := %s[0hex%%08x];\n", memory + 1, memory, argvFileBuf);
+#elif defined(VGP_amd64_linux)
+  VG_(sprintf)(format, "memory_%d : ARRAY BITVECTOR(64) OF BITVECTOR(8) = memory_%d WITH [0hex%%016lx] := %s[0hex%%08x];\n", memory + 1, memory, argvFileBuf);
 #endif
   memory++;
   Int l = VG_(sprintf)(ss, format, key, offset);
@@ -1047,10 +1081,6 @@ void taintTemp(HWord key)
   Int l = VG_(sprintf)(s, "t_%lx_%u_%u : BITVECTOR(%u);\n", curblock, key, curvisited, curNode->temps[key].size);
   my_write(fdtrace, s, l);
   my_write(fddanger, s, l);
-}
-
-static void tg_post_clo_init(void)
-{
 }
 
 static
@@ -4095,21 +4125,25 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     }
     if (checkPrediction && !divergence && (curdepth < depth) && ((Bool) guard != prediction[curdepth]))
     {
-      SysRes fd = VG_(open)("divergence.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      Char* divergenceFile = concatTempDir("divergence.log");
+      SysRes fd = VG_(open)(divergenceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
       divergence = True;
       VG_(write)(sr_Res(fd), &divergence, sizeof(Bool));
       VG_(write)(sr_Res(fd), &curdepth, sizeof(Int));
       VG_(close)(sr_Res(fd));
+      VG_(free)(divergenceFile);
     }
     l = VG_(sprintf)(s, ");\n");
     my_write(fdtrace, s, l);
     my_write(fddanger, s, l);
     if (checkPrediction && (curdepth == depth) && !divergence)
     {
-      SysRes fd = VG_(open)("divergence.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      Char* divergenceFile = concatTempDir("divergence.log");
+      SysRes fd = VG_(open)(divergenceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
       divergence = False;
       VG_(write)(sr_Res(fd), &divergence, sizeof(Bool));
       VG_(close)(sr_Res(fd));
+      VG_(free)(divergenceFile);
     }
     if (curdepth >= depth)
     {
@@ -4127,13 +4161,16 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
       dump(fddanger);
       if (dumpPrediction)
       {
-        SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+        Char* actualFile = concatTempDir("actual.log");
+        SysRes fd = VG_(open)(actualFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
         VG_(write)(sr_Res(fd), actual, (depth + invertdepth) * sizeof(Bool));
         VG_(close)(sr_Res(fd));
+        VG_(free)(actualFile);
       }
       if (replace)
       {
-        Int fd = sr_Res(VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+        Char* replaceFile = concatTempDir("replace_data");
+        Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_WRONLY, PERM_R_W));
         VG_(write)(fd, &socketsNum, 4);
         Int i;
         for (i = 0; i < socketsNum; i++)
@@ -4142,6 +4179,7 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
           VG_(write)(fd, replace_data[i].data, replace_data[i].length);
         }
         VG_(close)(fd);
+        VG_(free)(replaceFile);
       }
       VG_(exit)(0);
     }
@@ -4627,25 +4665,30 @@ static void tg_fini(Int exitcode)
   }
   if (dumpPrediction)
   {
-    SysRes fd = VG_(open)("actual.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+    Char* actualFile = concatTempDir("actual.log");
+    SysRes fd = VG_(open)(actualFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
     if (noInvertLimit)
     {
       curdepth --;
-      VG_(write) (sr_Res(fd), &curdepth, sizeof(Int));
+      VG_(write)(sr_Res(fd), &curdepth, sizeof(Int));
     }
     VG_(write)(sr_Res(fd), actual, (depth + invertdepth) * sizeof(Bool));
     VG_(close)(sr_Res(fd));
+    VG_(free)(actualFile);
   }
   if (checkPrediction && !divergence)
   {
-    SysRes fd = VG_(open)("divergence.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+    Char* divergenceFile = concatTempDir("divergence.log");
+    SysRes fd = VG_(open)(divergenceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
     divergence = False;
     VG_(write)(sr_Res(fd), &divergence, sizeof(Bool));
     VG_(close)(sr_Res(fd));
+    VG_(free)(divergenceFile);
   }
   if (replace)
   {
-    Int fd = sr_Res(VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    Char* replaceFile = concatTempDir("replace_data");
+    Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_WRONLY, PERM_R_W));
     VG_(write)(fd, &socketsNum, 4);
     Int i;
     for (i = 0; i < socketsNum; i++)
@@ -4654,6 +4697,7 @@ static void tg_fini(Int exitcode)
       VG_(write)(fd, replace_data[i].data, replace_data[i].length);
     }
     VG_(close)(fd);
+    VG_(free)(replaceFile);
   }
   if (fdfuncFilter >= 0) 
   {
@@ -4669,14 +4713,7 @@ Int filenum = 0;
 
 static Bool tg_process_cmd_line_option(Char* arg)
 {
-  Char* inputfile;
-  Char* addr;
-  Char* filtertype;
-  Char* funcname;
-  Char* funcfilterfile;
-  Char* inputfilterfile;
-  Char* dumpfile;
-  Char* checkArgv;
+  Char* argValue;
   if (VG_INT_CLO(arg, "--startdepth", depth))
   {
     depth -= 1;
@@ -4690,28 +4727,54 @@ static Bool tg_process_cmd_line_option(Char* arg)
     }
     return True;
   }
-  else if (VG_STR_CLO(arg, "--port", addr))
+  else if (VG_STR_CLO(arg, "--port", argValue))
   {
-    port = (UShort) VG_(strtoll10)(addr, NULL);
+    port = (UShort) VG_(strtoll10)(argValue, NULL);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--func-name", funcname))
+  else if (VG_STR_CLO(arg, "--func-name", argValue))
   {
-    parseFnName(funcname);
+    parseFnName(argValue);
     enableFiltering = True;
     return True;
   }
-  else if (VG_STR_CLO(arg, "--func-filter-file", funcfilterfile))
+  else if (VG_STR_CLO(arg, "--func-filter-file", argValue))
   {
-    Int fd = sr_Res(VG_(open)(funcfilterfile, VKI_O_RDWR, 0));
+    Int fd = sr_Res(VG_(open)(argValue, VKI_O_RDWR, 0));
     parseFuncFilterFile(fd);
     enableFiltering = True;
     VG_(close)(fd);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--mask", inputfilterfile))
+  else if (VG_STR_CLO(arg, "--temp-dir", tempDir))
   {
-    if (!parseMask(inputfilterfile))
+    Int length = VG_(strlen)(tempDir);
+    Int lengthTrace = length + VG_(strlen)("trace.log");
+    Int lengthDanger = length + VG_(strlen)("dangertrace.log");
+    Char *traceFile = VG_(malloc)("traceFile", lengthTrace + 1);
+    VG_(strcpy)(traceFile, tempDir);
+    VG_(strcpy)(traceFile + length, "trace.log");
+    traceFile[lengthTrace] = '\0';
+    Char *dangerTraceFile = VG_(malloc)("traceDanger", lengthDanger + 1);
+    VG_(strcpy)(dangerTraceFile, tempDir);
+    VG_(strcpy)(dangerTraceFile + length, "dangertrace.log");
+    dangerTraceFile[lengthDanger] = '\0';
+    fdtrace = sr_Res(VG_(open)(traceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+    fddanger = sr_Res(VG_(open)(dangerTraceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+    VG_(free)(traceFile);
+    VG_(free)(dangerTraceFile);
+#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
+    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+#elif defined(VGP_amd64_linux)
+    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+#endif
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--mask", argValue))
+  {
+    if (!parseMask(argValue))
     {
       VG_(printf)("couldn't parse mask file\n");
       VG_(exit)(1);
@@ -4721,24 +4784,24 @@ static Bool tg_process_cmd_line_option(Char* arg)
     inputFilterEnabled = True;
     return True;
   }
-  else if (VG_STR_CLO(arg, "--host", addr))
+  else if (VG_STR_CLO(arg, "--host", argValue))
   {
-    Char* dot = VG_(strchr)(addr, '.');
+    Char* dot = VG_(strchr)(argValue, '.');
     *dot = '\0';
-    ip1 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
+    ip1 = (UShort) VG_(strtoll10)(argValue, NULL);
+    argValue = dot + 1;
+    dot = VG_(strchr)(argValue, '.');
     *dot = '\0';
-    ip2 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
+    ip2 = (UShort) VG_(strtoll10)(argValue, NULL);
+    argValue = dot + 1;
+    dot = VG_(strchr)(argValue, '.');
     *dot = '\0';
-    ip3 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    ip4 = (UShort) VG_(strtoll10)(addr, NULL);
+    ip3 = (UShort) VG_(strtoll10)(argValue, NULL);
+    argValue = dot + 1;
+    ip4 = (UShort) VG_(strtoll10)(argValue, NULL);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--file", inputfile))
+  else if (VG_STR_CLO(arg, "--file", argValue))
   {
     if (inputfiles == NULL)
     {
@@ -4746,96 +4809,25 @@ static Bool tg_process_cmd_line_option(Char* arg)
     }
     stringNode* node;
     node = VG_(malloc)("stringNode", sizeof(stringNode));
-    node->key = hashCode(inputfile);
-    node->filename = inputfile;
+    node->key = hashCode(argValue);
+    node->filename = argValue;
     node->declared = False;
     node->filenum = filenum++;
     VG_(HT_add_node)(inputfiles, node);
     return True;
   }
-  else if (VG_STR_CLO(arg, "--check-argv", checkArgv))
+  else if (VG_STR_CLO(arg, "--check-argv", argValue))
   {
-    Int fdargv = sr_Res(VG_(open) ("argv.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-    my_write(fdtrace, "file_argv_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
-    my_write(fddanger, "file_argv_dot_log : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", 57);
-    HChar** argv = VG_(client_argv);
-    Int i, j, argvSize = 0;
-    Char buf[10];
-    Int eqPos;
-    Int argc = VG_(sizeXA) (VG_(args_for_client));
-    Int fdargl = sr_Res(VG_(open) ("arg_lengths", VKI_O_RDONLY, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-    Int* argLength = VG_(malloc) ("argLength", argc * sizeof(Int));
-    for (i = 0; i < argc; i ++)
-    {
-      VG_(read) (fdargl, &(argLength[i]), sizeof(Int));
-    }
-    Int *argFilterUnits = VG_(malloc) ("argFilterUnits", argc * sizeof(Int));
-    for (i = 0; i < argc; i ++)
-    {
-      argFilterUnits[i] = -1;
-    }
-    if (!VG_(strcmp) (checkArgv, "all"))
-    {
-      for (i = 0; i < argc; i ++)
-      {
-        argFilterUnits[i] = 1;
-      }
-    }
-    else
-    {
-      parseArgvMask(checkArgv, argFilterUnits);
-    }
-    for (i = 0; i < argc; i ++)
-    {
-      if (argFilterUnits[i] > 0)
-      {
-        eqPos = -1;
-        if (protectArgName)
-        {
-          HChar* eqPosC = VG_(strchr) (argv[i], '=');
-          if (eqPosC != NULL)
-          {
-            eqPos = eqPosC - argv[i];
-          }
-        }
-        for (j = 0; j < VG_(strlen) (argv[i]) + 1; j ++)
-        {
-          if (j > eqPos)
-          { 
-            taintMemoryFromArgv(argv[i] + j, argvSize);
-          }
-          argvSize ++;
-          VG_(write) (fdargv, argv[i] + j, 1);
-        }
-      }
-      else
-      {
-        for (j = 0; j < VG_(strlen) (argv[i]) + 1; j ++)
-        {
-          argvSize ++;
-          VG_(write) (fdargv, argv[i] + j, 1);
-        }
-      }
-      for (j = VG_(strlen) (argv[i]) + 1; j < argLength[i] + 1; j ++)
-      {
-        argvSize ++;
-        VG_(write) (fdargv, "\0", 1);
-      }
-    }
-    VG_(free) (argFilterUnits);
-    VG_(free) (argLength);
-    VG_(close) (fdargv);
-    VG_(close) (fdargl);
+    checkArgvList = VG_(strdup)("checkArgvList", argValue);
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))
   {
     return True;
   }
-  else if (VG_STR_CLO(arg, "--dump-file", dumpfile))
+  else if (VG_STR_CLO(arg, "--dump-file", argValue))
   {
-    fdfuncFilter = sr_Res(VG_(open) (dumpfile, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, 
-                              VKI_S_IRUSR | VKI_S_IWUSR | VKI_S_IRGRP | VKI_S_IWGRP | VKI_S_IROTH | VKI_S_IWOTH));
+    fdfuncFilter = sr_Res(VG_(open) (argValue, VKI_O_WRONLY | VKI_O_CREAT | VKI_O_TRUNC, PERM_R_W));
     return True;
   }
   else if (VG_BOOL_CLO(arg, "--suppress-subcalls", suppressSubcalls))
@@ -4856,7 +4848,65 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_BOOL_CLO(arg, "--replace",  replace))
   {
-    Int fd = sr_Res(VG_(open)("replace_data", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    return True;
+  }
+  else if VG_BOOL_CLO(arg, "--check-prediction",  checkPrediction)
+  {
+    if (depth <= 0)
+    {
+      checkPrediction = False;
+    }
+    return True;
+  }
+  else if VG_BOOL_CLO(arg, "--dump-prediction",  dumpPrediction)
+  {
+    if (dumpPrediction)
+    {
+      actual = VG_(malloc)("prediction", (depth + invertdepth) * sizeof(Bool));
+    }
+    return True;
+  }
+  else
+  {
+    return False;
+  }
+}
+
+static void tg_post_clo_init(void)
+{
+  Char* predictionFile = concatTempDir("prediction.log");
+  Char* replaceFile = concatTempDir("replace_data");
+  if (tempDir == NULL)
+  {
+    fdtrace = sr_Res(VG_(open)("trace.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+    fddanger = sr_Res(VG_(open)("dangertrace.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
+    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+#elif defined(VGP_amd64_linux)
+    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+#endif
+  }
+  /* We need to parse --check-prediction and --replace here since
+       we need a directory prefix for opening files */
+  if (checkPrediction)
+  {
+    if (depth > 0)
+    {
+      SysRes fd = VG_(open)(predictionFile, VKI_O_RDONLY, PERM_R_W);
+      prediction = VG_(malloc)("prediction", depth * sizeof(Bool));
+      VG_(read)(sr_Res(fd), prediction, depth * sizeof(Bool));
+      VG_(close)(sr_Res(fd));
+    }
+    else
+    {
+      checkPrediction = False;
+    }
+  }
+  if (replace)
+  {
+    Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_RDONLY, PERM_R_W));
     VG_(read)(fd, &socketsNum, 4);
     socketsBoundary = socketsNum;
     if (socketsNum > 0)
@@ -4875,35 +4925,98 @@ static Bool tg_process_cmd_line_option(Char* arg)
       replace_data = NULL;
     }
     VG_(close)(fd);
-    return True;
   }
-  else if VG_BOOL_CLO(arg, "--check-prediction",  checkPrediction)
+  VG_(free)(predictionFile);
+  VG_(free)(replaceFile);
+ 
+  /* We need to check argv here to ensure that fdtrace and fddanger 
+       were already opened */
+  if (checkArgvList != NULL)
   {
-    if (depth > 0)
+    Char* argvFile = concatTempDir("argv.log");
+    Int fdargv = sr_Res(VG_(open)(argvFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+    Char fileNameBuf[128], traceBuf[256];
+    Char* hyphenPos = VG_(strchr)(argvFile, '-');
+#define TEMP_SEGMENT_SIZE 6
+    Char tempSegment[TEMP_SEGMENT_SIZE + 1];
+    VG_(strncpy)(tempSegment, hyphenPos + 1, TEMP_SEGMENT_SIZE);
+    tempSegment[TEMP_SEGMENT_SIZE] = '\0';
+    VG_(sprintf)(fileNameBuf, "file__slash_tmp_slash_avalanche_hyphen_%s_slash_argv_dot_log", tempSegment);
+    Int l = VG_(sprintf)(traceBuf, "%s : ARRAY BITVECTOR(32) OF BITVECTOR(8);\n", fileNameBuf);
+    my_write(fdtrace, traceBuf, l);
+    my_write(fddanger, traceBuf, l);
+    HChar** argv = VG_(client_argv);
+    Int i, j, argvSize = 0;
+    Char buf[10];
+    Int eqPos;
+    Int argc = VG_(sizeXA)(VG_(args_for_client));
+    Char* argLengthsFile = concatTempDir("arg_lengths");
+    Int fdargl = sr_Res(VG_(open)(argLengthsFile, VKI_O_RDONLY, PERM_R_W));
+    Int* argLength = VG_(malloc)("argLength", argc * sizeof(Int));
+    for (i = 0; i < argc; i ++)
     {
-      checkPrediction = True;
-      SysRes fd = VG_(open)("prediction.log", VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
-      prediction = VG_(malloc)("prediction", depth * sizeof(Bool));
-      VG_(read)(sr_Res(fd), prediction, depth * sizeof(Bool));
-      VG_(close)(sr_Res(fd));
+      VG_(read)(fdargl, &(argLength[i]), sizeof(Int));
+    }
+    Int *argFilterUnits = VG_(malloc)("argFilterUnits", argc * sizeof(Int));
+    for (i = 0; i < argc; i ++)
+    {
+       argFilterUnits[i] = -1;
+    }
+    if (!VG_(strcmp)(checkArgvList, "all"))
+    {
+      for (i = 0; i < argc; i ++)
+      {
+        argFilterUnits[i] = 1;
+      }
     }
     else
     {
-      checkPrediction = False;
+      parseArgvMask(checkArgvList, argFilterUnits);
     }
-    return True;
-  }
-  else if VG_BOOL_CLO(arg, "--dump-prediction",  dumpPrediction)
-  {
-    if (dumpPrediction)
+    for (i = 0; i < argc; i ++)
     {
-      actual = VG_(malloc)("prediction", (depth + invertdepth) * sizeof(Bool));
+      if (argFilterUnits[i] > 0)
+      {
+        eqPos = -1;
+        if (protectArgName)
+        {
+    HChar* eqPosC = VG_(strchr)(argv[i], '=');
+    if (eqPosC != NULL)
+    {
+      eqPos = eqPosC - argv[i];
     }
-    return True;
-  }
-  else
-  {
-    return False;
+        }
+        for (j = 0; j < VG_(strlen)(argv[i]) + 1; j ++)
+        {
+    if (j > eqPos)
+    { 
+      taintMemoryFromArgv(argv[i] + j, argvSize);
+    }
+    argvSize ++;
+    VG_(write)(fdargv, argv[i] + j, 1);
+        }
+      }
+      else
+      {
+        for (j = 0; j < VG_(strlen)(argv[i]) + 1; j ++)
+        {
+    argvSize ++;
+    VG_(write)(fdargv, argv[i] + j, 1);
+        }
+      }
+      for (j = VG_(strlen)(argv[i]) + 1; j < argLength[i] + 1; j ++)
+      {
+        argvSize ++;
+        VG_(write)(fdargv, " ", 1);
+      }
+    }
+    VG_(free)(argFilterUnits);
+    VG_(free)(argLength);
+    VG_(free)(checkArgvList);
+    VG_(close)(fdargv);
+    VG_(close)(fdargl);
+    VG_(free)(argvFile);
+    VG_(free)(argLengthsFile);
   }
 }
 
@@ -4966,15 +5079,6 @@ static void tg_pre_clo_init(void)
   
   diFunctionName = VG_(malloc) ("diFunctionName", 1024 * sizeof(Char));
       
-  fdtrace = sr_Res(VG_(open)("trace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-  fddanger = sr_Res(VG_(open)("dangertrace.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
-  my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-  my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#elif defined(VGP_amd64_linux)
-  my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-  my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#endif
   curdepth = 0;
 }
 
