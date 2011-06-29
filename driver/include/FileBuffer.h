@@ -27,8 +27,6 @@
 #include <stddef.h>
 #include <string>
 
-using namespace std;
-
 class FileBuffer
 {
 public:
@@ -44,17 +42,16 @@ public:
 
   friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
 
-  FileBuffer(const char* name);
+  FileBuffer(std::string file_name);
 
   FileBuffer(const FileBuffer& other);
+  FileBuffer(char* buf);
 
-  FileBuffer(string str);
+  virtual FileBuffer* forkInput(std::string stp_file_name);
 
-  virtual FileBuffer* forkInput(char* stpOutputFile);
+  virtual void dumpFile(std::string file_name = "");
 
-  virtual void dumpFile(const char* name = NULL);
-
-  void cutQueryAndDump(const char* name, bool do_invert = false);
+  void cutQueryAndDump(std::string file_name, bool do_invert = false);
 
   virtual void applySTPSolution(char* buf);
   
@@ -65,10 +62,10 @@ public:
   long filterCount (const char * str);
 
   // Get call stack from 'position' in 'buf'
-  string getCallStack (int & position);
-  string getErrorType (int & position);
+  std::string getCallStack (int & position);
+  std::string getErrorType (int & position);
 
-  string getBuf ();
+  std::string getBuf ();
 
   ~FileBuffer();
 

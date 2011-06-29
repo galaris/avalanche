@@ -23,15 +23,15 @@
 
 #include "Input.h"
 #include "FileBuffer.h"
-
-#include <cstddef>
-#include <string>
+#include "ExecutionManager.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+
+using namespace std;
 
 Input::Input()
 {
@@ -53,10 +53,11 @@ Input::~Input()
   }
 }
 
-void Input::dumpExploit(const char* name, bool predict, const char* name_modifier)
+void Input::dumpExploit(string file_name, bool predict, string name_modifier)
 {
-  std::string res_name = std::string(name) + std::string(name_modifier);
-  int fd = open(res_name.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  std::string res_name = file_name + name_modifier;
+  int fd = open(res_name.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
+                S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
   int size = files.size();
   write(fd, &size, sizeof(int));
   for (int i = 0; i < files.size(); i++)
@@ -67,24 +68,28 @@ void Input::dumpExploit(const char* name, bool predict, const char* name_modifie
   close(fd);
   if (predict && (prediction != NULL))
   {
-    std::string pred_name = std::string("prediction") + std::string(name_modifier) + std::string(".log");
-    int fd = open(pred_name.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    string prediction_file = ExecutionManager::getTempDir() + 
+                             string("prediction.log");
+    int fd = open(prediction_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 
+                  S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     write(fd, prediction, predictionSize * sizeof(bool));
     close(fd);
   }  
 }
 
-void Input::dumpFiles(char* name, const char* name_modifier)
+void Input::dumpFiles(string name_modifier)
 {
   for (int i = 0; i < files.size(); i++)
   {
-    std::string res_name = std::string(files.at(i)->name) + std::string(name_modifier);
-    files.at(i)->dumpFile(res_name.c_str());
+    string res_name = string(files.at(i)->name) + name_modifier;
+    files.at(i)->dumpFile(res_name);
   }
-  if ((prediction != NULL) && (name == NULL))
+  if (prediction != NULL)
   {
-    std::string pred_name = std::string("prediction") + std::string(name_modifier) + std::string(".log");
-    int fd = open(pred_name.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    string prediction_file = ExecutionManager::getTempDir() +
+                             string("prediction.log");
+    int fd = open(prediction_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
+                  S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     write(fd, prediction, predictionSize * sizeof(bool));
     close(fd);
   }

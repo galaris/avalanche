@@ -40,6 +40,9 @@
 
 #include "util.h"
 
+#define PERM_R_W S_IRUSR | S_IROTH | S_IRGRP | \
+                 S_IWUSR | S_IWOTH | S_IWGRP
+
 using namespace std;
 
 int fd;
@@ -53,7 +56,7 @@ void recvInput(bool initial)
   int net_fd, length, namelength;
   if (sockets || datagrams)
   {
-    net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    net_fd = open("replace_data", O_WRONLY | O_CREAT | O_TRUNC, PERM_R_W);
     write(net_fd, &file_num, sizeof(int));
   }
   for (int j = 0; j < file_num; j ++)
@@ -86,7 +89,7 @@ void recvInput(bool initial)
     }
     else
     {
-      int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open(file_name.at(j), O_WRONLY | O_CREAT, PERM_R_W);
       if (descr == -1)
       {
         perror("open failed");
@@ -107,7 +110,7 @@ void recvInput(bool initial)
 void sig_hndlr(int signo)
 {
   int startdepth = 0;
-  int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  int descr = open("startdepth.log", O_WRONLY | O_CREAT, PERM_R_W);
   writeToSocket(fd, "g", 1);
   try
   {
@@ -116,7 +119,7 @@ void sig_hndlr(int signo)
   }
   catch (const char* msg)
   {
-    shutdown(fd, O_RDWR);
+    shutdown(fd, O_WRONLY);
     close(fd);
     printf("coudln't receive non zero scored input: %s\n", msg);
   }
@@ -365,7 +368,7 @@ int main(int argc, char** argv)
     {
       char* mask = new char[masklength];
       readFromSocket(fd, mask, masklength);
-      int descr = open("mask", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open("mask", O_WRONLY | O_CREAT | O_TRUNC, PERM_R_W);
       if (descr == -1)
       {
         perror("open failed");
@@ -395,7 +398,7 @@ int main(int argc, char** argv)
     {
       char* filter = new char[flength];
       readFromSocket(fd, filter, flength);
-      int descr = open("filter", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open("filter", O_WRONLY | O_CREAT | O_TRUNC, PERM_R_W);
       if (descr == -1)
       {
         perror("open failed");
@@ -406,6 +409,17 @@ int main(int argc, char** argv)
       close(descr);
       delete[] filter;
       avalanche_argv[av_argc++] = "--func-file=filter";
+    }
+
+    readFromSocket(fd, &length, sizeof(int));
+    if (length != 0)
+    {
+      char* resultDir = new char[length + 1];
+      readFromSocket(fd, resultDir, length);
+      resultDir[length] = '\0';
+      char buf[256];
+      sprintf(buf, "--result-dir=%s", resultDir);
+      avalanche_argv[av_argc++] = strdup(buf);
     }
 
     for (int i = 0; i < argsnum; i++)
@@ -461,7 +475,7 @@ int main(int argc, char** argv)
   {
     char report[128];
     sprintf(report, "report%d.log", i);
-    int fd = open(report, O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+    int fd = open(report, O_RDONLY, PERM_R_W);
     if (fd != -1)
     {
       struct stat fileInfo;

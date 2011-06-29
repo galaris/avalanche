@@ -146,6 +146,17 @@ OptionConfig *OptionParser::run() const
             string argv_mask = args[i].substr(strlen("--check-argv="));
             config->setCheckArgv(argv_mask);
         }
+        else if (args[i].find("--cleanup=") != string::npos) {
+            if (args[i].substr(strlen("--cleanup=")) == "no") {
+                config->disableCleanUp();
+            }
+        }
+        else if (args[i].find("--result-dir=") != string::npos) {
+            config->setResultDir(args[i].substr(strlen("--result-dir=")));
+        }
+        else if (args[i].find("--agent-dir=") != string::npos) {
+            config->setAgentDir(args[i].substr(strlen("--agent-dir=")));
+        }
         else if (args[i] == "--debug") {
             config->setDebug();
         }

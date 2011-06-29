@@ -35,10 +35,11 @@
 
 using namespace std;
 
-FileBuffer::FileBuffer(const char* name)
+FileBuffer::FileBuffer(std::string file_name)
 {
-  this->name = strdup(name);
-  int fd = open(name, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  this->name = strdup(file_name.c_str());
+  int fd = open(name, O_RDONLY | O_CREAT,
+                S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
   struct stat fileInfo;
   fstat(fd, &fileInfo);
   size = fileInfo.st_size;
@@ -59,17 +60,17 @@ FileBuffer::FileBuffer(const FileBuffer& other)
   }
 }
 
-FileBuffer :: FileBuffer (string str) // it is not filename! It is string for 'buf'
+FileBuffer::FileBuffer(char* buf) // it is not filename!
 {
-  this -> name = "none";
-  this -> size = str.size ();
-  this -> buf = (char *) malloc (size + 1);
-  strcpy (this -> buf, (char *) str.c_str ());
+  this->name = strdup("none");
+  this->size = strlen(buf);
+  this->buf = (char *) malloc(size + 1);
+  strcpy(this->buf, buf);
 }
 
-FileBuffer* FileBuffer::forkInput(char* stpOutputFile)
+FileBuffer* FileBuffer::forkInput(std::string stp_file_name)
 {
-  FileBuffer stp(stpOutputFile);
+  FileBuffer stp(stp_file_name);
   if ((stp.buf[0] == 'V') && (stp.buf[1] == 'a') && (stp.buf[2] == 'l') && (stp.buf[3] == 'i') && (stp.buf[4] == 'd'))
   {
     return NULL;
@@ -79,22 +80,24 @@ FileBuffer* FileBuffer::forkInput(char* stpOutputFile)
   return res;
 }
 
-void FileBuffer::dumpFile(const char* name)
-{  
-  int fd;
-  if (name == NULL)
+void FileBuffer::dumpFile(std::string file_name)
+{ 
+  char *c_file_name; 
+  if (file_name == "") 
   {
-    fd = open(this->name, O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    c_file_name = name;
   }
   else
   {
-    fd = open(name, O_CREAT | O_WRONLY | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    c_file_name = (char *) file_name.c_str();
   }
+  int fd = open(c_file_name, O_WRONLY | O_TRUNC | O_CREAT,
+            S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
   write(fd, buf, size);
   close(fd);
 }
 
-void FileBuffer::cutQueryAndDump(const char* name, bool do_invert)
+void FileBuffer::cutQueryAndDump(std::string file_name, bool do_invert)
 {
   char* query = strstr(buf, "QUERY(FALSE);");
   if (do_invert)
@@ -110,7 +113,7 @@ void FileBuffer::cutQueryAndDump(const char* name, bool do_invert)
   }
   unsigned int oldsize = size;
   size = (query - buf) + 13;
-  dumpFile(name);
+  dumpFile(file_name);
   if (do_invert)
   {
     for (int k = 0; k < 13; k++)

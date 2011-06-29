@@ -70,11 +70,13 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
     
     args[2] = strdup(file_name);
 
-    TmpFile file_out;
-    TmpFile file_err;
+    TmpFile* file_out = new TmpFile();
+    TmpFile* file_err = new TmpFile();
 
-    redirect_stdout(file_out.getName());
-    redirect_stderr(file_err.getName());
+    monitor->setTmpFiles(file_out, file_err);
+
+    redirect_stdout(file_out->getName());
+    redirect_stderr(file_err->getName());
 
     int ret = exec(true);
     monitor->setPID(child_pid, thread_index);
@@ -108,7 +110,7 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
 
     STP_Output *stp_output = new STP_Output;
 
-    stp_output->setFile(file_out.exportFile());
+    stp_output->setFile(file_out->exportFile());
 
     return stp_output;
 }

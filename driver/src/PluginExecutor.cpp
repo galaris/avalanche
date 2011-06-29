@@ -65,11 +65,13 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     args[0] = strdup(prog);
     switch (kind)
     {
-      case TRACEGRIND: args[1] = strdup("--tool=tracegrind");
-                       break;
-      case MEMCHECK:   args[1] = strdup("--tool=memcheck");
-                       break;      
-      case COVGRIND:   args[1] = strdup("--tool=covgrind");
+      case TG: args[1] = strdup("--tool=tracegrind");
+               break;
+      case MC: args[1] = strdup("--tool=memcheck");
+               break;      
+      case CV: args[1] = strdup("--tool=covgrind");
+               break;
+      default: break;
     }
 
     if (traceChildren)
@@ -99,9 +101,13 @@ int PluginExecutor::run(int thread_index)
 
     switch (kind)
     {
-      case TRACEGRIND: pluginName = "Tracegrind"; break;
-      case MEMCHECK: pluginName = "Memcheck"; break;
-      case COVGRIND: pluginName = "Covgrind";
+      case TG: pluginName = "Tracegrind"; 
+               break;
+      case MC: pluginName = "Memcheck"; 
+               break;
+      case CV: pluginName = "Covgrind";
+               break;
+      default: break;
     }
 
     if (!thread_num)
@@ -109,20 +115,21 @@ int PluginExecutor::run(int thread_index)
     else
       LOG (Logger :: DEBUG, "Thread #" << thread_index << ": Running plugin " << pluginName << ".");
 
-    TmpFile file_out;
-    TmpFile file_err;
+    TmpFile* file_out = new TmpFile();
+    TmpFile* file_err = new TmpFile();
+    monitor->setTmpFiles(file_out, file_err);
         
-    redirect_stdout(file_out.getName());
-    redirect_stderr(file_err.getName());
+    redirect_stdout(file_out->getName());
+    redirect_stderr(file_err->getName());
 
     int ret = exec(false);
     monitor->setPID(child_pid, thread_index);
     if (ret == -1) 
     {
       LOG(Logger :: ERROR, "Problem in execution: " << strerror(errno));
-      if (kind == MEMCHECK)
+      if (kind == MC)
       {
-        output = new FileBuffer(file_err.exportFile());
+        output = new FileBuffer(file_err->exportFile());
       }
       return -1;
     }
@@ -134,9 +141,9 @@ int PluginExecutor::run(int thread_index)
       if (!monitor->getKilledStatus())
       {
         LOG(Logger :: DEBUG, "Exited on signal.");
-        if (kind == MEMCHECK)
+        if (kind == MC)
         {
-          output = new FileBuffer(file_err.exportFile());
+          output = new FileBuffer(file_err->exportFile());
         }
       return -1;
       }
@@ -153,12 +160,14 @@ int PluginExecutor::run(int thread_index)
       
     switch (kind)
     {
-      case TRACEGRIND: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
-                       break;
-      case MEMCHECK:   LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
-                       output = new FileBuffer(file_err.exportFile());
-                       break;
-      case COVGRIND:   LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
+      case TG: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
+               break;
+      case MC: LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
+               output = new FileBuffer(file_err->exportFile());
+               break;
+      case CV: LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
+               break;
+      default: break;
     }
 
     return 0;

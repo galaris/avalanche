@@ -36,6 +36,8 @@
 #include <cstdlib>
 #include <vector>
 #include <unistd.h>
+#include <cstddef>
+#include <cerrno>
 
 #include "util.h"
 
@@ -43,9 +45,9 @@ using namespace std;
 
 enum Kind
 {
-  TRACEGRIND,
-  COVGRIND,
-  MEMCHECK,
+  TG,
+  CV,
+  MC,
   UNID
 };
 
@@ -61,8 +63,9 @@ bool check_danger;
 bool dump_calls;
 bool network;
 bool check_argv;
+string temp_dir;
 
-static void parseArg(char *arg)
+static bool parseArg(char *arg)
 {
   if (!strcmp(arg, "--no-coverage=yes"))
   {
@@ -92,28 +95,44 @@ static void parseArg(char *arg)
   {
     check_argv = true;
   }
+  else if (strstr(arg, "--temp-dir="))
+  {
+    temp_dir = string(strchr(arg, '=') + 1);
+    if (mkdir(temp_dir.c_str(), S_IRWXU | S_IRWXG | S_IRWXO) < 0)
+    {
+      if (errno != EEXIST)
+      {
+        perror((string("cannot create ") + temp_dir).c_str());
+        temp_dir = "";
+      }
+    }
+    return false;
+  }
+  return true;
 }
 
-static void readToFile(char *file_name)
+static void readToFile(const char *file_name)
 {
-  int length;
+  int length, i = 0;
+  char c;
   readFromSocket(avalanche_fd, &length, sizeof(int));
-  char *file_buf = (char *) malloc(length);
-  readFromSocket(avalanche_fd, file_buf, length);
-  int file_d = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXG);
+  int file_d = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, 
+                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
   if (file_d < 0)
   {
-    free(file_buf);
     throw file_name;
   }
-  if (write(file_d, file_buf, length) < length)
+  while (i < length)
   {
-    free(file_buf);
-    close(file_d);
-    throw "error writing to file";
+    readFromSocket(avalanche_fd, &c, 1);
+    if (write(file_d, &c, 1) < 1)
+    {
+      close(file_d);
+      throw "error writing to file";
+    }
+    i ++;
   }
   close(file_d);
-  free(file_buf);
 }
       
 
@@ -135,13 +154,13 @@ static int readAndExec(const string &progDir, int argc, char** argv)
 
   switch(kind)
   {
-    case TRACEGRIND: args[1] = strdup("--tool=tracegrind"); 
-                     break;
-    case COVGRIND:	 args[1] = strdup("--tool=covgrind"); 
-                     break;
-    case MEMCHECK:	 args[1] = strdup("--tool=memcheck"); 
-                     break;
-    default:	     break;
+    case TG: args[1] = strdup("--tool=tracegrind"); 
+             break;
+    case CV: args[1] = strdup("--tool=covgrind"); 
+             break;
+    case MC: args[1] = strdup("--tool=memcheck"); 
+             break;
+    default: break;
   }
   for (int i = 2; i < argsnum + 2; i ++)
   {
@@ -149,7 +168,11 @@ static int readAndExec(const string &progDir, int argc, char** argv)
     args[i] = (char *) malloc(length + 1);
     readFromSocket(avalanche_fd, args[i], length);
     args[i][length] = '\0';
-    parseArg(args[i]);
+    if (!parseArg(args[i]) && (kind == CV))
+    {
+      argsnum --;
+      i --;
+    }
     readFromSocket(avalanche_fd, &util_c, 1);
     if (util_c)
     {
@@ -167,15 +190,15 @@ static int readAndExec(const string &progDir, int argc, char** argv)
   }
   if (check_prediction)
   {
-    readToFile("prediction.log");
+    readToFile(string(temp_dir).append("prediction.log").c_str());
   }
   if (network)
   {
-    readToFile("replace_data");
+    readToFile(string(temp_dir).append("replace_data").c_str());
   }
   if (check_argv)
   {
-    readToFile("arg_lengths");
+    readToFile(string(temp_dir).append("arg_lengths").c_str());
   }
   args[argsnum + 2] = NULL;
   pid = fork();
@@ -238,16 +261,19 @@ static void writeFromFile(const char *file_name)
     throw "fstat failed";
   }
   int size = file_info.st_size;
-  char *buf = (char*) malloc (size);
-  if (read(file_d, buf, size) < size)
-  {
-    free(buf);
-    close(file_d);
-    throw "error reading from file";
-  }
+  char c;
+  int i = 0;
   writeToSocket(avalanche_fd, &size, sizeof(int));
-  writeToSocket(avalanche_fd, buf, size);
-  free(buf);
+  while(i < size)
+  {
+    if (read(file_d, &c, 1) < 1)
+    {
+      close(file_d);
+      throw "error reading from file";
+    }
+    writeToSocket(avalanche_fd, &c, 1);
+    i ++;
+  }
   close(file_d);
 }
 
@@ -256,14 +282,14 @@ static int passResult(int ret_code)
   writeToSocket(avalanche_fd, &ret_code, sizeof(int));
   switch(kind)
   {
-    case TRACEGRIND: writeFromFile("trace.log");
+    case TG: writeFromFile(string(temp_dir).append("trace.log").c_str());
                      if (check_danger)
                      {
-                       writeFromFile("dangertrace.log");
+                       writeFromFile(string(temp_dir).append("dangertrace.log").c_str());
                      }
                      if (dump_prediction)
                      {
-                       writeFromFile("actual.log");
+                       writeFromFile(string(temp_dir).append("actual.log").c_str());
                      }
                      if (dump_calls)
                      {
@@ -271,19 +297,19 @@ static int passResult(int ret_code)
                      }
                      if (network)
                      {
-                       writeFromFile("replace_data");
+                       writeFromFile(string(temp_dir).append("replace_data").c_str());
                      }
                      if (check_argv)
                      {
-                       writeFromFile("argv.log");
+                       writeFromFile(string(temp_dir).append("argv.log").c_str());
                      }
                      break;
-    case COVGRIND:
-    case MEMCHECK:   if (!no_coverage)
+    case CV:
+    case MC:   if (!no_coverage)
                      {
-                       writeFromFile("basic_blocks.log");
+                       writeFromFile(string(temp_dir).append("basic_blocks.log").c_str());
                      }
-                     writeFromFile("execution.log");
+                     writeFromFile(string(temp_dir).append("execution.log").c_str());
                      break;
     default:         break;
   }
@@ -317,7 +343,7 @@ int main(int argc, char** argv)
     cout << "usage: plugin-agent <port number>" << endl;
     exit(EXIT_FAILURE);
   }
-
+  temp_dir = "";
   string progName = argv[0];
   size_t slashPos = progName.find_last_of('/');
   if (slashPos == string::npos) {
@@ -396,6 +422,35 @@ int main(int argc, char** argv)
   shutdown(avalanche_fd, SHUT_RDWR);
   unlink("tmp_stdout");
   unlink("tmp_stderr");
+  unlink(string(temp_dir).append("trace.log").c_str());
+  unlink(string(temp_dir).append("dangertrace.log").c_str());
+  unlink(string(temp_dir).append("actual.log").c_str());
+  unlink(string(temp_dir).append("arg_lengths").c_str());
+  unlink(string(temp_dir).append("replace_data").c_str());
+  unlink(string(temp_dir).append("prediction.log").c_str());
+
+  /* STP multi-threading currently cannot be used in split mode */
+  
+  /* We don't pass thread number with options so we don't know which
+       files were created and have to use exec */
+       
+  //system((string("rm ") + temp_dir + string("replace_data*")).c_str());
+  
+  /* We have argv.log_i with multiple threads for STP since argv.log
+       is treated like an input file specified by '--filename=' */
+       
+  //system((string("rm ") + temp_dir + string("argv.log*")).c_str());
+  //system((string("rm ") + temp_dir + string("basic_blocks*.log")).c_str());
+  if (temp_dir != "")
+  {
+    if (rmdir(temp_dir.c_str()) < 0)
+    {
+      if (errno != ENOENT)
+      {
+        perror((string("cannot delete ") + temp_dir).c_str());
+      }
+    }
+  }
   return 0;
 }
     

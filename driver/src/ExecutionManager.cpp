@@ -124,6 +124,26 @@ static int connectTo(string host, unsigned int port)
 
 int args_length;
 
+static string temp_dir = string("");
+
+string ExecutionManager::getTempDir()
+{
+  if (temp_dir == "")
+  {
+    char dir_template [] = "/tmp/avalanche-XXXXXX";
+    char *c_temp_dir = mkdtemp(dir_template);
+    if (c_temp_dir == NULL)
+    {
+      LOG(Logger::ERROR, "Cannot create temp directory : " << strerror(errno));
+    }
+    else
+    {
+      temp_dir = string(c_temp_dir) + string("/");
+    }
+  }
+  return temp_dir;
+}
+
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
     LOG(Logger::DEBUG, "Initializing plugin manager.");
@@ -148,19 +168,6 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
       pthread_cond_init(&finish_cond, NULL);
     }
 
-    if (config->getCheckArgv() != "")
-    {
-      int fd = open("arg_lengths", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
-      int length;
-      for (int i = 1; i < cur_argv.size(); i ++)
-      {
-        length = cur_argv[i].size();
-        cout << length;
-        write(fd, &length, sizeof(int));
-      }
-      close(fd);
-    }
-  
     if (is_distributed)
     {
       dist_fd = connectTo(opt_config->getDistHost(), opt_config->getDistPort());
@@ -173,7 +180,6 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
       remote_fd = connectTo(opt_config->getRemoteHost(), opt_config->getRemotePort());
       int size;
       read(remote_fd, &size, sizeof(int));
-      printf("size=%d\n", size);
       config->setSizeoflong(size);
     }
 }
@@ -181,13 +187,18 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 {
   ostringstream tg_invert_depth;
+  if (temp_dir != "")
+  {
+    plugin_opts.push_back("--temp-dir=" + temp_dir);
+  }
   tg_invert_depth << "--invertdepth=" << config->getDepth();
 
   plugin_opts.push_back(tg_invert_depth.str());
 
   if (config->getDumpCalls())
   {
-    plugin_opts.push_back("--dump-file=calldump.log");
+    plugin_opts.push_back(string("--dump-file=") + config->getResultDir() + 
+                          string("calldump.log"));
   }
   else
   {
@@ -202,10 +213,6 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
   {
     plugin_opts.push_back(string("--protect-arg-name=yes"));
   }
-/*  else
-  {
-    plugin_opts.push_back(string("--check-danger=no"));
-  }*/
 
   for (int i = 0; i < config->getFuncFilterUnitsNum(); i++)
   {
@@ -268,6 +275,11 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 
 void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string fileNameModifier, bool addNoCoverage)
 {
+  string cur_temp_dir = temp_dir;
+  if (config->getRemoteValgrind())
+  {
+    plugin_opts.push_back(string("--temp-dir=") + cur_temp_dir);
+  }
   if (config->usingSockets())
   {
     ostringstream cv_host;
@@ -278,7 +290,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     cv_port << "--port=" << config->getPort();
     plugin_opts.push_back(cv_port.str());
     
-    plugin_opts.push_back(string("--replace=replace_data") + fileNameModifier);
+    plugin_opts.push_back(string("--replace=") + cur_temp_dir + string("replace_data") + fileNameModifier);
     plugin_opts.push_back("--sockets=yes");
 
     LOG(Logger::DEBUG, "Setting alarm " << config->getAlarm() << ".");
@@ -287,7 +299,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
   }
   else if (config->usingDatagrams())
   { 
-    plugin_opts.push_back(string("--replace=replace_data") + fileNameModifier);
+    plugin_opts.push_back(string("--replace=") + cur_temp_dir + string("replace_data") + fileNameModifier);
     plugin_opts.push_back("--datagrams=yes");
 
     LOG(Logger::DEBUG, "Setting alarm " << config->getAlarm() << ".");
@@ -301,20 +313,19 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     plugin_opts.push_back(cv_alarm.str());
   }
 
-  string cv_exec_file = string("execution") + fileNameModifier + string(".log");
+  string cv_exec_file = cur_temp_dir + string("execution") + fileNameModifier + string(".log");
   plugin_opts.push_back(string("--log-file=") + cv_exec_file);
 
   if (addNoCoverage)
   {
     plugin_opts.push_back("--no-coverage=yes");
   }
-  if (fileNameModifier != string(""))
-  {
-    plugin_opts.push_back(string("--filename=basic_blocks") + fileNameModifier + string(".log"));
-  }
+  plugin_opts.push_back(string("--filename=") + cur_temp_dir + string("basic_blocks") + fileNameModifier + string(".log"));
 }
 
-void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group)
+void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, 
+                                   bool info_available, bool same_exploit, 
+                                   int exploit_group, Chunk* ch)
 {
   LOG(Logger::DEBUG, ""); // new line
   LOG_TIME(Logger::VERBOSE, "Exploit number " << exploits << ".");
@@ -326,8 +337,9 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
   {
     if (!same_exploit)
     {
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << config->getPrefix() << "stacktrace_" << report.size() - 1 << ".log";
+      ostringstream ss;
+      ss << config->getResultDir() << config->getPrefix() << 
+         "stacktrace_" << report.size() - 1 << ".log";
       stack_trace->dumpFile((char*) ss.str().c_str());
       LOG(Logger::JOURNAL, "   " << stack_trace->getBuf ());
       LOG(Logger::VERBOSE, "  Dumping stack trace to file " << ss.str());
@@ -335,7 +347,7 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
     else
     {
       LOG(Logger::JOURNAL, "  \033[2m" << "Bug was detected previously." << "\033[0m");
-      LOG(Logger::VERBOSE, "  Stack trace can be found in " 
+      LOG(Logger::VERBOSE, "  Stack trace can be found in " << config->getResultDir()
         << config->getPrefix() << "stacktrace_" << exploit_group << ".log");
     }
   }
@@ -346,8 +358,8 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
 
   if (config->usingSockets() || config->usingDatagrams())
   {
-    stringstream ss(stringstream::in | stringstream::out);
-    ss << config->getPrefix() << "exploit_" << exploits;
+    ostringstream ss;
+    ss << config->getResultDir() << config->getPrefix() << "exploit_" << exploits;
 
     // Command line printing
 
@@ -355,9 +367,7 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
 
     for (vector <string> :: iterator i = cur_argv.begin (); i != cur_argv.end (); i++)
     {
-      char x [(* i).size ()];
-      strcpy (x, (* i).c_str ());
-      progAndArg += x;
+      progAndArg += *i;
 
       if (i + 1 != cur_argv.end())
         progAndArg += " "; 
@@ -370,6 +380,7 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
 
     LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss.str() << ".");
     input->dumpExploit((char*) ss.str().c_str(), false);
+    ch->setExploitArgv(progAndArg);
   }
   else // using files only
   {
@@ -380,10 +391,10 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
     }
     for (int i = 0; i < f_num; i++)
     {
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << config->getPrefix() << "exploit_" << exploits << "_" << i;
+      ostringstream ss;
+      ss << config->getResultDir() << config->getPrefix() << "exploit_" << exploits << "_" << i;
       LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss.str() << ".");
-      input->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+      input->files.at(i)->FileBuffer::dumpFile(ss.str());
     }
 
     // Command line printing
@@ -394,62 +405,39 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, bool i
     {
       bool b = false;
 
-      char x [(* i).size ()];
-      strcpy (x, (* i).c_str ());
-
       for (int j = 0; j < config -> getNumberOfFiles (); j++)
       {
-        if (x == config -> getFile (j))
+        if (config -> getFile (j) == *i)
         {
-          progAndArg << config -> getPrefix () << "exploit_" << exploits << "_" << j << " ";
+          progAndArg << config->getResultDir() << config->getPrefix () << 
+                        "exploit_" << exploits << "_" << j << " ";
           b = true;
           break;
         }
       }
-      if (!b) progAndArg << x << " ";
+      if (!b) progAndArg << *i << " ";
     }
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind()
-      << "../lib/avalanche/valgrind " << progAndArg.str ());
+      << "../lib/avalanche/valgrind " << progAndArg.str ()); 
+    ch->setExploitArgv(progAndArg.str());
   }
 
-  if ((config->getCheckArgv() != ""))
-  {
-    dumpExploitArgv();
-  }
   LOG(Logger::JOURNAL, ""); // new line after exploit report
-}
-
-void ExecutionManager::dumpExploitArgv()
-{
-  stringstream ss(stringstream::in | stringstream::out);
-  ss << config->getPrefix() << "exploit_" << exploits << "_argv";
-  LOG(Logger::JOURNAL, "  Dumping exploit argv to file " << ss.str());
-  int fd = open(ss.str().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-  for (vector <string>::iterator i = cur_argv.begin(); i != cur_argv.end(); i ++)
-  {
-    char x[(*i).size()];
-    strcpy(x, (*i).c_str());
-    write(fd, x, strlen(x));
-    if (i + 1 != cur_argv.end())
-    {
-      write(fd, " ", 1);
-    }
-  }
-  close(fd);
 }
 
 // Dumping input for memory error: printing information about file with input 
 // and command line
 
 void ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output, 
-  bool sameMemoryError, int exploitGroup)
+                                       bool sameMemoryError, int exploitGroup,
+                                       Chunk* ch)
 {
   // Printing information about file with input
 
   if (config->usingSockets() || config->usingDatagrams())
   {
     stringstream ss(stringstream::in | stringstream::out);
-    ss << config->getPrefix() << "memcheck_" << memchecks;
+    ss << config->getResultDir() << config->getPrefix() << "memcheck_" << memchecks;
     
     // Command line printing
 
@@ -457,12 +445,12 @@ void ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
 
     for (vector <string> :: iterator i = cur_argv.begin (); i != cur_argv.end (); i++)
     {
-      char x [(* i).size ()];
-      strcpy (x, (* i).c_str ());
-      progAndArg += x;
+      progAndArg += *i;
 
       if (i + 1 != cur_argv.end())
-        progAndArg += " "; 
+      {
+        progAndArg += " ";
+      }
     }
 
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind() 
@@ -474,18 +462,18 @@ void ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
       << ss.str() << ".");
 
     input->dumpExploit((char *) ss.str().c_str(), false);
+    ch->setExploitArgv(progAndArg);
   }
   else // files using only
   {
     for (int i = 0; i < input->files.size(); i++)
     {
-      stringstream ss(stringstream::in | stringstream::out);
-      ss << config->getPrefix() << "memcheck_" << memchecks << "_" << i;
+      ostringstream ss;
+      ss << config->getResultDir() << config->getPrefix() << 
+            "memcheck_" << memchecks << "_" << i;
 
-      LOG(Logger::VERBOSE, "Dumping input for memcheck error to file " 
-        << ss.str());
-      input->files.at(i) 
-       ->FileBuffer::dumpFile((char *) ss.str().c_str());
+      LOG(Logger::VERBOSE, "Dumping input for memcheck error to file " << ss.str());
+      input->files.at(i)->FileBuffer::dumpFile(ss.str());
     }
 
     // Command line printing
@@ -496,28 +484,23 @@ void ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
     {
       bool b = false;
 
-      char x [(* i).size ()];
-      strcpy (x, (* i).c_str ());
-
       for (int j = 0; j < config -> getNumberOfFiles (); j++)
       {
-        if (x == config -> getFile (j))
+        if (config->getFile(j) == *i)
         {
-          progAndArg << config -> getPrefix () << "memcheck_" << memchecks << "_" << j << " ";
+          progAndArg << config->getResultDir() << config -> getPrefix () << 
+                        "memcheck_" << memchecks << "_" << j << " ";
           b = true;
           break;
         }
       }
-      if (!b) progAndArg << x << " ";
+      if (!b) progAndArg << *i << " ";
     }
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind()
       << "../lib/avalanche/valgrind " << progAndArg.str ());
+    ch->setExploitArgv(progAndArg.str());
   }
 
-  if ((config->getCheckArgv() != ""))
-  {
-    dumpExploitArgv();
-  }
   LOG(Logger::JOURNAL, ""); // new line
 }
 
@@ -525,12 +508,12 @@ int ExecutionManager::calculateScore(string fileNameModifier)
 {
   bool enable_mutexes = (fileNameModifier != string(""));
   int res = 0;
-  int fd = open((string("basic_blocks") + fileNameModifier + string(".log")).c_str(), O_RDWR);
+  int fd = open((temp_dir + string("basic_blocks") + fileNameModifier + string(".log")).c_str(), 
+                O_RDONLY, S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
   if (fd != -1)
   {
     struct stat fileInfo;
     fstat(fd, &fileInfo);
-//    printf("config->getSizeoflong()=%d\n", config->getSizeoflong());
     int size = fileInfo.st_size / config->getSizeoflong();
     if (size > 0)
     {
@@ -583,7 +566,7 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   }
   else
   {
-    LOG(Logger::ERROR, "Error opening file " << string("basic_blocks") + fileNameModifier + string(".log"));
+    LOG(Logger::ERROR, "Error opening file " << temp_dir << "basic_blocks" << fileNameModifier << ".log");
   }
   return res;
 }
@@ -594,16 +577,17 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 {
   if (config->usingSockets() || config->usingDatagrams())
   {
-    input->dumpExploit("replace_data", false, fileNameModifier.c_str());
+    string replace_data = temp_dir + string("replace_data");
+    input->dumpExploit(replace_data, false, fileNameModifier.c_str());
   }
   else
   {
-    input->dumpFiles(NULL, fileNameModifier.c_str());
+    input->dumpFiles(fileNameModifier.c_str());
   }
   vector<string> plugin_opts;
   getCovgrindOptions(plugin_opts, fileNameModifier, addNoCoverage);
 
-  string cv_exec_file = string("execution") + fileNameModifier + string(".log");
+  string cv_exec_file = temp_dir + string("execution") + fileNameModifier + string(".log");
   
   if (!first_run && (config->getCheckArgv() != ""))
   {
@@ -637,8 +621,9 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   Executor* plugin_exe;
   if (!config->getRemoteValgrind())
   {
-    plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(), config->getValgrind(),
-                            new_prog_and_args, plugin_opts, addNoCoverage ? COVGRIND : kind);
+    plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(),
+                                     config->getValgrind(), new_prog_and_args, 
+                                     plugin_opts, addNoCoverage ? CV : kind);
 
   }
   else
@@ -648,7 +633,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     {
       plug_args.push_back(new_prog_and_args[i]);
     }
-    plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, kind);
+    plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, 
+                                           kind, config->getResultDir());
   }
   new_prog_and_args.clear();
   plugin_opts.clear();
@@ -693,6 +679,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
   // Exploit (if has crashed)
 
+  Chunk* ch;
+
   if (isExploit)
   {
     int chunk_file_num = (config->usingSockets() || config->usingDatagrams()) ? (-1) : (input->files.size());
@@ -700,7 +688,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     {
       chunk_file_num --;
     }
-    FileBuffer* cv_output = new FileBuffer(cv_exec_file.c_str());
+    FileBuffer* cv_output = new FileBuffer(cv_exec_file);
     infoAvailable = cv_output->filterCovgrindOutput();
 
     // Exploit grouping
@@ -713,26 +701,26 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
         {
           sameExploit = true;
           (*it)->addGroup(exploits, chunk_file_num);
+          ch = *it;
           break;
         }
       }
       if (!sameExploit) 
       {
-        Chunk* ch;
-        ch = new Chunk(cv_output, exploits, chunk_file_num, (config->getCheckArgv() != ""), true);
+        ch = new Chunk(cv_output, exploits, chunk_file_num, true);
         report.push_back(ch);
       }
     }
     else
     {
-      Chunk* ch;
-      ch = new Chunk(NULL, exploits, chunk_file_num, (config->getCheckArgv() != ""), true);
+      ch = new Chunk(NULL, exploits, chunk_file_num, true);
       report.push_back(ch);
     }
 
     // Exploit dumping
 
-    dumpExploit(input, cv_output, infoAvailable, sameExploit, exploit_group); 
+    dumpExploit(input, cv_output, infoAvailable, 
+                 sameExploit, exploit_group, ch); 
     exploits ++;
     delete cv_output;
   }
@@ -741,7 +729,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
   else if (isMemcheckError)
   {
-    FileBuffer * mc_output = new FileBuffer(cv_exec_file.c_str());
+    FileBuffer * mc_output = new FileBuffer(cv_exec_file);
 
     long errors = mc_output->filterCount("ERROR SUMMARY: ");
 
@@ -776,7 +764,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
         errorType = mc_output->getErrorType(position);
         callStack = mc_output->getCallStack(position);
 
-        FileBuffer * allCallStack = new FileBuffer(errorType + "\n" + callStack);
+        FileBuffer * allCallStack = new FileBuffer((char*)(errorType + string("\n") + callStack).c_str());
 
         // Memory errors grouping
 
@@ -785,22 +773,21 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
         {
           sameExploit = false;
 
-          if (((* it)->getTrace() != NULL) 
-            &&(*(* it)->getTrace() == * allCallStack))
+          if (((* it)->getTrace() != NULL) &&
+              (*((*it)->getTrace()) == *allCallStack))
           {
             sameExploit = true;
-           (* it)->addGroup(memchecks, chunk_file_num);
+            (*it)->addGroup(memchecks, chunk_file_num);
             LOG(Logger::JOURNAL, 
               "\033[2m  This memory error has been detected previously.\033[0m\n");
-
+            ch = *it;
             break;
           }
          }
 
          if (!sameExploit)
          {
-          Chunk * ch;
-          ch = new Chunk(allCallStack, memchecks, chunk_file_num, (config->getCheckArgv() != ""), false);
+          ch = new Chunk(allCallStack, memchecks, chunk_file_num, false);
           report.push_back(ch);
 
           LOG(Logger::JOURNAL, "  \033[0;31m" << errorType << "\033[0m");
@@ -829,7 +816,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
       if (possiblyLost != -1)
         LOG(Logger::JOURNAL, "  Possibly lost: " << possiblyLost);
       
-      dumpMemoryError(input, mc_output, sameExploit, exploit_group);
+      dumpMemoryError(input, mc_output, sameExploit, exploit_group, ch);
       memchecks++;
     }
     //delete mc_output;
@@ -848,7 +835,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
 int ExecutionManager::checkDivergence(Input* first_input, int score)
 {
-  int divfd = open("divergence.log", O_RDWR);
+  string div_file = temp_dir + string("divergence.log");
+  int divfd = open(div_file.c_str(), O_RDONLY);
   if (divfd != -1)
   {
     bool divergence;
@@ -860,7 +848,7 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
       LOG(Logger::DEBUG, "Divergence at depth " << d << ".");
       if (config->usingSockets() || config->usingDatagrams())
       {
-        stringstream ss(stringstream::in | stringstream::out);
+        ostringstream ss;
         ss << config->getPrefix() << "divergence_" << divergences;
         LOG(Logger::DEBUG, "Dumping divergent input to file " << ss.str());
         first_input->parent->dumpExploit((char*) ss.str().c_str(), false);
@@ -869,10 +857,10 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
       {
         for (int i = 0; i < first_input->parent->files.size(); i++)
         {
-          stringstream ss(stringstream::in | stringstream::out);
+          ostringstream ss;
           ss << config->getPrefix() << "divergence_" << divergences << "_" << i;
           LOG(Logger::DEBUG, "Dumping divergent input to file " << ss.str());
-          first_input->parent->files.at(i)->FileBuffer::dumpFile((char*) ss.str().c_str());
+          first_input->parent->files.at(i)->FileBuffer::dumpFile(ss.str());
         }
       }
       divergences++;
@@ -895,7 +883,8 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
 
 void ExecutionManager::updateInput(Input* input)
 {
-  int fd = open("replace_data", O_RDWR);
+  string replace_data = temp_dir + string("replace_data");
+  int fd = open(replace_data.c_str(), O_RDONLY);
   int socketsNum;
   read(fd, &socketsNum, sizeof(int));
   for (int i = 0; i < socketsNum; i++)
@@ -947,7 +936,9 @@ void* process_query(void* data)
 
 int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index)
 {
-  string cur_trace_log = (trace_kind) ? string("curtrace") : string("curdtrace");
+  string cur_trace_log = temp_dir;
+  cur_trace_log += (trace_kind) ? string("curtrace") : string("curdtrace");
+  
   string input_modifier = string("");
   if (thread_index)
   {
@@ -965,13 +956,13 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
     if (!monitor->getKilledStatus())
     {
       LOG(Logger::ERROR, "STP has encountered an error.");
-      FileBuffer f(cur_trace_log.c_str());
+      FileBuffer f(cur_trace_log);
       LOG(Logger::ERROR, cur_trace_log.c_str() << ":\n" << string(f.buf));
     }
   }
   else if (out->getFile() != NULL)
   {
-    FileBuffer f(out->getFile());
+    FileBuffer f(string(out->getFile()));
     LOG(Logger::DEBUG, "Thread #" << thread_index << ": STP output:\n");
     LOG(Logger::DEBUG, "\033[2m" << string(f.buf) << "\033[0m");
     Input* next = new Input();
@@ -1032,7 +1023,8 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
 
 int ExecutionManager::processTraceParallel(Input * first_input, unsigned long first_depth)
 {
-  int actualfd = open("actual.log", O_RDWR);
+  string actual_file = temp_dir + string("actual.log");
+  int actualfd = open(actual_file.c_str(), O_RDONLY);
   int actual_length;
   if (config->getDepth() == 0)
   {
@@ -1047,7 +1039,9 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
   close(actualfd);
   int active_threads = thread_num;
   long depth = 0;
-  FileBuffer *trace = new FileBuffer(((trace_kind) ? "trace.log" : "dangertrace.log"));
+  string trace_file = temp_dir + ((trace_kind) ? string("trace.log") 
+                                               : string("dangertrace.log"));
+  FileBuffer *trace = new FileBuffer(trace_file);
   Thread::clearSharedData();
   Thread::addSharedData((void*) &inputs, string("inputs"));
   Thread::addSharedData((void*) first_input, string("first_input"));
@@ -1093,11 +1087,11 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
     ostringstream cur_trace;
     if (trace_kind)
     {
-      cur_trace << "curtrace_";
+      cur_trace << temp_dir << "curtrace_";
     }
     else
     {
-      cur_trace << "curdtrace_";
+      cur_trace << temp_dir << "curdtrace_";
     } 
     cur_trace << thread_counter + 1 << ".log";
     trace->cutQueryAndDump(cur_trace.str().c_str(), trace_kind);
@@ -1119,7 +1113,8 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
 
 int ExecutionManager::processTraceSequental(Input* first_input, unsigned long first_depth)
 {
-  int actualfd = open("actual.log", O_RDWR);
+  string actual_file = temp_dir + string("actual.log");
+  int actualfd = open(actual_file.c_str(), O_RDONLY);
   int actual_length, depth = 0;
   if (config->getDepth() == 0)
   {
@@ -1136,11 +1131,11 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
   {
     int cur_depth = 0;
     trace_kind = false;
-    FileBuffer dtrace("dangertrace.log");
+    FileBuffer dtrace(temp_dir + string("dangertrace.log"));
     char* dquery;
     while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
     {
-      dtrace.cutQueryAndDump("curdtrace.log");
+      dtrace.cutQueryAndDump(temp_dir + string("curdtrace.log"));
       if (processQuery(first_input, actual, first_depth, cur_depth ++) == -1)
       {
         break;
@@ -1148,7 +1143,7 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
     }
   }
   trace_kind = true;
-  FileBuffer trace("trace.log");
+  FileBuffer trace(temp_dir + string("trace.log"));
   char* query;
 
   // For STP
@@ -1156,7 +1151,7 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
   while((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
   {
     depth++;
-    trace.cutQueryAndDump("curtrace.log", true);
+    trace.cutQueryAndDump(temp_dir + string("curtrace.log"), true);
     if (processQuery(first_input, actual, first_depth, depth - 1) == -1)
     {
       return -1;
@@ -1181,7 +1176,9 @@ int ExecutionManager::requestNonZeroInput()
     signal(SIGUSR2, dummy_handler);
     kill(getppid(), SIGUSR1);
     pause();
-    int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+    string startdepth_file = temp_dir + string("startdepth.log");
+    int descr = open(startdepth_file.c_str(), O_RDONLY | O_CREAT, 
+                     S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     int startdepth = 0;
     read(descr, &startdepth, sizeof(int));
     close(descr);
@@ -1198,11 +1195,6 @@ int ExecutionManager::requestNonZeroInput()
   }
   return 0;
 }
-
-/*bool valid_char(char value)
-{
-  return (value >= 0x20) && (value <= 0x7d);
-}*/
 
 bool ExecutionManager::updateArgv(Input* input)
 {
@@ -1272,14 +1264,27 @@ bool ExecutionManager::updateArgv(Input* input)
 void ExecutionManager::run()
 {
     LOG(Logger::DEBUG, "Running execution manager.");
+    if (config->getCheckArgv() != "")
+    {
+      string arg_lengths = temp_dir + string("arg_lengths");
+      int fd = open(arg_lengths.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 
+                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+      int length;
+      for (int i = 1; i < cur_argv.size(); i ++)
+      {
+        length = cur_argv[i].size();
+        write(fd, &length, sizeof(int));
+      }
+      close(fd);
+    }
     int runs = 0;
     if (config->usingMemcheck())
     {
-      kind = MEMCHECK;
+      kind = MC;
     }
     else
     {
-      kind = COVGRIND;
+      kind = CV;
     }
 
     // Reading files into initial input
@@ -1289,7 +1294,7 @@ void ExecutionManager::run()
     {
       for (int i = 0; i < config->getNumberOfFiles(); i++)
       {
-        initial->files.push_back(new FileBuffer((char*) config->getFile(i).c_str()));
+        initial->files.push_back(new FileBuffer(config->getFile(i)));
       }
     }
     else 
@@ -1307,7 +1312,7 @@ void ExecutionManager::run()
       return;
     }
     basicBlocksCovered.insert(delta_basicBlocksCovered.begin(), delta_basicBlocksCovered.end());
-    LOG(Logger::DEBUG, "Fitst score = " << score << ".");
+    LOG(Logger::DEBUG, "First score = " << score << ".");
     inputs.insert(make_pair(Key(score, 0), initial));
     bool delete_fi;
     
@@ -1317,6 +1322,7 @@ void ExecutionManager::run()
       LOG(Logger::DEBUG, "");
       LOG_TIME(Logger::JOURNAL, "Iteration " << (runs + 1) << ".");
 
+      monitor->removeTmpFiles();
       delta_basicBlocksCovered.clear();
       multimap<Key, Input*, cmp>::iterator it = --(inputs.end());
       Input* fi = it->second; // first input
@@ -1328,7 +1334,7 @@ void ExecutionManager::run()
 
       if (config->usingSockets() || config->usingDatagrams())
       {
-        fi->dumpExploit("replace_data", true);
+        fi->dumpExploit((temp_dir + string("replace_data")).c_str(), true);
       }
       else
       {
@@ -1359,14 +1365,10 @@ void ExecutionManager::run()
   
       getTracegrindOptions(plugin_opts);
 
-      if (runs && (config->getCheckArgv() != ""))
-      {
-        updateArgv(fi);
-      }
-
       if (config->getRemoteValgrind())
       {
-        plugin_opts.push_back("--log-file=execution.log");
+        plugin_opts.push_back(string("--log-file=") + 
+                              temp_dir + string("execution.log"));
       }
 
       if (runs && (config->getCheckArgv() != ""))
@@ -1408,11 +1410,15 @@ void ExecutionManager::run()
 
       if (config->getRemoteValgrind())
       {
-        plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, TRACEGRIND);
+        plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, 
+                                               TG, config->getResultDir());
       }
       else
       {
-        plugin_exe = new PluginExecutor (config->getDebug(), config->getTraceChildren(), config->getValgrind(), cur_argv, plugin_opts, TRACEGRIND);
+        plugin_exe = new PluginExecutor(config->getDebug(), 
+                                         config->getTraceChildren(), 
+                                         config->getValgrind(), cur_argv, 
+                                         plugin_opts, TG);
       }
             
       plugin_opts.clear();
@@ -1436,9 +1442,9 @@ void ExecutionManager::run()
       {
         if (!runs)
         {
-          string argv_file("argv.log");
-          config->addFile(argv_file);
-          fi->files.push_back(new FileBuffer("argv.log"));
+          string argv_log = temp_dir + string("argv.log");
+          config->addFile(argv_log);
+          fi->files.push_back(new FileBuffer(argv_log));
         }
       }
       monitor->addTime(time(NULL));
@@ -1647,7 +1653,7 @@ void ExecutionManager::talkToServer()
 
           if (config->getInputFilterFile() != "")
           {
-            FileBuffer mask(config->getInputFilterFile().c_str());
+            FileBuffer mask(config->getInputFilterFile());
             writeToSocket(dist_fd, &mask.size, sizeof(int));
             writeToSocket(dist_fd, mask.buf, mask.size);
           }
@@ -1668,7 +1674,7 @@ void ExecutionManager::talkToServer()
           }
           if (config->getFuncFilterFile() != "")
           {
-            FileBuffer filter(config->getFuncFilterFile().c_str());
+            FileBuffer filter(config->getFuncFilterFile());
             writeToSocket(dist_fd, &filter.size, sizeof(int));
             writeToSocket(dist_fd, filter.buf, filter.size);
           }
@@ -1677,7 +1683,18 @@ void ExecutionManager::talkToServer()
             int z = 0;
             writeToSocket(dist_fd, &z, sizeof(int));
           }
-
+          if (config->getAgentDir() != string(""))
+          {
+             string agentDir = config->getAgentDir();
+             int length = agentDir.length();
+             writeToSocket(dist_fd, &length, sizeof(int));
+             writeToSocket(dist_fd, agentDir.c_str(), length);
+          }
+          else
+          {
+            int length = 0;
+            writeToSocket(dist_fd, &length, sizeof(int));
+          }
           for (vector<string>::const_iterator it = config->getProgAndArg().begin(); it != config->getProgAndArg().end(); it++)
           {
             int argsSize = it->length();

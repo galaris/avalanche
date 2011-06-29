@@ -95,14 +95,16 @@ int LocalExecutor::wait()
 
 void LocalExecutor::redirect_stdout(char *filename)
 {
-    file_out = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    file_out = open(filename, O_CREAT | O_TRUNC | O_WRONLY, 
+                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (file_out == -1)
         LOG(Logger::JOURNAL, "Cannot open " << filename << strerror(errno));
 }
 
 void LocalExecutor::redirect_stderr(char *filename)
 {
-    file_err = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    file_err = open(filename, O_CREAT | O_TRUNC | O_WRONLY, 
+                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (file_err == -1)
         LOG(Logger::JOURNAL, "Cannot open " << filename << strerror(errno));
 }

@@ -25,6 +25,7 @@
 #define __INPUT__H__
 
 #include <vector>
+#include <string>
 
 class FileBuffer;
 
@@ -33,8 +34,8 @@ class Input
 public:
   Input();
   ~Input();
-  void dumpFiles(char* name = NULL, const char* name_modifier = "");
-  void dumpExploit(const char* name, bool predict, const char* name_modifier = "");
+  void dumpFiles(std::string name_modifier = "");
+  void dumpExploit(std::string file_name, bool predict, std::string name_modifier = "");
 
   std::vector<FileBuffer*> files;
   int startdepth;

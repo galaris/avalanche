@@ -123,23 +123,50 @@ OptionConfig* opt_config;
 
 void cleanUp()
 {
+  monitor->removeTmpFiles();
+  string dir_name = ExecutionManager::getTempDir();
   if (thread_num > 0)
   {
     for (int i = 1; i < thread_num + 1; i ++)
     {
       ostringstream file_modifier;
       file_modifier << "_" << i;
-      remove(string("basic_blocks").append(file_modifier.str()).append(".log").c_str());
-      remove(string("execution").append(file_modifier.str()).append(".log").c_str());
-      remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
-      remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
-      remove(string("replace_data").append(file_modifier.str()).c_str());
+      ::unlink((dir_name + string("basic_blocks").append(file_modifier.str()).append(".log")).c_str());
+      ::unlink((dir_name + string("execution").append(file_modifier.str()).append(".log")).c_str());
+      ::unlink((dir_name + string("curtrace").append(file_modifier.str()).append(".log")).c_str());
+      ::unlink((dir_name + string("replace_data").append(file_modifier.str())).c_str());
+      ::unlink((dir_name + string("argv.log").append(file_modifier.str())).c_str());
       for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
       {
-        remove(opt_config->getFile(j).append(file_modifier.str()).c_str());
+        ::unlink(opt_config->getFile(j).append(file_modifier.str()).c_str());
       }
     }
     delete []threads;
+  }
+  if (opt_config->enabledCleanUp()) {
+    ::unlink((dir_name + string("basic_blocks.log")).c_str());
+    ::unlink((dir_name + string("curtrace.log")).c_str());
+    ::unlink((dir_name + string("curdtrace.log")).c_str());
+    ::unlink((dir_name + string("execution.log")).c_str());
+    ::unlink((dir_name + string("prediction.log")).c_str());
+    ::unlink((dir_name + string("dangertrace.log")).c_str());
+    ::unlink((dir_name + string("trace.log")).c_str());
+    ::unlink((dir_name + string("actual.log")).c_str());
+    ::unlink((dir_name + string("divergence.log")).c_str());
+    ::unlink((dir_name + string("replace_data")).c_str());
+    if (opt_config->getCheckArgv() != "")
+    {
+      ::unlink((dir_name + string("argv.log")).c_str());
+      ::unlink((dir_name + string("arg_lengths")).c_str());
+    }
+    if (dir_name != "")
+    {
+      if (rmdir(dir_name.substr(0, dir_name.length() - 1).c_str()) < 0)
+      {
+        LOG(Logger::ERROR, "Cannot delete temporary directory " << 
+                    dir_name << " : " << strerror(errno));
+      }
+    }
   }
   for (int i = 0; i < report.size(); i ++)
   {
@@ -161,8 +188,8 @@ void reportResults()
   bool toFile = (opt_config -> getReportLog() != string (""));
 
   if (toFile)
-    fd = open (opt_config -> getReportLog().c_str(), 
-      O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    fd = open (opt_config -> getReportLog().c_str(), O_WRONLY | O_CREAT | O_TRUNC,
+                S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP );
 
   if (!toFile)
   {
@@ -173,7 +200,7 @@ void reportResults()
   {
     for (int i = 0; i < report.size (); i++)
     {
-      report.at (i) -> print (opt_config -> getPrefix (), i, fd);
+      report.at(i)->print(opt_config->getPrefix (), i, fd);
     }
   }
 
@@ -252,8 +279,22 @@ int main(int argc, char *argv[])
 
     LOG (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
     LOG (Logger :: VERBOSE, ""); // new line
-  
+
+    if (opt_config->getResultDir() != string(""))
+    {
+      if (mkdir(opt_config->getResultDir().c_str(), S_IRWXG | S_IRWXO | S_IRWXU) < 0)
+      {
+        if (errno != EEXIST)
+        {
+          LOG(Logger::ERROR, "Cannot create directory " << opt_config->getResultDir() <<
+                             " : " << strerror(errno));
+          opt_config->setResultDir("");
+        }
+      }
+    }
+
     em = new ExecutionManager(opt_config);
+    string temp_dir = ExecutionManager::getTempDir();
     em->run();
     if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
     {

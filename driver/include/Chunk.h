@@ -35,18 +35,20 @@ class Chunk
 private:
   FileBuffer* trace;
   std::vector<std::pair<int, int> > exploitGroups;
-  bool argvSpecified;
+  std::string exploitArgv;
   bool isExploit; // is error exploit or memory error
  
 public:
-  Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool argvSpecified, bool isExploit);
+  Chunk(FileBuffer* trace, int exploitNum, int inputNum, bool _isExploit);
+
   ~Chunk();
 
   void addGroup(int exploitNum, int inputNum);
-  
-  FileBuffer* getTrace();
-
   void print(std::string prefix, int chunkNum, int fd = -1);
+
+  void setExploitArgv(std::string _exploitArgv);
+
+  FileBuffer* getTrace();
 };
 
 #endif

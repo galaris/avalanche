@@ -30,9 +30,9 @@
 
 enum Kind
 {
-  TRACEGRIND,
-  COVGRIND,
-  MEMCHECK,
+  TG,
+  CV,
+  MC,
   UNID
 };
 

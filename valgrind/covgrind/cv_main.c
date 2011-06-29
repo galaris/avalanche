@@ -1,7 +1,6 @@
-
 /*--------------------------------------------------------------------------------*/
 /*-------------------------------- AVALANCHE -------------------------------------*/
-/*-------- Covgring. Dumps IR basuc blocks addresses to file.   cv_main.c --------*/
+/*-------- Covgring. Dumps IR basic blocks addresses to file.   cv_main.c --------*/
 /*--------------------------------------------------------------------------------*/
 
 /*
@@ -41,6 +40,9 @@
 #include "pub_tool_libcbase.h"
 
 #include <avalanche.h>
+
+#define PERM_R_W VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP | \
+                 VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP
 
 VgHashTable basicBlocksTable;
 
@@ -118,11 +120,11 @@ static void cv_fini(Int exitcode)
     SysRes fd;
     if (bbFileName != NULL)
     {
-      fd = VG_(open)(bbFileName, VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      fd = VG_(open)(bbFileName, VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
     }
     else
     {
-      fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
     }
     if (sr_Res(fd) != -1)
     {
@@ -169,7 +171,7 @@ static Bool cv_process_cmd_line_option(Char* arg)
   else if (VG_STR_CLO(arg, "--replace",  dataToReplace))
   { 
     replace = True;
-    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, PERM_R_W));
     VG_(read)(fd, &socketsNum, 4);
     socketsBoundary = socketsNum;
     if (socketsNum > 0)

@@ -42,6 +42,7 @@
 class FileBuffer;
 class OptionConfig;
 class Input;
+class Chunk;
 
 class Key
 {
@@ -113,10 +114,9 @@ public:
     int calculateScore(std::string filaNameModifier = "");
     int checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, std::string fileNameModifier = "");
 
-    void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
-    void dumpMemoryError (Input * input, FileBuffer * mc_output, bool sameExploit, int exploitGroup);
-    void dumpExploitArgv();
-
+    void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group, Chunk* ch);
+    void dumpMemoryError (Input * input, FileBuffer * mc_output, bool sameExploit, int exploitGroup, Chunk* ch);
+    
     bool updateArgv(Input* input);
 
     int checkDivergence(Input* first_input, int score);
@@ -124,10 +124,11 @@ public:
     void updateInput(Input* input);
 
     void talkToServer();
-
+    
 		int getMemchecks ();
 
     OptionConfig* getConfig() { return config; }
+    static std::string getTempDir();
 
     ~ExecutionManager();
 

@@ -24,13 +24,14 @@
 #include "SocketBuffer.h"
 
 #include <cstddef>
-#include <string>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+
+using namespace std;
 
 SocketBuffer::SocketBuffer(int num, int size)
 {
@@ -53,7 +54,7 @@ SocketBuffer::SocketBuffer(const SocketBuffer& other)
   }
 }
 
-FileBuffer* SocketBuffer::forkInput(char* stpOutputFile)
+FileBuffer* SocketBuffer::forkInput(string stpOutputFile)
 {
   FileBuffer stp(stpOutputFile);
   if ((stp.buf[0] == 'V') && (stp.buf[1] == 'a') && (stp.buf[2] == 'l') && (stp.buf[3] == 'i') && (stp.buf[4] == 'd'))

@@ -31,7 +31,7 @@
 class RemotePluginExecutor : public Executor
 {
 public:
-    RemotePluginExecutor(std::vector<std::string> &_args, int fd, std::vector<char> &to_send, Kind _kind);
+    RemotePluginExecutor(std::vector<std::string> &_args, int fd, std::vector<char> &to_send, Kind _kind, std::string _result_dir);
     bool checkFlag(const char *flg_name);
     ~RemotePluginExecutor() {}
     int run(int thread_index = 0);
@@ -40,6 +40,7 @@ private:
     int remote_fd;
     std::vector<char> files_to_send;
     Kind kind;
+    std::string result_dir;
 };
 
 

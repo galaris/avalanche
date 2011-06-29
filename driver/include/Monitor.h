@@ -28,6 +28,9 @@
 #include <iostream>
 #include <set>
 #include <utility>
+#include <vector>
+
+#include "TmpFile.h"
 
 #define MODULE_COUNT 3
 
@@ -64,6 +67,9 @@ class Monitor
             {
               return global_start_time;
             }
+
+	    virtual void setTmpFiles(TmpFile* tmp_stdout, TmpFile* tmp_stderr) {}
+	    virtual void removeTmpFiles() {}
 };
 
 class SimpleMonitor : public Monitor
@@ -73,6 +79,8 @@ class SimpleMonitor : public Monitor
             state current_state;
             pid_t current_pid;
             time_t module_time[MODULE_COUNT];
+	    TmpFile* cur_tmp_stdout;
+	    TmpFile* cur_tmp_stderr;
   public:
             SimpleMonitor(std::string checker_name, time_t _global_start_time);
             ~SimpleMonitor() {}
@@ -96,6 +104,9 @@ class SimpleMonitor : public Monitor
             }
             void handleSIGKILL();
             void handleSIGALARM();
+
+	    void setTmpFiles(TmpFile* tmp_stdout, TmpFile* tmp_stderr);
+	    void removeTmpFiles();
 };
 
 class ParallelMonitor : public Monitor
@@ -111,13 +122,15 @@ class ParallelMonitor : public Monitor
             time_t* stp_start_time;
             time_t tracer_start_time;
 
-            std::set <interval> checker_time;
-            std::set <interval> stp_time;
+            std::set<interval> checker_time;
+            std::set<interval> stp_time;
             time_t tracer_time;
             time_t checker_alarm;
             time_t tracer_alarm;
 
             pthread_mutex_t add_time_mutex;
+
+	    std::vector<std::pair<TmpFile*, TmpFile*> > tmp_files;
   public:
             ParallelMonitor(std::string checker_name, time_t _global_start_time, unsigned int _thread_num); 
             ~ParallelMonitor();
@@ -152,6 +165,9 @@ class ParallelMonitor : public Monitor
             void handleSIGALARM();
 
             void handleSIGKILL();
+
+	    void setTmpFiles(TmpFile* tmp_stdout, TmpFile* tmp_stderr);
+	    void removeTmpFiles();
 };
  
 #endif

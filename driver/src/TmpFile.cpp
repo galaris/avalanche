@@ -25,6 +25,7 @@
 
 #include "Logger.h"
 #include "TmpFile.h"
+#include "ExecutionManager.h"
 
 #include <stdlib.h>
 
@@ -45,7 +46,7 @@ TmpFile::TmpFile(): is_exported(false), is_good(true)
 {
     char s[64];
     sprintf(s, "tmpfile_%u", tmpnum++);
-    filename = strdup(s);
+    filename = strdup((ExecutionManager::getTempDir() + string(s)).c_str());
     FILE *fp = fopen(filename, "wt");
     
     if (!fp) 
