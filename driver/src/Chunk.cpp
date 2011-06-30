@@ -50,7 +50,7 @@ Chunk::Chunk(FileBuffer* trace, int exploitNum,
   }
   exploitGroups.push_back(make_pair(exploitNum, inputNum));
   isExploit = exploitType;
-  exploitArgv = "";
+  exploitArgv = string("");
 }
 
 Chunk::~Chunk()

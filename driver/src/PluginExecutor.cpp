@@ -127,10 +127,6 @@ int PluginExecutor::run(int thread_index)
     if (ret == -1) 
     {
       LOG(Logger :: ERROR, "Problem in execution: " << strerror(errno));
-      if (kind == MC)
-      {
-        output = new FileBuffer(file_err->exportFile());
-      }
       return -1;
     }
 
@@ -141,11 +137,7 @@ int PluginExecutor::run(int thread_index)
       if (!monitor->getKilledStatus())
       {
         LOG(Logger :: DEBUG, "Exited on signal.");
-        if (kind == MC)
-        {
-          output = new FileBuffer(file_err->exportFile());
-        }
-      return -1;
+        return -1;
       }
       else
       {
@@ -163,7 +155,6 @@ int PluginExecutor::run(int thread_index)
       case TG: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
                break;
       case MC: LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
-               output = new FileBuffer(file_err->exportFile());
                break;
       case CV: LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
                break;
