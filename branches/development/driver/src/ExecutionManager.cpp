@@ -124,24 +124,24 @@ static int connectTo(string host, unsigned int port)
 
 int args_length;
 
-static string temp_dir = string("");
+static string tempDir = string("");
 
 string ExecutionManager::getTempDir()
 {
-  if (temp_dir == "")
+  if (tempDir == "")
   {
     char dir_template [] = "/tmp/avalanche-XXXXXX";
-    char *c_temp_dir = mkdtemp(dir_template);
-    if (c_temp_dir == NULL)
+    char *c_tempDir = mkdtemp(dir_template);
+    if (c_tempDir == NULL)
     {
       LOG(Logger::ERROR, "Cannot create temp directory : " << strerror(errno));
     }
     else
     {
-      temp_dir = string(c_temp_dir) + string("/");
+      tempDir = string(c_tempDir) + string("/");
     }
   }
-  return temp_dir;
+  return tempDir;
 }
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
@@ -187,9 +187,9 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 {
   ostringstream tg_invert_depth;
-  if (temp_dir != "")
+  if (tempDir != "")
   {
-    plugin_opts.push_back("--temp-dir=" + temp_dir);
+    plugin_opts.push_back("--temp-dir=" + tempDir);
   }
   tg_invert_depth << "--invertdepth=" << config->getDepth();
 
@@ -275,10 +275,10 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 
 void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string fileNameModifier, bool addNoCoverage)
 {
-  string cur_temp_dir = temp_dir;
+  string curTempDir = tempDir;
   if (config->getRemoteValgrind())
   {
-    plugin_opts.push_back(string("--temp-dir=") + cur_temp_dir);
+    plugin_opts.push_back(string("--temp-dir=") + curTempDir);
   }
   if (config->usingSockets())
   {
@@ -290,7 +290,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     cv_port << "--port=" << config->getPort();
     plugin_opts.push_back(cv_port.str());
     
-    plugin_opts.push_back(string("--replace=") + cur_temp_dir + string("replace_data") + fileNameModifier);
+    plugin_opts.push_back(string("--replace=") + curTempDir + string("replace_data") + fileNameModifier);
     plugin_opts.push_back("--sockets=yes");
 
     LOG(Logger::DEBUG, "Setting alarm " << config->getAlarm() << ".");
@@ -299,7 +299,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
   }
   else if (config->usingDatagrams())
   { 
-    plugin_opts.push_back(string("--replace=") + cur_temp_dir + string("replace_data") + fileNameModifier);
+    plugin_opts.push_back(string("--replace=") + curTempDir + string("replace_data") + fileNameModifier);
     plugin_opts.push_back("--datagrams=yes");
 
     LOG(Logger::DEBUG, "Setting alarm " << config->getAlarm() << ".");
@@ -313,14 +313,14 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     plugin_opts.push_back(cv_alarm.str());
   }
 
-  string cv_exec_file = cur_temp_dir + string("execution") + fileNameModifier + string(".log");
+  string cv_exec_file = curTempDir + string("execution") + fileNameModifier + string(".log");
   plugin_opts.push_back(string("--log-file=") + cv_exec_file);
 
   if (addNoCoverage)
   {
     plugin_opts.push_back("--no-coverage=yes");
   }
-  plugin_opts.push_back(string("--filename=") + cur_temp_dir + string("basic_blocks") + fileNameModifier + string(".log"));
+  plugin_opts.push_back(string("--filename=") + curTempDir + string("basic_blocks") + fileNameModifier + string(".log"));
 }
 
 void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, 
@@ -380,7 +380,10 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace,
 
     LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss.str() << ".");
     input->dumpExploit((char*) ss.str().c_str(), false);
-    ch->setExploitArgv(progAndArg);
+    if (ch != NULL)
+    {
+      ch->setExploitArgv(progAndArg);
+    }
   }
   else // using files only
   {
@@ -419,7 +422,10 @@ void ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace,
     }
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind()
       << "../lib/avalanche/valgrind " << progAndArg.str ()); 
-    ch->setExploitArgv(progAndArg.str());
+    if (ch != NULL)
+    {
+      ch->setExploitArgv(progAndArg.str());
+    }
   }
 
   LOG(Logger::JOURNAL, ""); // new line after exploit report
@@ -462,7 +468,10 @@ void ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
       << ss.str() << ".");
 
     input->dumpExploit((char *) ss.str().c_str(), false);
-    ch->setExploitArgv(progAndArg);
+    if (ch != NULL)
+    {
+      ch->setExploitArgv(progAndArg);
+    }
   }
   else // files using only
   {
@@ -498,7 +507,10 @@ void ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
     }
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind()
       << "../lib/avalanche/valgrind " << progAndArg.str ());
-    ch->setExploitArgv(progAndArg.str());
+    if (ch != NULL)
+    {
+      ch->setExploitArgv(progAndArg.str());
+    }
   }
 
   LOG(Logger::JOURNAL, ""); // new line
@@ -508,7 +520,7 @@ int ExecutionManager::calculateScore(string fileNameModifier)
 {
   bool enable_mutexes = (fileNameModifier != string(""));
   int res = 0;
-  int fd = open((temp_dir + string("basic_blocks") + fileNameModifier + string(".log")).c_str(), 
+  int fd = open((tempDir + string("basic_blocks") + fileNameModifier + string(".log")).c_str(), 
                 O_RDONLY, S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
   if (fd != -1)
   {
@@ -566,7 +578,7 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   }
   else
   {
-    LOG(Logger::ERROR, "Error opening file " << temp_dir << "basic_blocks" << fileNameModifier << ".log");
+    LOG(Logger::ERROR, "Error opening file " << tempDir << "basic_blocks" << fileNameModifier << ".log");
   }
   return res;
 }
@@ -577,7 +589,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 {
   if (config->usingSockets() || config->usingDatagrams())
   {
-    string replace_data = temp_dir + string("replace_data");
+    string replace_data = tempDir + string("replace_data");
     input->dumpExploit(replace_data, false, fileNameModifier.c_str());
   }
   else
@@ -587,7 +599,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   vector<string> plugin_opts;
   getCovgrindOptions(plugin_opts, fileNameModifier, addNoCoverage);
 
-  string cv_exec_file = temp_dir + string("execution") + fileNameModifier + string(".log");
+  string cv_exec_file = tempDir + string("execution") + fileNameModifier + string(".log");
   
   if (!first_run && (config->getCheckArgv() != ""))
   {
@@ -679,7 +691,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
   // Exploit (if has crashed)
 
-  Chunk* ch;
+  Chunk* ch = NULL;
 
   if (isExploit)
   {
@@ -835,7 +847,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
 int ExecutionManager::checkDivergence(Input* first_input, int score)
 {
-  string div_file = temp_dir + string("divergence.log");
+  string div_file = tempDir + string("divergence.log");
   int divfd = open(div_file.c_str(), O_RDONLY);
   if (divfd != -1)
   {
@@ -883,7 +895,7 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
 
 void ExecutionManager::updateInput(Input* input)
 {
-  string replace_data = temp_dir + string("replace_data");
+  string replace_data = tempDir + string("replace_data");
   int fd = open(replace_data.c_str(), O_RDONLY);
   int socketsNum;
   read(fd, &socketsNum, sizeof(int));
@@ -936,7 +948,7 @@ void* process_query(void* data)
 
 int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index)
 {
-  string cur_trace_log = temp_dir;
+  string cur_trace_log = tempDir;
   cur_trace_log += (trace_kind) ? string("curtrace") : string("curdtrace");
   
   string input_modifier = string("");
@@ -1023,7 +1035,7 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
 
 int ExecutionManager::processTraceParallel(Input * first_input, unsigned long first_depth)
 {
-  string actual_file = temp_dir + string("actual.log");
+  string actual_file = tempDir + string("actual.log");
   int actualfd = open(actual_file.c_str(), O_RDONLY);
   int actual_length;
   if (config->getDepth() == 0)
@@ -1039,7 +1051,7 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
   close(actualfd);
   int active_threads = thread_num;
   long depth = 0;
-  string trace_file = temp_dir + ((trace_kind) ? string("trace.log") 
+  string trace_file = tempDir + ((trace_kind) ? string("trace.log") 
                                                : string("dangertrace.log"));
   FileBuffer *trace = new FileBuffer(trace_file);
   Thread::clearSharedData();
@@ -1087,11 +1099,11 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
     ostringstream cur_trace;
     if (trace_kind)
     {
-      cur_trace << temp_dir << "curtrace_";
+      cur_trace << tempDir << "curtrace_";
     }
     else
     {
-      cur_trace << temp_dir << "curdtrace_";
+      cur_trace << tempDir << "curdtrace_";
     } 
     cur_trace << thread_counter + 1 << ".log";
     trace->cutQueryAndDump(cur_trace.str().c_str(), trace_kind);
@@ -1113,7 +1125,7 @@ int ExecutionManager::processTraceParallel(Input * first_input, unsigned long fi
 
 int ExecutionManager::processTraceSequental(Input* first_input, unsigned long first_depth)
 {
-  string actual_file = temp_dir + string("actual.log");
+  string actual_file = tempDir + string("actual.log");
   int actualfd = open(actual_file.c_str(), O_RDONLY);
   int actual_length, depth = 0;
   if (config->getDepth() == 0)
@@ -1131,11 +1143,11 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
   {
     int cur_depth = 0;
     trace_kind = false;
-    FileBuffer dtrace(temp_dir + string("dangertrace.log"));
+    FileBuffer dtrace(tempDir + string("dangertrace.log"));
     char* dquery;
     while ((dquery = strstr(dtrace.buf, "QUERY(FALSE)")) != NULL)
     {
-      dtrace.cutQueryAndDump(temp_dir + string("curdtrace.log"));
+      dtrace.cutQueryAndDump(tempDir + string("curdtrace.log"));
       if (processQuery(first_input, actual, first_depth, cur_depth ++) == -1)
       {
         break;
@@ -1143,7 +1155,7 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
     }
   }
   trace_kind = true;
-  FileBuffer trace(temp_dir + string("trace.log"));
+  FileBuffer trace(tempDir + string("trace.log"));
   char* query;
 
   // For STP
@@ -1151,7 +1163,7 @@ int ExecutionManager::processTraceSequental(Input* first_input, unsigned long fi
   while((query = strstr(trace.buf, "QUERY(FALSE)")) != NULL)
   {
     depth++;
-    trace.cutQueryAndDump(temp_dir + string("curtrace.log"), true);
+    trace.cutQueryAndDump(tempDir + string("curtrace.log"), true);
     if (processQuery(first_input, actual, first_depth, depth - 1) == -1)
     {
       return -1;
@@ -1176,7 +1188,7 @@ int ExecutionManager::requestNonZeroInput()
     signal(SIGUSR2, dummy_handler);
     kill(getppid(), SIGUSR1);
     pause();
-    string startdepth_file = temp_dir + string("startdepth.log");
+    string startdepth_file = tempDir + string("startdepth.log");
     int descr = open(startdepth_file.c_str(), O_RDONLY | O_CREAT, 
                      S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     int startdepth = 0;
@@ -1266,7 +1278,7 @@ void ExecutionManager::run()
     LOG(Logger::DEBUG, "Running execution manager.");
     if (config->getCheckArgv() != "")
     {
-      string arg_lengths = temp_dir + string("arg_lengths");
+      string arg_lengths = tempDir + string("arg_lengths");
       int fd = open(arg_lengths.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 
                     S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
       int length;
@@ -1334,7 +1346,7 @@ void ExecutionManager::run()
 
       if (config->usingSockets() || config->usingDatagrams())
       {
-        fi->dumpExploit((temp_dir + string("replace_data")).c_str(), true);
+        fi->dumpExploit((tempDir + string("replace_data")).c_str(), true);
       }
       else
       {
@@ -1368,7 +1380,7 @@ void ExecutionManager::run()
       if (config->getRemoteValgrind())
       {
         plugin_opts.push_back(string("--log-file=") + 
-                              temp_dir + string("execution.log"));
+                              tempDir + string("execution.log"));
       }
 
       if (runs && (config->getCheckArgv() != ""))
@@ -1442,7 +1454,7 @@ void ExecutionManager::run()
       {
         if (!runs)
         {
-          string argv_log = temp_dir + string("argv.log");
+          string argv_log = tempDir + string("argv.log");
           config->addFile(argv_log);
           fi->files.push_back(new FileBuffer(argv_log));
         }
