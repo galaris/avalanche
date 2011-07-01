@@ -77,7 +77,8 @@ void instrumentWrTmpCCall_External(IRSB* sbOut, IRStmt* clone,
 {
 
   if (!VG_(strcmp)(clone->Ist.WrTmp.data->Iex.CCall.cee->name,
-                  "x86g_calculate_condition"))
+                  "x86g_calculate_condition") &&
+      (value1 != NULL) && (value2 != NULL) && (value3 != NULL))
   {
     IRDirty* di = 
          unsafeIRDirty_0_N(0, "instrumentWrTmpCCall", 

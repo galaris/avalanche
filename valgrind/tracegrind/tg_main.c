@@ -1755,13 +1755,11 @@ UShort isPropagation3(IRExpr* arg1, IRExpr* arg2, IRExpr* arg3)
   return res;
 }
 
-static
 Bool firstTainted(UShort res)
 {
   return res & 0x1;
 }
 
-static
 Bool secondTainted(UShort res)
 {
   return res & 0x2;
@@ -1947,10 +1945,6 @@ void instrumentWrTmpCCall_Internal(UInt op, UInt ltmp,
   Char s[256];
   Int l = 0;
   taintTemp(ltmp);
-#ifdef TAINTED_TRACE_PRINTOUT
-  ppIRStmt(clone);
-  VG_(printf) ("\n");
-#endif
   switch (op)
   {
     case BVLT:	l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF BVLT(", 
@@ -2206,10 +2200,6 @@ void instrumentWrTmpLongBinop_Internal(UInt oprt, UInt ltmp,
   {
     taintTemp(ltmp);
   }
-#ifdef TAINTED_TRACE_PRINTOUT
-  ppIRStmt(clone);
-  VG_(printf) ("\n");
-#endif
   switch (oprt)
   {
     case Iop_CmpEQ64:		l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=IF ", curblock, ltmp, curvisited);
@@ -3481,6 +3471,9 @@ void instrumentPut(IRStmt* clone, IRSB* sbOut)
 static
 IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 {
+  if (arg == NULL) {
+    return NULL;
+  }
   IRTemp tmp;
   IRExpr* e;
   IRType argty = typeOfIRExpr(tyenv, arg);
@@ -3514,6 +3507,9 @@ IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 static
 IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
 {
+  if (arg == NULL) {
+    return NULL;
+  }
   IRTemp tmp;
   IRExpr* e;
   IRType argty = typeOfIRExpr(tyenv, arg);
@@ -3557,6 +3553,7 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
   UInt tmp = clone->Ist.WrTmp.tmp;
   IRExpr* data = clone->Ist.WrTmp.data;
   IRExpr* value0, *value1,* value2, * value3;
+  Int size = 0;
   switch (data->tag)
   {
     case Iex_Load:
@@ -3654,10 +3651,12 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
        break;
 
     case Iex_CCall:
-       arg0 = data->Iex.CCall.args[0];
-       arg1 = data->Iex.CCall.args[1];
-       arg2 = data->Iex.CCall.args[2];
-       arg3 = data->Iex.CCall.args[3];
+       for (; data->Iex.CCall.args[size ++] != NULL;);
+       arg0 = (size > 0) ? data->Iex.CCall.args[0] : NULL;
+       arg1 = (size > 1) ? data->Iex.CCall.args[1] : NULL;
+       arg2 = (size > 2) ? data->Iex.CCall.args[2] : NULL;
+       arg3 = (size > 3) ? data->Iex.CCall.args[3] : NULL;
+       
        value0 = adjustSize(sbOut, tyenv, arg0);
        value1 = adjustSize(sbOut, tyenv, arg1);
        value2 = adjustSize(sbOut, tyenv, arg2);

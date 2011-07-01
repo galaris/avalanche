@@ -41,8 +41,10 @@ tracegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_LINK = \
 	$(tracegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_LDFLAGS)
 
 if VGCONF_HAVE_PLATFORM_SEC
+tracegrind_SOURCES_SEC = tg_main.c buffer.c copy.c parser.c \
+                         tg_dhelpers_@VGCONF_ARCH_SEC@.c
 tracegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_SOURCES      = \
-	$(tracegrind_SOURCES_COMMON)
+	$(tracegrind_SOURCES_SEC)
 tracegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_CPPFLAGS     = \
 	$(AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
 tracegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_CFLAGS       = \
