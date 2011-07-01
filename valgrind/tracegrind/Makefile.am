@@ -18,7 +18,8 @@ if VGCONF_HAVE_PLATFORM_SEC
 noinst_PROGRAMS += tracegrind-@VGCONF_ARCH_SEC@-@VGCONF_OS@
 endif
 
-tracegrind_SOURCES_COMMON = tg_main.c buffer.c copy.c parser.c
+tracegrind_SOURCES_COMMON = tg_main.c buffer.c copy.c parser.c \
+                            tg_dhelpers_@VGCONF_ARCH_PRI@.c
 
 tracegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_SOURCES      = \
 	$(tracegrind_SOURCES_COMMON)
