@@ -17,6 +17,8 @@ extern void instrumentWrTmpLongBinop_Internal(UInt oprt, UInt ltmp,
                                               ULong value1, ULong value2);
 
 extern UShort isPropagation2(IRExpr* arg1, IRExpr* arg2);
+extern Bool firstTainted(UShort res);
+extern Bool secondTainted(UShort res);
 
 #if defined(VGP_arm_linux)
 
@@ -61,7 +63,8 @@ void instrumentWrTmpCCall_External(IRSB* sbOut, IRStmt* clone,
 {
 
   if (!VG_(strcmp)(clone->Ist.WrTmp.data->Iex.CCall.cee->name,
-                  "armg_calculate_condition"))
+                  "armg_calculate_condition") &&
+      (value0 != NULL) && (value1 != NULL) && (value2 != NULL))
 
   {
     IRDirty* di = 
