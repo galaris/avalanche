@@ -24,73 +24,130 @@
 #include "Input.h"
 #include "FileBuffer.h"
 #include "ExecutionManager.h"
+#include "Logger.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <cerrno>
 
 using namespace std;
 
+static Logger* logger = Logger::getLogger();
+
 Input::Input()
 {
-  this->startdepth = 0;
-  this->prediction = NULL;
-  this->predictionSize = 0;
-  this->parent = NULL;
+    startdepth = 0;
+    prediction = NULL;
+    prediction_size = 0;
+    parent = NULL;
 }
 
 Input::~Input()
 {
-  if (prediction != NULL)
-  {
-    delete []prediction;
-  }
-  for (int i = 0; i < files.size(); i ++)
-  {
-    delete (files.at(i));
-  }
+    if (prediction != NULL)
+    {
+        delete []prediction;
+    }
+    for (int i = 0; i < files.size(); i ++)
+    {
+        delete (files.at(i));
+    }
 }
 
-void Input::dumpExploit(string file_name, bool predict, string name_modifier)
+int Input::dumpExploit(string file_name, bool predict, string name_modifier)
 {
-  std::string res_name = file_name + name_modifier;
-  int fd = open(res_name.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
-                S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
-  int size = files.size();
-  write(fd, &size, sizeof(int));
-  for (int i = 0; i < files.size(); i++)
-  {
-    write(fd, &(files.at(i)->size), sizeof(int));
-    write(fd, files.at(i)->buf, files.at(i)->size);
-  }
-  close(fd);
-  if (predict && (prediction != NULL))
-  {
-    string prediction_file = ExecutionManager::getTempDir() + 
-                             string("prediction.log");
-    int fd = open(prediction_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 
+    std::string res_name = file_name + name_modifier;
+    int fd = open(res_name.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
                   S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
-    write(fd, prediction, predictionSize * sizeof(bool));
+    if (fd == -1)
+    {
+        LOG(Logger::ERROR, "Cannot open file " << res_name <<
+                           " :" << strerror(errno));
+        return -1;
+    }
+    int size = files.size();
+    if (write(fd, &size, sizeof(int)) < 1)
+    {
+        LOG(Logger::ERROR, "Cannot write to file " << res_name <<
+                           " :" << strerror(errno));
+        close(fd);
+        return -1;
+    }
+    for (int i = 0; i < files.size(); i++)
+    {
+        int error;
+        size = files.at(i)->getSize();
+        error = write(fd, &size, sizeof(int));
+        if (error > 0)
+        {
+            error = write(fd, files.at(i)->buf, size);
+        }
+        if (error < 1)
+        {
+            LOG(Logger::ERROR, "Cannot write to file " << res_name <<
+                           " :" << strerror(errno));
+            close(fd);
+            return -1;
+        }
+    }
     close(fd);
-  }  
+    if (predict && (prediction != NULL))
+    {
+        string prediction_file = ExecutionManager::getTempDir() + 
+                                                      string("prediction.log");
+        fd = open(prediction_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 
+                  S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+        if (fd == -1)
+        {
+            LOG(Logger::ERROR, "Cannot open file " << prediction_file <<
+                           " :" << strerror(errno));
+            return -1;
+        }
+        if (write(fd, prediction, prediction_size * sizeof(bool)) < 1)
+        {
+            LOG(Logger::ERROR, "Cannot write to file " << prediction_file <<
+                           " :" << strerror(errno));
+            close(fd);
+            return -1;
+        }
+        close(fd);
+    }
+    return 0; 
 }
 
-void Input::dumpFiles(string name_modifier)
+int Input::dumpFiles(string name_modifier)
 {
-  for (int i = 0; i < files.size(); i++)
-  {
-    string res_name = string(files.at(i)->name) + name_modifier;
-    files.at(i)->dumpFile(res_name);
-  }
-  if (prediction != NULL)
-  {
-    string prediction_file = ExecutionManager::getTempDir() +
-                             string("prediction.log");
-    int fd = open(prediction_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
-                  S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
-    write(fd, prediction, predictionSize * sizeof(bool));
-    close(fd);
-  }
+    for (int i = 0; i < files.size(); i++)
+    {
+        string res_name = files.at(i)->getName() + name_modifier;
+        if (files.at(i)->dumpFile(res_name) < 0)
+        {
+            return -1;
+        }
+    }
+    if (prediction != NULL)
+    {
+        string prediction_file = ExecutionManager::getTempDir() +
+                                                         string("prediction.log");
+        int fd = open(prediction_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
+                                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+        write(fd, prediction, prediction_size * sizeof(bool));
+        if (fd == -1)
+        {
+            LOG(Logger::ERROR, "Cannot open file " << prediction_file <<
+                           " :" << strerror(errno));
+            return -1;
+        }
+        if (write(fd, prediction, prediction_size * sizeof(bool)) < 1)
+        {
+            LOG(Logger::ERROR, "Cannot write to file " << prediction_file <<
+                           " :" << strerror(errno));
+            close(fd);
+            return -1;
+        }
+        close(fd);
+    }
+    return 0;
 }

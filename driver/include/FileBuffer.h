@@ -31,48 +31,56 @@ class FileBuffer
 {
 public:
 
-  char* buf;
-  int size;
-  char* name;
-  int sd;
-  //unsigned int startdepth;
-  //bool* prediction;
-  //int predictionSize;
-  //FileBuffer* parent;
+    char* buf;
+    int sd;
+    //unsigned int startdepth;
+    //bool* prediction;
+    //int predictionSize;
+    //FileBuffer* parent;
 
-  friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
+    friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
 
-  FileBuffer(std::string file_name);
+    FileBuffer(std::string file_name);
 
-  FileBuffer(const FileBuffer& other);
-  FileBuffer(char* buf);
+    FileBuffer(const FileBuffer& other);
+    FileBuffer(char* buf);
 
-  virtual FileBuffer* forkInput(std::string stp_file_name);
+    virtual FileBuffer* forkInput(FileBuffer *stp_file);
 
-  virtual void dumpFile(std::string file_name = "");
+    virtual int dumpFile(std::string file_name = "");
 
-  void cutQueryAndDump(std::string file_name, bool do_invert = false);
+    int cutQueryAndDump(std::string file_name, bool do_invert = false);
 
-  virtual void applySTPSolution(char* buf);
-  
-  bool filterCovgrindOutput ();
-  char * filterMemcheckOutput (long errors);
+    virtual void applySTPSolution(char* buf);
+    
+    bool filterCovgrindOutput ();
+    char * filterMemcheckOutput (long errors);
 
-  // Return the number after first appearence of 'str' in 'buf'
-  long filterCount (const char * str);
+    // Return the number after first appearence of 'str' in 'buf'
+    long filterCount (const char *str);
 
-  // Get call stack from 'position' in 'buf'
-  std::string getCallStack (int & position);
-  std::string getErrorType (int & position);
+    // Get call stack from 'position' in 'buf'
+    std::string getCallStack (int & position);
+    std::string getErrorType (int & position);
 
-  std::string getBuf ();
+    std::string getBuf ();
 
-  ~FileBuffer();
+    std::string getName() const
+    { return name; }
+
+    int getSize() const
+    { return size; }
+
+    void setSize(int _size)
+    { size = _size; }
+
+    ~FileBuffer();
 
 protected:
-
-  FileBuffer()
-  { }
+    int size;
+    std::string name;
+  
+    FileBuffer() {}
 
 };
 

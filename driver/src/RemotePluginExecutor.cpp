@@ -100,6 +100,7 @@ static
 void writeFromFileToSocket(int socket_fd, const char *file_name, 
                            bool guard, bool use_temp_dir)
 {
+  int size;
   if (!guard)
   {
     return;
@@ -110,8 +111,9 @@ void writeFromFileToSocket(int socket_fd, const char *file_name,
    s_file_name = ExecutionManager::getTempDir() + s_file_name;
   }
   FileBuffer f(s_file_name);
-  writeToSocket(socket_fd, &(f.size), sizeof(int));
-  writeToSocket(socket_fd, f.buf, f.size);
+  size = f.getSize();
+  writeToSocket(socket_fd, &size, sizeof(int));
+  writeToSocket(socket_fd, f.buf, size);
 }
 
 bool RemotePluginExecutor::checkFlag(const char *flg_name)
@@ -147,7 +149,7 @@ RemotePluginExecutor::RemotePluginExecutor(vector<string> &_args,
 
 int RemotePluginExecutor::run(int thread_index)
 {
-  int res;
+  int res, size;
   try
   {
     char util_c;
@@ -176,8 +178,9 @@ int RemotePluginExecutor::run(int thread_index)
         }
         string s_file_name = file_name;
         FileBuffer f(s_file_name);
-        writeToSocket(remote_fd, &(f.size), sizeof(int));
-        writeToSocket(remote_fd, f.buf, f.size);
+        size = f.getSize();
+        writeToSocket(remote_fd, &size, sizeof(int));
+        writeToSocket(remote_fd, f.buf, size);
       }
     }
     writeFromFileToSocket(remote_fd, "prediction.log", 
@@ -188,6 +191,11 @@ int RemotePluginExecutor::run(int thread_index)
     writeFromFileToSocket(remote_fd, "arg_lengths", 
                            checkFlag("--check-argv="), true);
     readFromSocket(remote_fd, &res, sizeof(int));
+    if (res == 1)
+    {
+      LOG(Logger::ERROR, "Remote valgrind plugin execution ended abnormally");
+      return 1;
+    }
     switch (kind)
     {
       case TG: readFromSocketToFile(remote_fd, "trace.log", true, true);

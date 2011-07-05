@@ -33,7 +33,6 @@
 
 #include "ExecutionManager.h"
 #include "Logger.h"
-#include "FileBuffer.h"
 #include "OptionConfig.h"
 #include "OptionParser.h"
 #include "Input.h"
@@ -123,124 +122,136 @@ OptionConfig* opt_config;
 
 void cleanUp()
 {
-  monitor->removeTmpFiles();
-  string dir_name = ExecutionManager::getTempDir();
-  if (thread_num > 0)
-  {
-    for (int i = 1; i < thread_num + 1; i ++)
+    monitor->removeTmpFiles();
+    string dir_name = ExecutionManager::getTempDir();
+    if (thread_num > 0)
     {
-      ostringstream file_modifier;
-      file_modifier << "_" << i;
-      ::unlink((dir_name + string("basic_blocks").append(file_modifier.str()).append(".log")).c_str());
-      ::unlink((dir_name + string("execution").append(file_modifier.str()).append(".log")).c_str());
-      ::unlink((dir_name + string("curtrace").append(file_modifier.str()).append(".log")).c_str());
-      ::unlink((dir_name + string("replace_data").append(file_modifier.str())).c_str());
-      ::unlink((dir_name + string("argv.log").append(file_modifier.str())).c_str());
-      for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
-      {
-        ::unlink(opt_config->getFile(j).append(file_modifier.str()).c_str());
-      }
+        for (int i = 1; i < thread_num + 1; i ++)
+        {
+            ostringstream file_modifier;
+            file_modifier << "_" << i;
+            unlink((dir_name + string("basic_blocks").append(file_modifier.str()).append(".log")).c_str());
+            unlink((dir_name + string("execution").append(file_modifier.str()).append(".log")).c_str());
+            unlink((dir_name + string("curtrace").append(file_modifier.str()).append(".log")).c_str());
+            unlink((dir_name + string("replace_data").append(file_modifier.str())).c_str());
+            unlink((dir_name + string("argv.log").append(file_modifier.str())).c_str());
+            for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
+            {
+                unlink(opt_config->getFile(j).append(file_modifier.str()).c_str());
+            }
+        }
+        delete []threads;
     }
-    delete []threads;
-  }
-  if (opt_config->enabledCleanUp()) {
-    ::unlink((dir_name + string("basic_blocks.log")).c_str());
-    ::unlink((dir_name + string("curtrace.log")).c_str());
-    ::unlink((dir_name + string("curdtrace.log")).c_str());
-    ::unlink((dir_name + string("execution.log")).c_str());
-    ::unlink((dir_name + string("prediction.log")).c_str());
-    ::unlink((dir_name + string("dangertrace.log")).c_str());
-    ::unlink((dir_name + string("trace.log")).c_str());
-    ::unlink((dir_name + string("actual.log")).c_str());
-    ::unlink((dir_name + string("divergence.log")).c_str());
-    ::unlink((dir_name + string("replace_data")).c_str());
-    if (opt_config->getCheckArgv() != "")
+    if (opt_config->enabledCleanUp()) {
+        unlink((dir_name + string("basic_blocks.log")).c_str());
+        unlink((dir_name + string("curtrace.log")).c_str());
+        unlink((dir_name + string("curdtrace.log")).c_str());
+        unlink((dir_name + string("execution.log")).c_str());
+        unlink((dir_name + string("prediction.log")).c_str());
+        unlink((dir_name + string("dangertrace.log")).c_str());
+        unlink((dir_name + string("trace.log")).c_str());
+        unlink((dir_name + string("actual.log")).c_str());
+        unlink((dir_name + string("divergence.log")).c_str());
+        unlink((dir_name + string("replace_data")).c_str());
+        if (opt_config->getCheckArgv() != "")
+        {
+            unlink((dir_name + string("argv.log")).c_str());
+            unlink((dir_name + string("arg_lengths")).c_str());
+        }
+        if (dir_name != "")
+        {
+            if (rmdir(dir_name.substr(0, dir_name.length() - 1).c_str()) < 0)
+            {
+                if (errno != EEXIST)
+                {
+                    LOG(Logger::ERROR, "Cannot delete temporary directory " <<
+                                       dir_name << " : " << strerror(errno));
+                }
+            }
+        }
+    }
+    for (int i = 0; i < report.size(); i ++)
     {
-      ::unlink((dir_name + string("argv.log")).c_str());
-      ::unlink((dir_name + string("arg_lengths")).c_str());
+        delete (report.at(i));
     }
-    if (dir_name != "")
-    {
-      if (rmdir(dir_name.substr(0, dir_name.length() - 1).c_str()) < 0)
-      {
-        LOG(Logger::ERROR, "Cannot delete temporary directory " << 
-                    dir_name << " : " << strerror(errno));
-      }
-    }
-  }
-  for (int i = 0; i < report.size(); i ++)
-  {
-    delete (report.at(i));
-  }
-  delete em;
-  delete op;
-  delete opt_config;
-  delete initial;
-  delete monitor;
-  delete logger;
+    delete em;
+    delete op;
+    delete opt_config;
+    delete initial;
+    delete monitor;
+    delete logger;
 }
 
 void reportResults()
 {
-  // Exploits report
+    // Exploits report
 
-  int fd = -1;
-  bool toFile = (opt_config -> getReportLog() != string (""));
+    int fd = -1;
+    bool to_file = (opt_config -> getReportLog() != string (""));
 
-  if (toFile)
-    fd = open (opt_config -> getReportLog().c_str(), O_WRONLY | O_CREAT | O_TRUNC,
-                S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP );
-
-  if (!toFile)
-  {
-    LOG (Logger :: REPORT, "\nUnique error(s) found: " << report.size () << ".");
-  }
-
-  if (report.size () > 0)
-  {
-    for (int i = 0; i < report.size (); i++)
+    if (to_file)
     {
-      report.at(i)->print(opt_config->getPrefix (), i, fd);
+        fd = open (opt_config -> getReportLog().c_str(), 
+                   O_WRONLY | O_CREAT | O_TRUNC,
+                   S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP );
+        if (fd == -1)
+        {
+          to_file = false;
+        }
     }
-  }
 
-  if (toFile)
-    close(fd);
+    if (!to_file)
+    {
+        LOG(Logger::REPORT, "Unique error(s) found: " << 
+                            report.size () << ".");
+    }
 
-  // Time statistics
+    if (report.size() > 0)
+    {
+        for (int i = 0; i < report.size(); i++)
+        {
+            report.at(i)->print(opt_config->getPrefix(), i, fd);
+        }
+    }
 
-  time_t end_time = time (NULL);
-  LOG (Logger :: REPORT, "\nTime statistics: " 
-    << end_time - monitor -> getGlobalStartTime () << " sec, "
-    << monitor -> getStats (end_time - monitor -> getGlobalStartTime ()));
+    if (to_file)
+    {
+        close(fd);
+    }
 
-  LOG (Logger :: REPORT, "");
+    // Time statistics
+
+    time_t end_time = time(NULL);
+    LOG (Logger::REPORT, "\nTime statistics: " << 
+        end_time - monitor->getGlobalStartTime() << " sec, " << 
+        monitor->getStats(end_time - monitor->getGlobalStartTime()));
+
 }
 
 void sig_hndlr(int signo)
 {
-  if (opt_config->getDistributed())
-  {
-    write(dist_fd, "q", 1);
-    shutdown(dist_fd, SHUT_RDWR);
-    close(dist_fd);
-  }
-  if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
-  {
-    initial->dumpFiles();
-  }
-  monitor->setKilledStatus(true);
-  monitor->handleSIGKILL();
-  for (int i = 0; i < thread_num; i ++)
-  {
-    if (in_thread_creation != i)
+    if (opt_config->getDistributed())
     {
-      threads[i].waitForThread();
+        write(dist_fd, "q", 1);
+        shutdown(dist_fd, SHUT_RDWR);
+        close(dist_fd);
     }
-  }
-  reportResults();
-  cleanUp();
-  exit(0);
+    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+    {
+        initial->dumpFiles();
+    }
+    monitor->setKilledStatus(true);
+    monitor->handleSIGKILL();
+    for (int i = 0; i < thread_num; i ++)
+    {
+        if (in_thread_creation != i)
+        {
+            threads[i].waitForThread();
+        }
+    }
+    reportResults();
+    cleanUp();
+    exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -250,10 +261,10 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     op = new OptionParser(argc, argv);
     opt_config = op->run();
-    
+        
     if (opt_config == NULL || opt_config->empty()) {
-        printHelpBanner();
-        return EXIT_FAILURE;
+            printHelpBanner();
+            return EXIT_FAILURE;
     }
 
     if (opt_config -> getVerbose ()) logger -> setVerbose ();
@@ -265,13 +276,13 @@ int main(int argc, char *argv[])
     string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") : string("covgrind"));
     if (thread_num > 0)
     {
-      monitor = new ParallelMonitor(checker_name, start_time, thread_num);
-      ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
-      threads = new PoolThread[thread_num];
+        monitor = new ParallelMonitor(checker_name, start_time, thread_num);
+        ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
+        threads = new PoolThread[thread_num];
     }
     else
     {
-      monitor = new SimpleMonitor(checker_name, start_time);
+        monitor = new SimpleMonitor(checker_name, start_time);
     }
     checker_name.clear();
     time_t work_start_time = time(NULL);
@@ -282,23 +293,39 @@ int main(int argc, char *argv[])
 
     if (opt_config->getResultDir() != string(""))
     {
-      if (mkdir(opt_config->getResultDir().c_str(), S_IRWXG | S_IRWXO | S_IRWXU) < 0)
-      {
-        if (errno != EEXIST)
+        if (mkdir(opt_config->getResultDir().c_str(), S_IRWXG | S_IRWXO | S_IRWXU) < 0)
         {
-          LOG(Logger::ERROR, "Cannot create directory " << opt_config->getResultDir() <<
-                             " : " << strerror(errno));
-          opt_config->setResultDir("");
+            if (errno != EEXIST)
+            {
+                LOG(Logger::ERROR, "Cannot create directory " << opt_config->getResultDir() <<
+                                   " : " << strerror(errno));
+                opt_config->setResultDir("");
+            }
         }
-      }
     }
-
-    em = new ExecutionManager(opt_config);
-    string temp_dir = ExecutionManager::getTempDir();
-    em->run();
-    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+    
+    try
     {
-      initial->dumpFiles();
+        em = new ExecutionManager(opt_config);
+        string temp_dir = ExecutionManager::getTempDir();
+        em->run();
+    }
+    catch (char *msg)
+    {
+    }
+    /* We need 2 separate try-catch blocks so that an attempt to restore
+       initial input files is made. */
+    try
+    {
+        if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+        {
+            initial->dumpFiles();
+        }
+    }
+    catch (char *msg)
+    {
+        LOG(Logger::REPORT, "Warning! Input file(s) may not be restored to \
+                             initial state!");
     }
     reportResults();
     cleanUp();

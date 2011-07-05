@@ -38,19 +38,11 @@ public:
     char *getName()
     { return filename; }
 
-    void remove();
-
     void print() const;
-
-    char *exportFile()
-    { is_exported = true;
-      return filename;
-    }
 
     ~TmpFile();
 
 private:
-    bool  is_exported;
     bool  is_good;
     char *filename;
     static unsigned int tmpnum;
