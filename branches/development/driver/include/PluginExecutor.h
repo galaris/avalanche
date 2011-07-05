@@ -28,32 +28,28 @@
 
 #include "LocalExecutor.h"
 
-#include <cstddef>
 #include <vector>
 #include <string>
 
 class OptionConfig;
-class FileBuffer;
 
 class PluginExecutor : public LocalExecutor
 {
 public:
     PluginExecutor(bool debug_full_enable,
-	           bool traceChildern,
+	           bool trace_children,
                    const std::string &install_dir,
                    const std::vector<std::string> &cmd,
                    const std::vector<std::string> &tg_args,
                    Kind kind);
 
     int run(int thread_index = 0);
-    FileBuffer* getOutput();
     ~PluginExecutor();
 
 private:
     bool debug_full;
-    bool traceChildren;
+    bool trace_children;
     Kind kind;
-    FileBuffer* output;
 };
 
 

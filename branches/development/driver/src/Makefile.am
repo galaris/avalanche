@@ -18,7 +18,6 @@ avalanche_SOURCES = \
        SocketBuffer.cpp \
        Input.cpp \
        STP_Executor.cpp \
-       STP_Output.cpp \
        TmpFile.cpp \
        Thread.cpp \
        Monitor.cpp

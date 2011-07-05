@@ -22,330 +22,377 @@
 */
 
 #include "FileBuffer.h"
+#include "Logger.h"
 
-#include <cstddef>
 #include <string>
-#include <stdio.h>
+#include <vector>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <iostream>
+#include <cerrno>
 
 using namespace std;
 
+static Logger *logger = Logger::getLogger();
+
 FileBuffer::FileBuffer(std::string file_name)
 {
-  this->name = strdup(file_name.c_str());
-  int fd = open(name, O_RDONLY | O_CREAT,
-                S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
-  struct stat fileInfo;
-  fstat(fd, &fileInfo);
-  size = fileInfo.st_size;
-  buf = (char*) malloc (size + 1);
-  read(fd, buf, size);
-  buf[size] = '\0';
-  close(fd);
+    struct stat fileInfo;
+    this->name = file_name;
+    int fd = open(name.c_str(), O_RDONLY | O_CREAT,
+                  S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+    if (fd == -1)
+    {
+        LOG(Logger::ERROR, "Cannot open file " << 
+                           name << ": " << strerror(errno));
+        throw "open";
+    }
+    if (fstat(fd, &fileInfo) == -1)
+    {
+        LOG(Logger::ERROR, name << ": " << strerror(errno));
+        throw "fstat";
+    }
+    size = fileInfo.st_size;
+    if ((buf = (char*) malloc (size + 1)) == NULL)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        throw "malloc";
+    }
+    if (read(fd, buf, size) < 1)
+    {
+        LOG(Logger::ERROR, "Cannot read from file " <<
+                          name << ": " << strerror(errno));
+        throw "read";
+    }
+    buf[size] = '\0';
+    close(fd);
 }
 
 FileBuffer::FileBuffer(const FileBuffer& other)
 {
-  this->name = strdup(other.name);
-  this->size = other.size;
-  this->buf = (char*) malloc (size + 1);
-  for (int i = 0; i < size + 1; i++)
-  {
-    this->buf[i] = other.buf[i];
-  }
+    name = other.getName();
+    size = other.getSize();
+    if ((buf = (char*) malloc (size + 1)) == NULL)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        throw "malloc";
+    }
+    strncpy(buf, other.buf, size);
+    buf[size] = '\0';
 }
 
-FileBuffer::FileBuffer(char* buf) // it is not filename!
+FileBuffer::FileBuffer(char* _buf) // it is not file_name!
 {
-  this->name = strdup("none");
-  this->size = strlen(buf);
-  this->buf = (char *) malloc(size + 1);
-  strcpy(this->buf, buf);
+    name = string("");
+    size = strlen(_buf);
+    if ((buf = (char *) malloc(size + 1)) == NULL)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        throw "malloc";
+    }
+    strncpy(buf, _buf, size);
+    buf[size] = '\0';
 }
 
-FileBuffer* FileBuffer::forkInput(std::string stp_file_name)
+FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file)
 {
-  FileBuffer stp(stp_file_name);
-  if ((stp.buf[0] == 'V') && (stp.buf[1] == 'a') && (stp.buf[2] == 'l') && (stp.buf[3] == 'i') && (stp.buf[4] == 'd'))
-  {
-    return NULL;
-  }
-  FileBuffer* res = new FileBuffer(*this);
-  res->applySTPSolution(stp.buf);
-  return res;
-}
-
-void FileBuffer::dumpFile(std::string file_name)
-{ 
-  char *c_file_name; 
-  if (file_name == "") 
-  {
-    c_file_name = name;
-  }
-  else
-  {
-    c_file_name = (char *) file_name.c_str();
-  }
-  int fd = open(c_file_name, O_WRONLY | O_TRUNC | O_CREAT,
-            S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
-  write(fd, buf, size);
-  close(fd);
-}
-
-void FileBuffer::cutQueryAndDump(std::string file_name, bool do_invert)
-{
-  char* query = strstr(buf, "QUERY(FALSE);");
-  if (do_invert)
-  {
-    if (query[-4] == '0')
+    if (stp_file->getSize() > strlen("Valid"))
     {
-      query[-4] = '1';
-    } 
-    else if (query[-4] == '1')
-    {
-      query[-4] = '0';
-    }
-  }
-  unsigned int oldsize = size;
-  size = (query - buf) + 13;
-  dumpFile(file_name);
-  if (do_invert)
-  {
-    for (int k = 0; k < 13; k++)
-    {
-      query[k] = '\n';
-    }
-    if (query[-4] == '0')
-    {
-      query[-4] = '1';
-    } 
-    else if (query[-4] == '1')
-    {
-      query[-4] = '0';
-    }
-  }
-  else
-  {
-    int k = 0;
-    for (; k < 13; k++)
-    {
-      query[k] = '\n';
-    }
-    k = -1;
-    while (query[k] != '\n')
-    {
-      query[k] = '\n';
-      k--;
-    }
-  }
-  size = oldsize;
-}
-  
-void FileBuffer::applySTPSolution(char* buf)
-{
-  char* pointer = buf;
-  char* byteValue;
-  while ((byteValue = strstr(pointer, "file_")) != NULL)
-  {
-    char* brack = strchr(byteValue, '[');
-    *brack = '\0';
-    std::string filename(byteValue + 5);
-    size_t found = filename.find("_slash_");
-    while (found != std::string::npos) 
-    {
-      filename.replace(found, strlen("_slash_"), "/");
-      found = filename.find("_slash_");
-    }
-    found = filename.find("_dot_");
-    while (found != std::string::npos) 
-    {
-      filename.replace(found, strlen("_dot_"), ".");
-      found = filename.find("_dot_");
-    }
-    found = filename.find("_hyphen_");
-    while (found != std::string::npos) 
-    {
-      filename.replace(found, strlen("_hyphen_"), "-");
-      found = filename.find("_hyphen_");
-    }
-    if (!strcmp(this->name, filename.c_str()))
-    {
-      char* posbegin = brack + 5;
-      char* posend;
-      long index = strtol(posbegin, &posend, 16);
-      char* valuebegin = posend + 9;
-      long value = strtol(valuebegin, &pointer, 16);
-      this->buf[index] = value;
+        if (!strncmp(stp_file->buf, "Valid", 5))
+        {
+            return NULL;
+        }
     }
     else
     {
-      pointer = brack + 5;
+        return NULL;
     }
-  }
+    FileBuffer* res;
+    try
+    {
+        res = new FileBuffer(*this);
+    }
+    catch (const char *buf)
+    {
+        return NULL;
+    }
+    catch (std::bad_alloc)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        return NULL;
+    }
+    res->applySTPSolution(stp_file->buf);
+    return res;
+}
+
+int FileBuffer::dumpFile(std::string file_name)
+{ 
+    string res_name = name;
+    if (file_name != "") 
+    {
+        res_name = file_name;
+    }
+    int fd = open(res_name.c_str(), O_WRONLY | O_TRUNC | O_CREAT,
+                  S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+    if (fd == -1)
+    {
+        LOG(Logger::ERROR, "Cannot open file " << 
+                           res_name << ": " << strerror(errno));
+        return -1;
+    }
+    if (write(fd, buf, size) < 1)
+    {
+        LOG(Logger::ERROR, "Cannot write to file " << 
+                           res_name << ": " << strerror(errno));
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+int FileBuffer::cutQueryAndDump(std::string file_name, bool do_invert)
+{
+    char* query = strstr(buf, "QUERY(FALSE);");
+    if (query == NULL)
+    {
+        return 0;
+    }
+    if (do_invert)
+    {
+        *(query - 4) = (*(query - 4) == '0') ? '1' : '0';
+    }
+    unsigned int old_size = size;
+    size = (query - buf) + 13;
+    if (dumpFile(file_name) < 0)
+    {
+        *(query - 4) = (*(query - 4) == '0') ? '1' : '0';
+        return -1;
+    }
+    if (do_invert)
+    {
+        for (int k = 0; k < 13; k++)
+        {
+            query[k] = '\n';
+        }
+        *(query - 4) = (*(query - 4) == '0') ? '1' : '0';
+    }
+    else
+    {
+        int k = 0;
+        for (; k < 13; k++)
+        {
+            query[k] = '\n';
+        }
+        k = -1;
+        while (query[k] != '\n')
+        {
+            query[k] = '\n';
+            k--;
+        }
+    }
+    size = old_size;
+}
+    
+void FileBuffer::applySTPSolution(char* buf)
+{
+    char* pointer = buf;
+    char* byte_value;
+    while ((byte_value = strstr(pointer, "file_")) != NULL)
+    {
+        char* brack = strchr(byte_value, '[');
+        *brack = '\0';
+        std::string file_name(byte_value + 5);
+        size_t found = file_name.find("_slash_");
+        while (found != std::string::npos) 
+        {
+            file_name.replace(found, strlen("_slash_"), "/");
+            found = file_name.find("_slash_");
+        }
+        found = file_name.find("_dot_");
+        while (found != std::string::npos) 
+        {
+            file_name.replace(found, strlen("_dot_"), ".");
+            found = file_name.find("_dot_");
+        }
+        found = file_name.find("_hyphen_");
+        while (found != std::string::npos) 
+        {
+            file_name.replace(found, strlen("_hyphen_"), "-");
+            found = file_name.find("_hyphen_");
+        }
+        if (name == file_name)
+        {
+            char* pos_begin = brack + 5;
+            char* posend;
+            long index = strtol(pos_begin, &posend, 16);
+            char* value_begin = posend + 9;
+            long value = strtol(value_begin, &pointer, 16);
+            this->buf[index] = value;
+        }
+        else
+        {
+            pointer = brack + 5;
+        }
+    }
 }
 
 bool FileBuffer::filterCovgrindOutput()
 {
-  char* checkPId = buf;
-  int eqNum = 0;
-  for (;;)
-  {
-    if (*checkPId == '\0') return false;
-    if (*checkPId == '=') eqNum ++;
-    if (eqNum == 4) break;
-    checkPId ++;
-  }
-  int skipLength = checkPId - buf + 2;
-  char* bug_start = strstr(buf, "Process terminating");
-  if (bug_start == NULL) return false;
-  bug_start = strstr(bug_start, "at 0x");
-  if (bug_start == NULL) return false;
-  char* last_bug_line = bug_start;
-  char* last_bug_sym = strchr(last_bug_line, '\n');
-  if (last_bug_sym == NULL)
-  {
-    return false;
-  }
-  last_bug_line = last_bug_sym + 1;
-  char* tmp,* prev_new_line = last_bug_sym;
-  while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && (tmp < last_bug_sym))
-  {
-    prev_new_line = last_bug_sym;
+    char* check_pid = buf;
+    int eqNum = 0;
+    for (;;)
+    {
+        if (*check_pid == '\0') return false;
+        if (*check_pid == '=') eqNum ++;
+        if (eqNum == 4) break;
+        check_pid ++;
+    }
+    int skipLength = check_pid - buf + 2;
+    char* bug_start = strstr(buf, "Process terminating");
+    if (bug_start == NULL) return false;
+    bug_start = strstr(bug_start, "at 0x");
+    if (bug_start == NULL) return false;
+    char* last_bug_line = bug_start;
+    char* last_bug_sym = strchr(last_bug_line, '\n');
+    if (last_bug_sym == NULL)
+    {
+        return false;
+    }
     last_bug_line = last_bug_sym + 1;
-  }
-  last_bug_sym = prev_new_line;
-  if (last_bug_sym == NULL) return false;
-  if (last_bug_sym <= bug_start + 1) return false;
-  char* new_buf = (char*) malloc (last_bug_sym - bug_start);
-  int i = 0, j;
-  while (bug_start < last_bug_sym && bug_start != NULL)
-  {
-    if (*bug_start == '=')
+    char* tmp,* prev_new_line = last_bug_sym;
+    while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && (tmp < last_bug_sym))
     {
-      bug_start += skipLength;
-      continue;
+        prev_new_line = last_bug_sym;
+        last_bug_line = last_bug_sym + 1;
     }
-    new_buf[i ++] = *bug_start;
-    bug_start ++;
-  }
-  free(buf);
-  buf = (char*) malloc(i + 1);
-  for (j = 0; j < i; j ++)
-  {
-    buf[j] = new_buf[j];
-  }
-  buf[j] = '\0';
-  size = i;
-  free(new_buf);
-  return true;
+    last_bug_sym = prev_new_line;
+    if (last_bug_sym == NULL) return false;
+    if (last_bug_sym <= bug_start + 1) return false;
+    char* new_buf = (char*) malloc (last_bug_sym - bug_start);
+    int i = 0, j;
+    while (bug_start < last_bug_sym && bug_start != NULL)
+    {
+        if (*bug_start == '=')
+        {
+            bug_start += skipLength;
+            continue;
+        }
+        new_buf[i ++] = *bug_start;
+        bug_start ++;
+    }
+    free(buf);
+    buf = (char*) malloc(i + 1);
+    for (j = 0; j < i; j ++)
+    {
+        buf[j] = new_buf[j];
+    }
+    buf[j] = '\0';
+    size = i;
+    free(new_buf);
+    return true;
 }
 
-// FilterCount
-
-long FileBuffer :: filterCount (const char * str) // "possibly lost: ", "ERROR SUMMARY: ", "definitely lost: "
+// "possibly lost: ", "ERROR SUMMARY: ", "definitely lost: "
+long FileBuffer::filterCount(const char * str)
 {
-  long number = -1;
-  char * find = NULL;
-  find = strstr (buf, str);
+    long number = -1;
+    char * find = NULL;
+    find = strstr(buf, str);
 
-  if (find != NULL)
-  {
-    number = strtol (find + strlen (str), NULL, 10);
-  }  
-  return number;
+    if (find != NULL)
+    {
+        number = strtol(find + strlen(str), NULL, 10);
+    }    
+    return number;
+}
+
+// Memcheck error call stack
+string FileBuffer::getErrorType(int &position)
+{
+    int end;
+
+    string error_type;
+
+    vector<string> memcheck_errors;
+    memcheck_errors.push_back(" contains unaddressable byte(s)");
+    memcheck_errors.push_back("Use of uninitialised value of size");
+    memcheck_errors.push_back("Conditional jump or move depends on uninitialised value(s)");
+    memcheck_errors.push_back("Syscall param");
+    memcheck_errors.push_back(" byte(s) found during client check request");
+    memcheck_errors.push_back("Invalid ");
+    memcheck_errors.push_back("Mismatched free() / delete / delete []");
+    memcheck_errors.push_back("Jump to the invalid address stated on the next line");
+    memcheck_errors.push_back("Source and destination overlap in");
+    memcheck_errors.push_back("Illegal memory pool address");
+    memcheck_errors.push_back(" loss record ");
+
+    for (vector<string>::iterator i = memcheck_errors.begin();
+                                  i != memcheck_errors.end(); i ++)
+    {
+        int found = string (buf).find (*i, position);
+
+        if (found != string::npos) // if found
+        {
+            int j, k, l, m;
+            for (k = found; buf [k] != '='; k++);
+            for (j = found; buf [j] != '='; j--);
+            
+            error_type = string (buf).substr (j + 2, k - j - 3);
+
+            position = k;
+        }
+    }
+    return error_type;
 }
 
 // Memcheck error call stack
 
-string FileBuffer :: getErrorType (int & position)
+string FileBuffer::getCallStack (int & position)
 {
-  int end;
+    int end;
 
-  string errorType;
+    string call_stack;
 
-  int memcheckTypes = 11;
+    // Call stack parsing
 
-  string valgrindMemcheckType [memcheckTypes];
-  valgrindMemcheckType [0] = " contains unaddressable byte(s)";
-  valgrindMemcheckType [1] = "Use of uninitialised value of size";
-  valgrindMemcheckType [2] = "Conditional jump or move depends on uninitialised value(s)";
-  valgrindMemcheckType [3] = "Syscall param";
-  valgrindMemcheckType [4] = " byte(s) found during client check request";
-  valgrindMemcheckType [5] = "Invalid ";
-  valgrindMemcheckType [6] = "Mismatched free() / delete / delete []";
-  valgrindMemcheckType [7] = "Jump to the invalid address stated on the next line";
-  valgrindMemcheckType [8] = "Source and destination overlap in";
-  valgrindMemcheckType [9] = "Illegal memory pool address";
-  valgrindMemcheckType [10] = " loss record ";
+    int l; 
 
-  for (int i = 0; i < memcheckTypes; i++)
-  {
-    int found = string (buf).find (valgrindMemcheckType [i], position);
+    for (l = position; !(buf [l] == '=' && buf [l + 2] == '\n'); l++);
 
-    if (found != string :: npos) // if found
+    call_stack = string (buf).substr (position, l - position) + " ";
+
+    position = l;
+
+    // Deletion PID from Memcheck log
+
+    int begin = 0;
+    do
     {
-      int j, k, l, m;
-      for (k = found; buf [k] != '='; k++);
-      for (j = found; buf [j] != '='; j--);
-      
-      errorType = string (buf).substr (j + 2, k - j - 3);
-
-      position = k;
+        end = call_stack.find ("== ");
+        call_stack.replace (begin, end - begin + 2, "");
+        begin = call_stack.find ("==");
     }
-  }
-  return errorType;
+    while (begin != string::npos);
+
+    return call_stack;
 }
 
-// Memcheck error call stack
-
-string FileBuffer :: getCallStack (int & position)
+string FileBuffer::getBuf ()
 {
-  int end;
-
-  string callStack;
-
-  // Call stack parsing
-
-  int l; 
-
-  for (l = position; !(buf [l] == '=' && buf [l + 2] == '\n'); l++);
-
-  callStack = string (buf).substr (position, l - position) + " ";
-
-  position = l;
-
-  // Deletion PID from Memcheck log
-
-  int begin = 0;
-  do
-  {
-    end = callStack.find ("== ");
-    callStack.replace (begin, end - begin + 2, "");
-    begin = callStack.find ("==");
-  }
-  while (begin != string :: npos);
-
-  return callStack;
-}
-
-string FileBuffer :: getBuf ()
-{
-  return string (buf);
+    return string (buf);
 }
 
 bool operator == (const FileBuffer& arg1, const FileBuffer& arg2)
 {
-  return (strcmp(arg1.buf, arg2.buf) == 0);
+    return (strcmp(arg1.buf, arg2.buf) == 0);
 }
 
 FileBuffer::~FileBuffer()
 {
-  free(buf);
-  free(name);
+    free(buf);
 }
 

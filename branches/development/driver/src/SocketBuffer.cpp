@@ -22,81 +22,103 @@
 */
 
 #include "SocketBuffer.h"
-
-#include <cstddef>
+#include "Logger.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <cerrno>
 
 using namespace std;
 
-SocketBuffer::SocketBuffer(int num, int size)
+static Logger *logger = Logger::getLogger();
+
+SocketBuffer::SocketBuffer(int _num, int _size) : num(_num)
 {
-  this->name = NULL;
-  this->num = num;
-  this->size = size;
-  this->buf = (char*) malloc (this->size);
-  memset(this->buf, 0, this->size);
+    size = _size;
+    name = string("");
+    if ((buf = (char*) malloc (size)) == NULL)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        throw "malloc";
+    }
+    memset(buf, 0, size);
 }
 
 SocketBuffer::SocketBuffer(const SocketBuffer& other)
 {
-  this->name = NULL;
-  this->num = other.num;
-  this->size = other.size;
-  this->buf = (char*) malloc (size);
-  for (int i = 0; i < size; i++)
-  {
-    this->buf[i] = other.buf[i];
-  }
+    name = string("");
+    num = other.num;
+    size = other.getSize();
+    if ((buf = (char*) malloc (size)) == NULL)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        throw "malloc";
+    }
+    strncpy(buf, other.buf, size);
+    buf[size] = '\0';
 }
 
-FileBuffer* SocketBuffer::forkInput(string stpOutputFile)
+FileBuffer* SocketBuffer::forkInput(FileBuffer *stp_file)
 {
-  FileBuffer stp(stpOutputFile);
-  if ((stp.buf[0] == 'V') && (stp.buf[1] == 'a') && (stp.buf[2] == 'l') && (stp.buf[3] == 'i') && (stp.buf[4] == 'd'))
-  {
-    return NULL;
-  } 
-  SocketBuffer* res = new SocketBuffer(*this);
-  res->applySTPSolution(stp.buf);
-  return res;
+    if (stp_file->getSize() > strlen("Valid"))
+    {
+         if (!strncmp(stp_file->buf, "Valid", strlen("Valid")))
+         {
+             return NULL;
+         }
+    }
+    SocketBuffer* res;
+    try
+    {
+        res = new SocketBuffer(*this);
+    }
+    catch (const char *)
+    {
+        return NULL;
+    }
+    catch (std::bad_alloc)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        return NULL;
+    }
+    res->applySTPSolution(stp_file->buf);
+    return res;
 }
 
-void SocketBuffer::dumpFile(char* name)
-{  
+int SocketBuffer::dumpFile(string file_name)
+{    
 }
-  
+    
 void SocketBuffer::applySTPSolution(char* buf)
 {
-  char* pointer = buf;
-  char* byteValue;
-  while ((byteValue = strstr(pointer, "socket_")) != NULL)
-  {
-    char* brack = strchr(byteValue, '[');
-    *brack = '\0';
-    int number = atoi(byteValue + 7);
-    if (this->num == number)
+    char* pointer = buf;
+    char* byte_value;
+    while ((byte_value = strstr(pointer, "socket_")) != NULL)
     {
-      char* posbegin = brack + 5;
-      char* posend;
-      long index = strtol(posbegin, &posend, 16);
-      char* valuebegin = posend + 9;
-      long value = strtol(valuebegin, &pointer, 16);
-      this->buf[index] = value;
+        char* brack = strchr(byte_value, '[');
+        *brack = '\0';
+        int number = atoi(byte_value + 7);
+        if (num == number)
+        {
+            char* pos_begin = brack + 5;
+            char* pos_end;
+            long index = strtol(pos_begin, &pos_end, 16);
+            char* value_begin = pos_end + 9;
+            long value = strtol(value_begin, &pointer, 16);
+            buf[index] = value;
+        }
+        else
+        {
+            pointer = brack + 5;
+        }
     }
-    else
-    {
-      pointer = brack + 5;
-    }
-  }
 }
 
 SocketBuffer::~SocketBuffer()
 {
-  free(buf);
+    free(buf);
 }
 

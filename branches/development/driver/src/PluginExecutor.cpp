@@ -24,7 +24,6 @@
 */
 #include "Logger.h"
 #include "PluginExecutor.h"
-#include "FileBuffer.h"
 #include "TmpFile.h"
 #include "Monitor.h"
 
@@ -33,8 +32,6 @@
 #include <cstdlib>
 #include <vector>
 #include <string>
-#include <pthread.h>
-
 
 extern int thread_num;
 extern Monitor* monitor;
@@ -45,12 +42,13 @@ static Logger *logger = Logger::getLogger();
 
 
 PluginExecutor::PluginExecutor(bool debug_full_enabled,
-                               bool traceChildren,
+                               bool trace_children,
                                const string &install_dir,
                                const vector<string> &cmd,
-                               const vector<string> &tg_args,
-                               Kind kind): 
-                                   debug_full(debug_full_enabled), traceChildren(traceChildren), kind(kind)
+                               const vector<string> &tg_args, 
+                               Kind kind) : debug_full(debug_full_enabled),
+                                            trace_children(trace_children),
+                                            kind(kind)
 {
     if (cmd.size() < 1) {
         LOG(Logger :: ERROR, "No program name");
@@ -65,31 +63,34 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     args[0] = strdup(prog);
     switch (kind)
     {
-      case TG: args[1] = strdup("--tool=tracegrind");
-               break;
-      case MC: args[1] = strdup("--tool=memcheck");
-               break;      
-      case CV: args[1] = strdup("--tool=covgrind");
-               break;
-      default: break;
+        case TG: args[1] = strdup("--tool=tracegrind");
+                 break;
+        case MC: args[1] = strdup("--tool=memcheck");
+                 break;      
+        case CV: args[1] = strdup("--tool=covgrind");
+                 break;
+        default: break;
     }
 
-    if (traceChildren)
+    if (trace_children)
     {
-      args[2] = strdup("--trace-children=yes");
+        args[2] = strdup("--trace-children=yes");
     }
     else
     {
-      args[2] = strdup("--trace-children=no");
+        args[2] = strdup("--trace-children=no");
     }
     
     for (size_t i = 0; i < tg_args.size(); i++)
+    {
         args[i + 3] = strdup(tg_args[i].c_str());
+    }
 
     for (size_t i = 0; i < cmd.size(); i++)
+    {
         args[i + tg_args.size() + 3] = strdup(cmd[i].c_str());
+    }
 
-    output = NULL;
 }
 
 int PluginExecutor::run(int thread_index)
@@ -97,26 +98,39 @@ int PluginExecutor::run(int thread_index)
     if (prog == NULL)
         return NULL;
 
-    char * pluginName = "Unknown";
+    string plugin_name = "Unknown";
 
     switch (kind)
     {
-      case TG: pluginName = "Tracegrind"; 
-               break;
-      case MC: pluginName = "Memcheck"; 
-               break;
-      case CV: pluginName = "Covgrind";
-               break;
-      default: break;
+        case TG: plugin_name = "Tracegrind"; 
+                 break;
+        case MC: plugin_name = "Memcheck"; 
+                 break;
+        case CV: plugin_name = "Covgrind";
+                 break;
+        default: break;
     }
 
     if (!thread_num)
-      LOG (Logger :: DEBUG, "Running plugin " << pluginName << ".");
+    {
+        LOG(Logger::DEBUG, "Running plugin " << plugin_name << ".");
+    }
     else
-      LOG (Logger :: DEBUG, "Thread #" << thread_index << ": Running plugin " << pluginName << ".");
+    {
+        LOG(Logger::DEBUG, "Thread #" << thread_index << 
+                           ": Running plugin " << plugin_name << ".");
+    }
 
     TmpFile* file_out = new TmpFile();
+    if (!file_out->good())
+    {
+        return -1;
+    }
     TmpFile* file_err = new TmpFile();
+    if (!file_err->good())
+    {
+        return -1;
+    }
     monitor->setTmpFiles(file_out, file_err);
         
     redirect_stdout(file_out->getName());
@@ -134,47 +148,41 @@ int PluginExecutor::run(int thread_index)
 
     if (ret == -1) 
     {
-      if (!monitor->getKilledStatus())
-      {
-        LOG(Logger :: DEBUG, "Exited on signal.");
-        return -1;
-      }
-      else
-      {
-        return 0;
-      }
+        if (!monitor->getKilledStatus())
+        {
+            LOG(Logger :: DEBUG, "Exited on signal.");
+            return -1;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+    else if (ret == 1)
+    {
+        return 1;
     }
     ostringstream msg;
     if (thread_num)
     {
-      msg << "Thread #" << thread_index << ": ";
+        msg << "Thread #" << thread_index << ": ";
     }
       
     switch (kind)
     {
-      case TG: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
-               break;
-      case MC: LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
-               break;
-      case CV: LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
-               break;
-      default: break;
+        case TG: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
+                 break;
+        case MC: LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
+                 break;
+        case CV: LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
+                 break;
+        default: break;
     }
 
     return 0;
 }
 
-FileBuffer* PluginExecutor::getOutput()
-{
-    return output;
-}
-
 PluginExecutor::~PluginExecutor()
-{
-  if (output != NULL)
-  {
-    unlink(output->name);
-    delete output;
-  }  
+{  
 }
 

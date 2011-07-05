@@ -83,6 +83,31 @@ int LocalExecutor::wait()
 
     if (ret_proc == (pid_t)(-1)) return -1;
 
+#define VG_CODE_EXEC_ERROR 126
+#define VG_CODE_PATH_ERROR 127
+
+    /* Return codes 126 and 127 cover the following situations:
+         * Command not found
+         * Permission denied (launching executable)
+         * No such file or directory */
+
+    if ((WEXITSTATUS(status) == VG_CODE_EXEC_ERROR) ||
+        (WEXITSTATUS(status) == VG_CODE_PATH_ERROR))
+    {
+        struct stat file_stat;
+        int fd = open(file_err_name, O_RDONLY, S_IRWXU);
+        fstat(fd, &file_stat);
+        char error_out[file_stat.st_size + 1];
+        read(fd, error_out, file_stat.st_size);
+        error_out[file_stat.st_size] = '\0';
+        LOG(Logger::ERROR, error_out);
+        close(fd);
+        return 1;
+    }
+
+#undef VALGRIND_RET_CODE_EXEC_ERROR
+#undef VALGRIND_RET_CODE_PATH_ERROR
+
     if (WIFEXITED(status))
     {
         return 0;
@@ -93,28 +118,38 @@ int LocalExecutor::wait()
     }
 }
 
-void LocalExecutor::redirect_stdout(char *filename)
+int LocalExecutor::redirect_stdout(char *file_name)
 {
-    file_out = open(filename, O_CREAT | O_TRUNC | O_WRONLY, 
+    file_out = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, 
                     S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (file_out == -1)
-        LOG(Logger::JOURNAL, "Cannot open " << filename << strerror(errno));
+    {
+        LOG(Logger::JOURNAL, "Cannot open " << file_name << strerror(errno));
+        return -1;
+    }
+    return 0;
 }
 
-void LocalExecutor::redirect_stderr(char *filename)
+int LocalExecutor::redirect_stderr(char *file_name)
 {
-    file_err = open(filename, O_CREAT | O_TRUNC | O_WRONLY, 
+    file_err_name = strdup(file_name);
+    file_err = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, 
                     S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (file_err == -1)
-        LOG(Logger::JOURNAL, "Cannot open " << filename << strerror(errno));
+    {
+        LOG(Logger::JOURNAL, "Cannot open " << file_name << strerror(errno));
+        return -1;
+    }
+    return 0;
 }
 
-void LocalExecutor::do_redirect(int file_to_redirect, int new_file)
+int LocalExecutor::do_redirect(int file_to_redirect, int new_file)
 {
-    if (new_file == -1) return;
+    if (new_file == -1) return -1;
 
     dup2(new_file, file_to_redirect);
     close(new_file);
+    return 0;
 }
 
 LocalExecutor::~LocalExecutor()
@@ -127,6 +162,13 @@ LocalExecutor::~LocalExecutor()
     {
       close(file_err);
     }
-    if (prog != NULL) free(prog);
+    if (prog != NULL)
+    {
+        free(prog);
+    }
+    if (file_err_name != NULL)
+    {
+        free(file_err_name);
+    }
 }
 

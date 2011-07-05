@@ -25,7 +25,6 @@
 
 #include "Logger.h"
 #include "STP_Executor.h"
-#include "STP_Output.h"
 #include "TmpFile.h"
 #include "Monitor.h"
 
@@ -57,7 +56,7 @@ STP_Executor::STP_Executor(bool debug_full_enable,
     args[1] = strdup("-p");
 }
 
-STP_Output *STP_Executor::run(const char *file_name, int thread_index)
+string STP_Executor::run(const char *file_name, int thread_index)
 {
     if (!thread_num)
     {
@@ -75,15 +74,18 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
 
     monitor->setTmpFiles(file_out, file_err);
 
-    redirect_stdout(file_out->getName());
-    redirect_stderr(file_err->getName());
+    if ((redirect_stdout(file_out->getName()) == -1) ||
+        (redirect_stderr(file_err->getName()) == -1))
+    {
+        return string("");
+    }
 
     int ret = exec(true);
     monitor->setPID(child_pid, thread_index);
  
     if (ret == -1) {
         LOG(Logger :: ERROR, "Problem in execution: " << strerror(errno));
-        return NULL;
+        return string("");
     }
 
     ret = wait();
@@ -92,7 +94,7 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
         {
           LOG(Logger :: ERROR, "Problem in waiting: " << strerror(errno));
         }
-        return NULL;
+        return string("");
     }
     if (!thread_num)
     {
@@ -105,13 +107,9 @@ STP_Output *STP_Executor::run(const char *file_name, int thread_index)
 
     if (ret != 0) {
         LOG(Logger :: DEBUG, "STP exits with code " << ret);
-        return NULL;
+        return string("");
     }
 
-    STP_Output *stp_output = new STP_Output;
-
-    stp_output->setFile(file_out->exportFile());
-
-    return stp_output;
+    return file_out->getName();
 }
 

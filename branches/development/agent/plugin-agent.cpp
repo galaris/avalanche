@@ -212,12 +212,12 @@ static int readAndExec(const string &progDir, int argc, char** argv)
     }
     cout << endl;
 #endif
-    int tmpout_fd = open("tmp_stdout", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
-    int tmperr_fd = open("tmp_stderr", O_CREAT | O_TRUNC | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO);
+    int tmpout_fd = open("tmp_stdout", O_CREAT | O_TRUNC | O_WRONLY,
+                         S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+    int tmperr_fd = open("tmp_stderr", O_CREAT | O_TRUNC | O_WRONLY,
+                         S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     dup2(tmpout_fd, STDOUT_FILENO);
     dup2(tmperr_fd, STDERR_FILENO);
-    close(STDOUT_FILENO);
-    close(STDERR_FILENO);
     execvp(args[0], args);
   }
   int status;
@@ -244,6 +244,19 @@ static int readAndExec(const string &progDir, int argc, char** argv)
     cout << endl;
   }
 #endif
+  if ((WEXITSTATUS(status) == 126) ||
+      (WEXITSTATUS(status) == 127)) //Problem with executable
+  {
+    int fd = open("tmp_stderr", O_RDONLY, S_IRUSR);
+    lseek(fd, SEEK_SET, 0);
+    struct stat f_stat;
+    fstat(fd, &f_stat);
+    char buf[f_stat.st_size + 1];
+    read(fd, buf, f_stat.st_size);
+    buf[f_stat.st_size] = '\0';
+    cout << buf << endl;
+    return 1;
+  }
   return ((WIFEXITED(status)) ? 0 : -1);
 }
 
@@ -280,38 +293,42 @@ static void writeFromFile(const char *file_name)
 static int passResult(int ret_code)
 {
   writeToSocket(avalanche_fd, &ret_code, sizeof(int));
+  if (ret_code == 1)
+  {
+    return -1;
+  }
   switch(kind)
   {
     case TG: writeFromFile(string(temp_dir).append("trace.log").c_str());
-                     if (check_danger)
-                     {
-                       writeFromFile(string(temp_dir).append("dangertrace.log").c_str());
-                     }
-                     if (dump_prediction)
-                     {
-                       writeFromFile(string(temp_dir).append("actual.log").c_str());
-                     }
-                     if (dump_calls)
-                     {
-                       writeFromFile("calldump.log");
-                     }
-                     if (network)
-                     {
-                       writeFromFile(string(temp_dir).append("replace_data").c_str());
-                     }
-                     if (check_argv)
-                     {
-                       writeFromFile(string(temp_dir).append("argv.log").c_str());
-                     }
-                     break;
+             if (check_danger)
+             {
+               writeFromFile(string(temp_dir).append("dangertrace.log").c_str());
+             }
+             if (dump_prediction)
+             {
+               writeFromFile(string(temp_dir).append("actual.log").c_str());
+             }
+             if (dump_calls)
+             {
+               writeFromFile("calldump.log");
+             }
+             if (network)
+             {
+               writeFromFile(string(temp_dir).append("replace_data").c_str());
+             }
+             if (check_argv)
+             {
+               writeFromFile(string(temp_dir).append("argv.log").c_str());
+             }
+             break;
     case CV:
-    case MC:   if (!no_coverage)
-                     {
-                       writeFromFile(string(temp_dir).append("basic_blocks.log").c_str());
-                     }
-                     writeFromFile(string(temp_dir).append("execution.log").c_str());
-                     break;
-    default:         break;
+    case MC: if (!no_coverage)
+             {
+               writeFromFile(string(temp_dir).append("basic_blocks.log").c_str());
+             }
+             writeFromFile(string(temp_dir).append("execution.log").c_str());
+             break;
+    default: break;
   }
   return 0;
 }
@@ -412,7 +429,10 @@ int main(int argc, char** argv)
         cout << "end of communication: no more requests" << endl;
         break;
       }
-      passResult(res);
+      if (passResult(res) < 0)
+      {
+        break;
+      }
     }
   }
   catch(const char * error_msg)

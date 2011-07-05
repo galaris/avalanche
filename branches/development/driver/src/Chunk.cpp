@@ -31,7 +31,7 @@
 #include <fcntl.h>
 
 #include <vector>
-#include <iostream>
+#include <cerrno>
 
 using namespace std;
 
@@ -40,13 +40,20 @@ static Logger* logger = Logger::getLogger();
 Chunk::Chunk(FileBuffer* trace, int exploitNum, 
              int inputNum, bool exploitType)
 {
-  if (trace == NULL)
+  this->trace = NULL;
+  if (trace != NULL)
   {
-    this->trace = NULL;
-  }
-  else
-  {
-    this->trace = new FileBuffer(*trace);
+    try
+    {
+      this->trace = new FileBuffer(*trace);
+    }
+    catch (const char* msg)
+    {
+    }
+    catch (std::bad_alloc)
+    {
+      LOG(Logger::ERROR, strerror(errno));
+    }
   }
   exploitGroups.push_back(make_pair(exploitNum, inputNum));
   isExploit = exploitType;
