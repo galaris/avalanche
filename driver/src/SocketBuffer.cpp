@@ -84,7 +84,10 @@ FileBuffer* SocketBuffer::forkInput(FileBuffer *stp_file)
         LOG(Logger::ERROR, strerror(errno));
         return NULL;
     }
-    res->applySTPSolution(stp_file->buf);
+    if (res->applySTPSolution(stp_file->buf) < 0)
+    {
+        return NULL;
+    }
     return res;
 }
 
@@ -92,13 +95,17 @@ int SocketBuffer::dumpFile(string file_name)
 {    
 }
     
-void SocketBuffer::applySTPSolution(char* buf)
+int SocketBuffer::applySTPSolution(char* buf)
 {
     char* pointer = buf;
     char* byte_value;
     while ((byte_value = strstr(pointer, "socket_")) != NULL)
     {
         char* brack = strchr(byte_value, '[');
+        if (brack == NULL)
+        {
+            return -1;
+        }
         *brack = '\0';
         int number = atoi(byte_value + 7);
         if (num == number)
@@ -106,15 +113,21 @@ void SocketBuffer::applySTPSolution(char* buf)
             char* pos_begin = brack + 5;
             char* pos_end;
             long index = strtol(pos_begin, &pos_end, 16);
+            if ((index < 0) || (index > size))
+            {
+                return -1;
+            }
             char* value_begin = pos_end + 9;
             long value = strtol(value_begin, &pointer, 16);
-            buf[index] = value;
+            this->buf[index] = value;
         }
         else
         {
             pointer = brack + 5;
         }
+        *brack = '[';
     }
+    return 0;
 }
 
 SocketBuffer::~SocketBuffer()

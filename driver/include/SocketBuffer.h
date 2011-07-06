@@ -40,7 +40,7 @@ public:
 
   virtual int dumpFile(std::string file_name);
   
-  virtual void applySTPSolution(char* buf);
+  virtual int applySTPSolution(char* buf);
 
   ~SocketBuffer();
 

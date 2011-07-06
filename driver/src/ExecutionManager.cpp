@@ -832,8 +832,8 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     string error_type;
     string call_stack;
 
-    if ((errors > 0) ||(((definitely_lost != -1) ||(possibly_lost != -1))
-      && !killed))
+    if ((errors > 0) || 
+        (((definitely_lost != -1) || (possibly_lost != -1)) && !killed))
     {
       LOG(Logger::DEBUG, "");
 
@@ -924,29 +924,37 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
       }
 
       // Leaks
+      // TODO: Add dumping memchecks for leaks
 
       if (definitely_lost != -1)
+      {
         LOG(Logger::JOURNAL, "  Definitely lost: " << definitely_lost);
+      }
       if (possibly_lost != -1)
+      {
         LOG(Logger::JOURNAL, "  Possibly lost: " << possibly_lost);
+      }
       
-      if (dumpMemoryError(input, mc_output, same_exploit, exploit_group, ch) < 0)
+      if (errors > 0)
       {
-        if (enable_mutexes) 
+        if (dumpMemoryError(input, mc_output, same_exploit, exploit_group, ch) < 0)
         {
-          pthread_mutex_unlock(&add_exploits_mutex);
+          if (enable_mutexes) 
+          {
+            pthread_mutex_unlock(&add_exploits_mutex);
+          }
+          return -1;
         }
-        return -1;
+        if (same_exploit)
+        {
+          ch->addGroup(memchecks, chunk_file_num);
+        }
+        else
+        {
+          report.push_back(ch);
+        }
+        memchecks ++;
       }
-      if (same_exploit)
-      {
-        ch->addGroup(memchecks, chunk_file_num);
-      }
-      else
-      {
-        report.push_back(ch);
-      }
-      memchecks++;
     }
     //delete mc_output;
   }
