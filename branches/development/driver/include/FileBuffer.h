@@ -51,7 +51,7 @@ public:
 
     int cutQueryAndDump(std::string file_name, bool do_invert = false);
 
-    virtual void applySTPSolution(char* buf);
+    virtual int applySTPSolution(char* buf);
     
     bool filterCovgrindOutput ();
     char * filterMemcheckOutput (long errors);

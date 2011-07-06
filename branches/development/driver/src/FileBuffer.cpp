@@ -115,7 +115,7 @@ FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file)
     {
         res = new FileBuffer(*this);
     }
-    catch (const char *buf)
+    catch (const char)
     {
         return NULL;
     }
@@ -124,7 +124,10 @@ FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file)
         LOG(Logger::ERROR, strerror(errno));
         return NULL;
     }
-    res->applySTPSolution(stp_file->buf);
+    if (res->applySTPSolution(stp_file->buf) < 0)
+    {
+        return NULL;
+    }
     return res;
 }
 
@@ -197,13 +200,17 @@ int FileBuffer::cutQueryAndDump(std::string file_name, bool do_invert)
     size = old_size;
 }
     
-void FileBuffer::applySTPSolution(char* buf)
+int FileBuffer::applySTPSolution(char* buf)
 {
     char* pointer = buf;
     char* byte_value;
     while ((byte_value = strstr(pointer, "file_")) != NULL)
     {
         char* brack = strchr(byte_value, '[');
+        if (brack == NULL)
+        {
+            return -1;
+        }
         *brack = '\0';
         std::string file_name(byte_value + 5);
         size_t found = file_name.find("_slash_");
@@ -229,6 +236,10 @@ void FileBuffer::applySTPSolution(char* buf)
             char* pos_begin = brack + 5;
             char* posend;
             long index = strtol(pos_begin, &posend, 16);
+            if ((index < 0) || (index >= size))
+            {
+                return -1;
+            }
             char* value_begin = posend + 9;
             long value = strtol(value_begin, &pointer, 16);
             this->buf[index] = value;
@@ -237,7 +248,9 @@ void FileBuffer::applySTPSolution(char* buf)
         {
             pointer = brack + 5;
         }
+        *brack = '[';
     }
+    return 0;
 }
 
 bool FileBuffer::filterCovgrindOutput()
