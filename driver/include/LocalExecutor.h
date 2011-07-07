@@ -41,7 +41,7 @@ public:
     int redirect_stdout(char *filename);
     int redirect_stderr(char *filename);
     virtual int run (int thread_index = 0) { return 0; }
-    ~LocalExecutor();
+    virtual ~LocalExecutor();
 
 protected:
     char  *prog;

@@ -44,7 +44,7 @@ public:
                     networkLog (false),
                     sockets(false),
                     traceChildren(false),
-                    sizeoflong(sizeof(long)),
+                    sizeOfLong(sizeof(long)),
                     datagrams(false),
                     distributed(false), 
                     remoteValgrind(false),
@@ -65,7 +65,6 @@ public:
                     distHost(std::string("127.0.0.1")),
                     port(65536),
                     distPort(65536),
-                    remoteHost(std::string("127.0.0.1")),
                     remotePort(65536),
                     STPThreads(0),
                     checkArgv(std::string("")),
@@ -98,7 +97,6 @@ public:
         port            = opt_config->port;
         distHost        = opt_config->distHost;
         distPort        = opt_config->distPort;
-        remoteHost      = opt_config->remoteHost;
         remotePort      = opt_config->remotePort;
         remoteValgrind  = opt_config->remoteValgrind;
         useMemcheck     = opt_config->useMemcheck;
@@ -113,7 +111,7 @@ public:
         prefix          = opt_config->prefix;
         checkArgv       = opt_config->checkArgv;
         protectArgName  = opt_config->protectArgName;
-        sizeoflong      = opt_config->sizeoflong;
+        sizeOfLong      = opt_config->sizeOfLong;
         cleanUp         = opt_config->cleanUp;
         resultDir       = opt_config->resultDir;
         agentDir        = opt_config->agentDir;
@@ -164,11 +162,11 @@ public:
     bool getDebug() const
     { return debug; }
 
-    int getSizeoflong() const
-    { return sizeoflong; }
+    int getSizeOfLong() const
+    { return sizeOfLong; }
 
-    void setSizeoflong(int size)
-    { sizeoflong = size; }
+    void setSizeOfLong(int size)
+    { sizeOfLong = size; }
 
     void setProtectArgName()
     { protectArgName = true; }
@@ -374,12 +372,6 @@ public:
     void setDistHost(std::string& host)
     { distHost = host; }
 
-    std::string getRemoteHost()
-    { return remoteHost; }
-
-    void setRemoteHost(std::string& host)
-    { remoteHost = host; }
-
     std::string getPrefix()
     { return prefix; }
 
@@ -411,7 +403,7 @@ private:
 
     /* Set avalanche to trace data from TCP sockets.
        Not set by default (false). */
-    bool		     sockets;
+    bool                    sockets;
 
     /* Set avalanche to trace data from UDP sockets.
        Not set by default (false). */
@@ -522,10 +514,6 @@ private:
        Set to 127.0.0.1 by default. */
     std::string              distHost;
 
-    /* plugin-agent IPv4.
-       Set to 127.0.0.1 by default. */
-    std::string              remoteHost;
-
     /* Port number for network connection for --sockets/datagrams.
        Set to 65536 by default. */
     unsigned int             port;
@@ -565,7 +553,7 @@ private:
 
     /* Pointer size synchronization for split mode.
        Set automatically. */
-    int                      sizeoflong;
+    int                      sizeOfLong;
 };
 
 

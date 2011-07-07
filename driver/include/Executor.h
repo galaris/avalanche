@@ -40,7 +40,7 @@ class Executor
 {
 public:
     Executor() : args(NULL), argsnum(0) {}
-   ~Executor()
+    virtual ~Executor()
     {
       for(int i = 0; i < argsnum; i ++)
       {

@@ -1,8 +1,8 @@
-/*----------------------------------------------------------------------------------------*/
-/*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*----------------------------- RemotePluginExecutor.cpp ---------------------------------*/
-/*----------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+/*------------------------------- AVALANCHE ---------------------------------*/
+/*- Driver. Coordinates other processes, traverses conditional jumps tree. --*/
+/*----------------------- RemotePluginExecutor.cpp --------------------------*/
+/*---------------------------------------------------------------------------*/
  
 /*
    Copyright (C) 2011 Michael Ermakov
@@ -32,7 +32,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-
 using namespace std;
 
 static Logger *logger = Logger::getLogger();
@@ -40,191 +39,269 @@ static Logger *logger = Logger::getLogger();
 static
 void writeToSocket(int fd, const void* b, size_t count)
 {
-  char* buf = (char*) b;
-  size_t sent = 0;
-  while (sent < count)
-  {
-    size_t s = write(fd, buf + sent, count - sent);
-    if (s == -1)
+    char* buf = (char*) b;
+    size_t sent = 0;
+    while (sent < count)
     {
-      throw "error writing to socket";
+        size_t s = write(fd, buf + sent, count - sent);
+        if (s < 1)
+        {
+            throw "connection is down";
+        }
+        sent += s;
     }
-    sent += s;
-  }
 }
 
 static
 void readFromSocket(int fd, const void* b, size_t count)
 {
-  char* buf = (char*) b;
-  size_t received = 0;
-  while (received < count)
-  {
-    size_t r = read(fd, buf + received, count - received);
-    if (r == 0)
+    char* buf = (char*) b;
+    size_t received = 0;
+    while (received < count)
     {
-      throw "connection is down";
+        size_t r = read(fd, buf + received, count - received);
+        if (r < 1)
+        {
+            throw "net";
+        }
+        received += r;
     }
-    if (r == -1)
+}
+
+#define CHUNK_SIZE 32
+
+static
+void readFileFromSocket(int fd, string file_name)
+{
+    int file_fd, length;
+    size_t received = 0, r;
+    char buf[CHUNK_SIZE];
+    readFromSocket(fd, &length, sizeof(int));
+    file_fd = open(file_name.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 
+                   S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+    if (file_fd == -1)
     {
-      throw "error reading from socket";
+        LOG(Logger::ERROR, "Cannot open file " << file_name <<
+                           ": " << strerror(errno));
+        throw "local";
     }
-    received += r;
-  }
+    while(received < length)
+    {
+        if (length - received > CHUNK_SIZE)
+        {
+            r = read(fd, buf, CHUNK_SIZE);
+        }
+        else
+        {
+            r = read(fd, buf, length - received);
+        }
+        if (r < 1)
+        {
+            close(file_fd);
+            throw "net";
+        }
+        received += r;
+        r = write(file_fd, buf, r);
+        if (r < 1)
+        {
+            LOG(Logger::ERROR, "Cannot write to file " << file_name <<
+                               ": " << strerror(errno));
+            close(file_fd);
+            throw "local";
+        }
+    }
+    close(file_fd);
 }
 
 static
-void readFromSocketToFile(int socket_fd, const char *file_name, 
-                          bool guard, bool use_temp_dir)
+void writeFileToSocket(int fd, string file_name)
 {
-  if (!guard)
-  {
-    return;
-  }
-  int length;
-  readFromSocket(socket_fd, &length, sizeof(int));
-  char * file_buf = (char *)malloc(length);
-  readFromSocket(socket_fd, file_buf, length);
-  string s_file_name = file_name;
-  if (use_temp_dir)
-  {
-   s_file_name = ExecutionManager::getTempDir() + s_file_name;
-  }
-  int file_fd = open(s_file_name.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 
-                     S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
-  write(file_fd, file_buf, length);
-  free(file_buf);
+    int file_fd;
+    size_t sent = 0, r;
+    char buf[CHUNK_SIZE];
+    file_fd = open(file_name.c_str(), O_RDONLY, S_IRUSR);
+    if (file_fd == -1)
+    {
+        LOG(Logger::ERROR, "Cannot open file " << file_name <<
+                           ": " << strerror(errno));
+        throw "local";
+    }
+    struct stat f_stat;
+    if (fstat(file_fd, &f_stat) == -1)
+    {
+        LOG(Logger::ERROR, strerror(errno));
+        throw "local";
+    }
+    writeToSocket(fd, &(f_stat.st_size), sizeof(int));
+    while(sent < f_stat.st_size)
+    {
+        if (f_stat.st_size - sent > CHUNK_SIZE)
+        {
+            r = read(file_fd, buf, CHUNK_SIZE);
+        }
+        else
+        {
+            r = read(file_fd, buf, f_stat.st_size - sent);
+        }
+        if (r < 1)
+        {
+            LOG(Logger::ERROR, "Cannot read from file " << file_name <<
+                               ": " << strerror(errno));
+            throw "local";
+        }
+        sent += r;
+        r = write(fd, buf, r);
+        if (r < 1)
+        {
+            throw "net";
+        }
+    }
 }
 
-static
-void writeFromFileToSocket(int socket_fd, const char *file_name, 
-                           bool guard, bool use_temp_dir)
-{
-  int size;
-  if (!guard)
-  {
-    return;
-  }
-  string s_file_name = file_name;
-  if (use_temp_dir)
-  {
-   s_file_name = ExecutionManager::getTempDir() + s_file_name;
-  }
-  FileBuffer f(s_file_name);
-  size = f.getSize();
-  writeToSocket(socket_fd, &size, sizeof(int));
-  writeToSocket(socket_fd, f.buf, size);
-}
+#undef CHUNK_SIZE
 
 bool RemotePluginExecutor::checkFlag(const char *flg_name)
 {
-  for (int i = 0; i < argsnum; i ++)
-  {
-    if(strstr(args[i], flg_name) != NULL)
+    for (int i = 1; i < argsnum; i ++)
     {
-      return true;
+        if ((args[i][0] != '-') || (args[i][1] != '-'))
+        {
+            return false;
+        }
+        if((strstr(flg_name, args[i]) != NULL) ||
+           (strstr(args[i], flg_name) != NULL))
+        {
+            return true;
+        }
     }
-  }
-  return false;
+    return false;
 }
 
 RemotePluginExecutor::RemotePluginExecutor(vector<string> &_args, 
-                                           int socket_fd, 
-                                           vector<char> &to_send, 
-                                           Kind _kind, 
-                                           std::string _result_dir)
+                                           int _remote_fd, vector<char> &to_send,
+                                           Kind _kind, string _result_dir)
 {
-  int i;
-  remote_fd = socket_fd;
-  result_dir = _result_dir;
-  argsnum = _args.size();
-  args = (char **)calloc (argsnum, sizeof(char *));
-  files_to_send = to_send;
-  for (i = 0; i < argsnum; i ++)
-  {
-    args[i] = strdup(_args[i].c_str());
-  }
-  kind = _kind;
+    remote_fd = _remote_fd;
+    result_dir = _result_dir;
+    argsnum = _args.size();
+    args = (char **)calloc (argsnum, sizeof(char *));
+    files_to_send = to_send;
+    for (int i = 0; i < argsnum; i ++)
+    {
+        args[i] = strdup(_args[i].c_str());
+    }
+    kind = _kind;
 }
 
 int RemotePluginExecutor::run(int thread_index)
 {
-  int res, size;
-  try
-  {
-    char util_c;
-    char *file_name;
-    int i, arg_length, file_length;
-    writeToSocket(remote_fd, &kind, sizeof(int));
-    writeToSocket(remote_fd, &argsnum, sizeof(int));
-    for (i = 0; i < argsnum; i ++)
+    int res, size;
+    try
     {
-      arg_length = strlen(args[i]);
-      writeToSocket(remote_fd, &arg_length, sizeof(int));
-      writeToSocket(remote_fd, args[i], arg_length);
-      util_c = files_to_send[i] ? '1' : '\0';
-      writeToSocket(remote_fd, &util_c, 1);
-      if (util_c)
-      {
-        char *eq_sign = strchr(args[i], '=');
-        if (eq_sign != NULL)
+        char util_c;
+        char *file_name;
+        int i, arg_length, file_length;
+        writeToSocket(remote_fd, &kind, sizeof(int));
+        writeToSocket(remote_fd, &argsnum, sizeof(int));
+        for (i = 0; i < argsnum; i ++)
         {
-          eq_sign ++;
-          file_name = eq_sign;
+            arg_length = strlen(args[i]);
+            writeToSocket(remote_fd, &arg_length, sizeof(int));
+            writeToSocket(remote_fd, args[i], arg_length);
+            util_c = files_to_send[i] ? '1' : '\0';
+            writeToSocket(remote_fd, &util_c, 1);
+            if (util_c)
+            {
+                char *eq_sign = strchr(args[i], '=');
+                if (eq_sign != NULL)
+                {
+                    eq_sign ++;
+                    file_name = eq_sign;
+                }
+                else
+                {
+                    file_name = args[i];
+                }
+                string s_file_name = file_name;
+                FileBuffer f(s_file_name);
+                size = f.getSize();
+                writeToSocket(remote_fd, &size, sizeof(int));
+                writeToSocket(remote_fd, f.buf, size);
+            }
         }
-        else
+        string temp_dir = ExecutionManager::getTempDir();
+        if (checkFlag("--check-prediction=yes"))
         {
-          file_name = args[i];
+            writeFileToSocket(remote_fd, temp_dir + string("prediction.log"));
         }
-        string s_file_name = file_name;
-        FileBuffer f(s_file_name);
-        size = f.getSize();
-        writeToSocket(remote_fd, &size, sizeof(int));
-        writeToSocket(remote_fd, f.buf, size);
-      }
-    }
-    writeFromFileToSocket(remote_fd, "prediction.log", 
-                           checkFlag("--check-prediction=yes"), true);
-    writeFromFileToSocket(remote_fd, "replace_data", 
-                           checkFlag("--replace=yes --replace=replace_data"), 
-                           true);
-    writeFromFileToSocket(remote_fd, "arg_lengths", 
-                           checkFlag("--check-argv="), true);
-    readFromSocket(remote_fd, &res, sizeof(int));
-    if (res == 1)
-    {
-      LOG(Logger::ERROR, "Remote valgrind plugin execution ended abnormally");
-      return 1;
-    }
-    switch (kind)
-    {
-      case TG: readFromSocketToFile(remote_fd, "trace.log", true, true);
-               readFromSocketToFile(remote_fd, "dangertrace.log", 
-                                     checkFlag("--check-danger=yes"), true);
-               readFromSocketToFile(remote_fd, "actual.log", 
-                                     checkFlag("--dump-prediction=yes"), true);
-               readFromSocketToFile(remote_fd, 
-                                     result_dir.append("calldump.log").c_str(), 
-                                     checkFlag("--dump-file=calldump.log"),
-                                     false);
-               readFromSocketToFile(remote_fd, "replace_data",
-                                     checkFlag("--sockets=yes--datagrams=yes"),
-                                     true);
-               readFromSocketToFile(remote_fd, "argv.log", 
-                                     checkFlag("--check-argv="), true);
+        if (checkFlag("--replace=yes --replace=replace_data"))
+        {
+            writeFileToSocket(remote_fd, temp_dir + string("replace_data"));
+        }
+        if (checkFlag("--check-argv="))
+        {
+            writeFileToSocket(remote_fd, temp_dir + string("arg_lengths"));
+        }
+        readFromSocket(remote_fd, &res, sizeof(int));
+        if (res == 1)
+        {
+            LOG(Logger::ERROR, "Plugin-agent ended abnormally");
+            return 1;
+        }
+        switch (kind)
+        {
+            case TG: 
+               readFileFromSocket(remote_fd, temp_dir + string("trace.log"));
+               if (checkFlag("--check-danger=yes"))
+               {
+                   readFileFromSocket(remote_fd, 
+                                      temp_dir + string("dangertrace.log"));
+               }
+               if (checkFlag("--dump-prediction=yes"))
+               {
+                   readFileFromSocket(remote_fd, 
+                                      temp_dir + string("actual.log"));
+               }
+               if (checkFlag("--dump-file=calldump.log"))
+               {
+                   readFileFromSocket(remote_fd, 
+                                      result_dir + string("calldump.log"));
+               }
+               if (checkFlag("--sockets=yes --datagrams=yes"))
+               {
+                   readFileFromSocket(remote_fd, 
+                                      temp_dir + string("replace_data"));
+               }
+               if (checkFlag("--check-argv="))
+               {
+                   readFileFromSocket(remote_fd, 
+                                      temp_dir + string("argv.log"));
+               }
                break;
-      case CV:   
-      case MC: readFromSocketToFile(remote_fd, "basic_blocks.log", 
-                                     !checkFlag("--no-coverage=yes"), true);
-               readFromSocketToFile(remote_fd, "execution.log", true, true);
+
+            case CV:     
+            case MC:
+               if (!checkFlag("--no-coverage=yes"))
+               {
+                   readFileFromSocket(remote_fd, 
+                                      temp_dir + string("basic_blocks.log"));
+               }
+               readFileFromSocket(remote_fd, 
+                                  temp_dir + string("execution.log"));
                break;
-      default: throw "unknown plugin"; break;
+
+            default: 
+               throw "local"; 
+               break;
+        }
     }
-  }
-  catch(...)
-  {
-    LOG(Logger::NETWORK_LOG, "Connection with remote plugin agent is down");
-    return 1;
-  }
-  return res;
+    catch(const char *msg)
+    {
+        if (!strcmp(msg, "net"))
+        {
+            LOG(Logger::NETWORK_LOG, "Connection with plugin-agent is down");
+        }
+        return 1;
+    }
+    return res;
 }
