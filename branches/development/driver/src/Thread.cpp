@@ -71,7 +71,7 @@ int Thread::waitForThread()
 {
     void *p_result;
     pthread_join(tid, &p_result);
-    return (int)(p_result);
+    return (long)(p_result);
 }
 
 void PoolThread::doWork(void* data)

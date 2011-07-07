@@ -64,14 +64,29 @@ static Int socketsNum = 0;
 static Int socketsBoundary;
 static replaceData* replace_data;
 static Char* bbFileName = NULL;
+static Char* tempDir;
+static Char* replaceFileName;
 
-static void cv_post_clo_init(void)
+static
+Char* concatTempDir(Char* fileName)
 {
-  if (alarm != 0)
+  Char* result;
+  if (tempDir == NULL)
   {
-    VG_(alarm)(alarm);
+    result = VG_(malloc)(fileName, VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, fileName);
   }
+  else
+  {
+    Int length = VG_(strlen)(tempDir);
+    result = VG_(malloc)(fileName, length + VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, tempDir);
+    VG_(strcpy)(result + length, fileName);
+    result[length + VG_(strlen)(fileName)] = '\0';
+  }
+  return result;
 }
+
 
 void pre_call(ThreadId tid, UInt syscallno)
 {
@@ -118,15 +133,17 @@ static void cv_fini(Int exitcode)
     VG_(HT_ResetIter)(basicBlocksTable);
     bbNode* n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
     SysRes fd;
+    Char *bbFile;
     if (bbFileName != NULL)
     {
-      fd = VG_(open)(bbFileName, VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
+      bbFile = concatTempDir(bbFileName);
     }
     else
     {
-      fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
+      bbFile = concatTempDir("basic_blocks.log");
     }
-    if (sr_Res(fd) != -1)
+    fd = VG_(open)(bbFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W);
+    if (!sr_isError(fd))
     {
       while (n != NULL)
       {
@@ -136,13 +153,13 @@ static void cv_fini(Int exitcode)
       }
       VG_(close)(sr_Res(fd));
     }
+    VG_(free)(bbFile);
   }
 }
 
 static Bool cv_process_cmd_line_option(Char* arg) 
 { 
   Char* addr;
-  Char* dataToReplace;
   if (VG_INT_CLO(arg, "--alarm", alarm))
   { 
     return True;
@@ -168,29 +185,14 @@ static Bool cv_process_cmd_line_option(Char* arg)
   { 
     return True; 
   }
-  else if (VG_STR_CLO(arg, "--replace",  dataToReplace))
+  else if (VG_STR_CLO(arg, "--replace",  replaceFileName))
   { 
     replace = True;
-    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, PERM_R_W));
-    VG_(read)(fd, &socketsNum, 4);
-    socketsBoundary = socketsNum;
-    if (socketsNum > 0)
-    {
-      replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
-      Int i;
-      for (i = 0; i < socketsNum; i++)
-      {
-        VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
-        replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
-        VG_(read)(fd, replace_data[i].data, replace_data[i].length);
-      }
-    }
-    else
-    {
-      replace_data = NULL;
-    }
-    VG_(close)(fd);
     return True; 
+  }
+  else if (VG_STR_CLO(arg, "--temp-dir", tempDir))
+  {
+    return True;
   }
   else if (VG_STR_CLO(arg, "--host", addr))
   {
@@ -214,6 +216,38 @@ static Bool cv_process_cmd_line_option(Char* arg)
     return False;
   }
 } 
+
+static void cv_post_clo_init()
+{
+  if (alarm != 0)
+  {
+    VG_(alarm)(alarm);
+  }
+  if (replace)
+  {
+    Char* replaceFile = concatTempDir(replaceFileName);
+    Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_RDWR, PERM_R_W));
+    VG_(read)(fd, &socketsNum, 4);
+    socketsBoundary = socketsNum;
+    if (socketsNum > 0)
+    {
+      replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
+      Int i;
+      for (i = 0; i < socketsNum; i++)
+      {
+        VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
+        replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
+        VG_(read)(fd, replace_data[i].data, replace_data[i].length);
+      }
+    }
+    else
+    {
+      replace_data = NULL;
+    }
+    VG_(close)(fd);
+    VG_(free)(replaceFile);
+  }
+}
 
 static void cv_print_usage() 
 {   

@@ -47,6 +47,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <cstring>
 
 #define N 5
 
@@ -86,14 +87,14 @@ int agents;
 
 static int connectTo(string host, unsigned int port)
 {
-  struct sockaddr_in stSockAddr;
+  struct sockaddr_in st_socket_addr;
   int res, socket_fd;
  
-  memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
+  memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
  
-  stSockAddr.sin_family = AF_INET;
-  stSockAddr.sin_port = htons(port);
-  res = inet_pton(AF_INET, host.c_str(), &stSockAddr.sin_addr);
+  st_socket_addr.sin_family = AF_INET;
+  st_socket_addr.sin_port = htons(port);
+  res = inet_pton(AF_INET, host.c_str(), &st_socket_addr.sin_addr);
  
   if (res < 0)
   {
@@ -112,7 +113,7 @@ static int connectTo(string host, unsigned int port)
      perror("cannot create socket");
      exit(EXIT_FAILURE);
    }
-   if (connect(socket_fd, (const struct sockaddr*)&stSockAddr, sizeof(struct sockaddr_in)) < 0)
+   if (connect(socket_fd, (const struct sockaddr*)&st_socket_addr, sizeof(struct sockaddr_in)) < 0)
    {
      perror("connect failed");
      close(socket_fd);
@@ -151,7 +152,7 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     cur_argv    = config->getProgAndArg();
     for (vector <string>::iterator i = cur_argv.begin() + 1; i != cur_argv.end(); i ++)
     {
-      args_length += (*i).size();
+        args_length += (*i).size();
     }
     args_length += cur_argv.size() - 2;
     exploits    = 0;
@@ -160,35 +161,85 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
     is_distributed = opt_config->getDistributed();
     if (thread_num > 0)
     {
-      pthread_mutex_init(&add_inputs_mutex, NULL);
-      pthread_mutex_init(&add_exploits_mutex, NULL);
-      pthread_mutex_init(&add_bb_mutex, NULL);
-      pthread_mutex_init(&finish_mutex, NULL);
-      pthread_cond_init(&finish_cond, NULL);
+        pthread_mutex_init(&add_inputs_mutex, NULL);
+        pthread_mutex_init(&add_exploits_mutex, NULL);
+        pthread_mutex_init(&add_bb_mutex, NULL);
+        pthread_mutex_init(&finish_mutex, NULL);
+        pthread_cond_init(&finish_cond, NULL);
     }
 
     if (is_distributed)
     {
-      dist_fd = connectTo(opt_config->getDistHost(), opt_config->getDistPort());
-      LOG(Logger::NETWORK_LOG, "Connected to server.");
-      write(dist_fd, "m", 1);
-      read(dist_fd, &agents, sizeof(int));
+        dist_fd = connectTo(opt_config->getDistHost(), opt_config->getDistPort());
+        LOG(Logger::NETWORK_LOG, "Connected to server.");
+        write(dist_fd, "m", 1);
+        read(dist_fd, &agents, sizeof(int));
     }
     if (opt_config->getRemoteValgrind())
     {
-      remote_fd = connectTo(opt_config->getRemoteHost(), opt_config->getRemotePort());
-      int size;
-      read(remote_fd, &size, sizeof(int));
-      config->setSizeoflong(size);
+        logger->setNetworkLog();
+        struct sockaddr_in st_socket_addr;
+        int listen_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if(listen_fd == -1)
+        {
+            LOG(Logger::ERROR, "Cannot create socket: " << strerror(errno));
+            throw "socket";
+        }
+        int on = 1;
+        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
+        st_socket_addr.sin_family = AF_INET;  
+        st_socket_addr.sin_port = htons(config->getRemotePort());
+        st_socket_addr.sin_addr.s_addr = INADDR_ANY;
+
+        int bind_res = bind(listen_fd, (const struct sockaddr*)&st_socket_addr,
+                            sizeof(struct sockaddr_in));
+        if(bind_res == -1)
+        {
+            close(listen_fd);
+            LOG(Logger::ERROR, strerror(errno));
+            throw "bind";
+        }
+        int listen_res = listen(listen_fd, 10);
+        if(listen_res == -1)
+        {
+            close(listen_fd);
+            LOG(Logger::ERROR, strerror(errno));
+            throw "listen";
+        }
+        LOG_TIME(Logger::NETWORK_LOG, "Accepting connection from plugin-agent.");
+        time_t connection_st_time = time(NULL);
+        remote_fd = accept(listen_fd, NULL, NULL);
+        LOG_TIME(Logger::NETWORK_LOG, "Accepted.");
+        monitor->setNetworkOverhead(time(NULL) - connection_st_time);
+        close(listen_fd);
+        char buf[32];
+        read(remote_fd, buf, strlen("avalanche"));
+        buf[strlen("avalanche")] = '\0';
+        if (strcmp(buf, "avalanche"))
+        {
+            LOG(Logger::ERROR, "Invalid authentication message from plugin-agent");
+            throw "authentication";
+        }
+        int size_of_long;
+        read(remote_fd, &size_of_long, sizeof(int));
+        config->setSizeOfLong(size_of_long);
     }
 }
 
 void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 {
   ostringstream tg_invert_depth;
-  if (temp_dir != "")
+  if (temp_dir != "") 
   {
-    plugin_opts.push_back("--temp-dir=" + temp_dir);
+    if (config->getRemoteValgrind())
+    {
+      plugin_opts.push_back(string("--host-temp-dir=") + temp_dir);
+    }
+    else
+    {
+      plugin_opts.push_back(string("--temp-dir=") + temp_dir);
+    }
   }
   tg_invert_depth << "--invertdepth=" << config->getDepth();
 
@@ -274,10 +325,10 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 
 void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string fileNameModifier, bool addNoCoverage)
 {
-  string curtemp_dir = temp_dir;
+  string cur_temp_dir = temp_dir;
   if (config->getRemoteValgrind())
   {
-    plugin_opts.push_back(string("--temp-dir=") + curtemp_dir);
+    cur_temp_dir = string("");
   }
   if (config->usingSockets())
   {
@@ -289,7 +340,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     cv_port << "--port=" << config->getPort();
     plugin_opts.push_back(cv_port.str());
     
-    plugin_opts.push_back(string("--replace=") + curtemp_dir + string("replace_data") + fileNameModifier);
+    plugin_opts.push_back(string("--replace=") + cur_temp_dir + string("replace_data") + fileNameModifier);
     plugin_opts.push_back("--sockets=yes");
 
     LOG(Logger::DEBUG, "Setting alarm " << config->getAlarm() << ".");
@@ -298,7 +349,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
   }
   else if (config->usingDatagrams())
   { 
-    plugin_opts.push_back(string("--replace=") + curtemp_dir + string("replace_data") + fileNameModifier);
+    plugin_opts.push_back(string("--replace=") + cur_temp_dir + string("replace_data") + fileNameModifier);
     plugin_opts.push_back("--datagrams=yes");
 
     LOG(Logger::DEBUG, "Setting alarm " << config->getAlarm() << ".");
@@ -312,14 +363,17 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     plugin_opts.push_back(cv_alarm.str());
   }
 
-  string cv_exec_file = curtemp_dir + string("execution") + fileNameModifier + string(".log");
-  plugin_opts.push_back(string("--log-file=") + cv_exec_file);
+  if (!config->getRemoteValgrind())
+  {
+    string cv_exec_file = cur_temp_dir + string("execution") + fileNameModifier + string(".log");
+    plugin_opts.push_back(string("--log-file=") + cv_exec_file);
+  }
 
   if (addNoCoverage)
   {
     plugin_opts.push_back("--no-coverage=yes");
   }
-  plugin_opts.push_back(string("--filename=") + curtemp_dir + string("basic_blocks") + fileNameModifier + string(".log"));
+  plugin_opts.push_back(string("--filename=") + cur_temp_dir + string("basic_blocks") + fileNameModifier + string(".log"));
 }
 
 int ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, 
@@ -379,15 +433,19 @@ int ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace,
       return -1;
     }
 
-    LOG (Logger :: JOURNAL, "  \033[2mCommand:\033[0m " << config -> getValgrind () 
-      <<  "../lib/avalanche/valgrind --tool=covgrind --host=" << config -> getHost() 
-      << " --port=" << config -> getPort () << " --replace=" << ss.str () 
-      << " --sockets=yes " << progAndArg);
+    ostringstream command;
+    command << config->getValgrind()  << 
+            "../lib/avalanche/valgrind --tool=covgrind --host=" <<
+            config->getHost() << " --port=" << config->getPort() << 
+            " --replace=" << ss.str () << " --sockets=yes " << progAndArg;
+
+
+    LOG (Logger :: JOURNAL, "  \033[2mCommand:\033[0m " << command.str());
 
     LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss.str() << ".");
     if (ch != NULL)
     {
-      ch->setExploitArgv(progAndArg);
+      ch->setExploitArgv(command.str());
     }
   }
   else // using files only
@@ -472,22 +530,30 @@ int ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
       return -1;
     }
 
-    LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind() 
-      <<  "../lib/avalanche/valgrind --host=" << config->getHost() << " --port=" 
-      << config->getPort() << " --replace=" << ss.str() << " --sockets=yes " 
-      << progAndArg);
+    ostringstream command;
+    command << config->getValgrind()  << 
+            "../lib/avalanche/valgrind --tool=covgrind --host=" <<
+            config->getHost() << " --port=" << config->getPort() << 
+            " --replace=" << ss.str () << " --sockets=yes " << progAndArg;
+
+    LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << command.str()); 
 
     LOG(Logger::VERBOSE, "Dumping input for memcheck error to file " 
       << ss.str() << ".");
 
     if (ch != NULL)
     {
-      ch->setExploitArgv(progAndArg);
+      ch->setExploitArgv(command.str());
     }
   }
   else // files using only
   {
-    for (int i = 0; i < input->files.size(); i++)
+    int f_num = input->files.size();
+    if (config->getCheckArgv() != string(""))
+    {
+      f_num --;
+    }
+    for (int i = 0; i < f_num; i++)
     {
       ostringstream ss;
       ss << config->getResultDir() << config->getPrefix() << 
@@ -543,10 +609,10 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   {
     struct stat fileInfo;
     fstat(fd, &fileInfo);
-    int size = fileInfo.st_size / config->getSizeoflong();
+    int size = fileInfo.st_size / config->getSizeOfLong();
     if (size > 0)
     {
-      if (config->getSizeoflong() == 4)
+      if (config->getSizeOfLong() == 4)
       {
         unsigned int basicBlockAddrs[size];
         read(fd, basicBlockAddrs, fileInfo.st_size);
@@ -568,7 +634,7 @@ int ExecutionManager::calculateScore(string fileNameModifier)
           }
         }
       }
-      else if (config->getSizeoflong() == 8)
+      else if (config->getSizeOfLong() == 8)
       {
         unsigned long long basicBlockAddrs[size];
         read(fd, basicBlockAddrs, fileInfo.st_size);
@@ -595,14 +661,15 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   }
   else
   {
-    LOG(Logger::ERROR, "Error opening file " << temp_dir << "basic_blocks" << fileNameModifier << ".log");
+    LOG(Logger::ERROR, "Cannot open file  " << temp_dir << "basic_blocks" <<
+                       fileNameModifier << ".log :" << strerror(errno));
   }
   return res;
 }
 
 // Run Valgrind or Memcheck on 'input'
 
-int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, string fileNameModifier)
+int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first_run, string fileNameModifier)
 {
   if (config->usingSockets() || config->usingDatagrams())
   {
@@ -656,6 +723,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   Executor* plugin_exe;
   if (!config->getRemoteValgrind())
   {
+
     plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(),
                                      config->getValgrind(), new_prog_and_args, 
                                      plugin_opts, addNoCoverage ? CV : kind);
@@ -681,13 +749,13 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
   int exitCode;
   exitCode = plugin_exe->run(thread_index);
+  delete plugin_exe;
   if (exitCode == 1)
   {
     return -1;
   }
 
   monitor->addTime(time(NULL), thread_index);
-  delete plugin_exe;
   FileBuffer* mc_output;
   bool infoAvailable = false;
   bool same_exploit = false;
@@ -1158,7 +1226,6 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
             next->prediction_size = st_depth + cur_depth;
             next->parent = first_input;
             int score = checkAndScore(next, !trace_kind, false,  
-                                      config->getRemoteValgrind(), 
                                       input_modifier);
             if (score == -1)
             {
@@ -1556,7 +1623,7 @@ void ExecutionManager::run()
       signal(SIGALRM, alarmHandler);
     }
     initial->startdepth = config->getStartdepth();
-    int score = checkAndScore(initial, false, true, config->getRemoteValgrind(), "");
+    int score = checkAndScore(initial, false, true, "");
     if (score < 0)
     {
       return;
@@ -1615,7 +1682,7 @@ void ExecutionManager::run()
   
       getTracegrindOptions(plugin_opts);
 
-      if (config->getRemoteValgrind())
+      if (!config->getRemoteValgrind())
       {
         plugin_opts.push_back(string("--log-file=") + 
                               temp_dir + string("execution.log"));

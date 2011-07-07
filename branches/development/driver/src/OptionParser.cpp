@@ -73,10 +73,6 @@ OptionConfig *OptionParser::run() const
             string host = args[i].substr(strlen("--dist-host="));
             config->setDistHost(host);
         }
-        else if (args[i].find("--remote-host=") != string::npos) {
-            string host = args[i].substr(strlen("--remote-host="));
-            config->setRemoteHost(host);
-        }
         else if (args[i].find("--report-log=") != string::npos) {
             string log = args[i].substr(strlen("--report-log="));
             config->setReportLog(log);
@@ -152,10 +148,26 @@ OptionConfig *OptionParser::run() const
             }
         }
         else if (args[i].find("--result-dir=") != string::npos) {
-            config->setResultDir(args[i].substr(strlen("--result-dir=")));
+            string result_dir = args[i];
+            if (result_dir.size() > 0)
+            {
+                if (result_dir[result_dir.size() - 1] != '/')
+                {
+                        result_dir.push_back('/');
+                }
+            }
+            config->setResultDir(result_dir.substr(strlen("--result-dir=")));
         }
         else if (args[i].find("--agent-dir=") != string::npos) {
-            config->setAgentDir(args[i].substr(strlen("--agent-dir=")));
+            string agent_dir = args[i];
+            if (agent_dir.size() > 0)
+            {
+                if (agent_dir[agent_dir.size() - 1] != '/')
+                {
+                        agent_dir.push_back('/');
+                }
+            }
+            config->setAgentDir(agent_dir.substr(strlen("--agent-dir=")));
         }
         else if (args[i] == "--debug") {
             config->setDebug();

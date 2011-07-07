@@ -29,10 +29,8 @@
 #include "Monitor.h"
 
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <pthread.h>
 
 using namespace std;
 
@@ -111,5 +109,9 @@ string STP_Executor::run(const char *file_name, int thread_index)
     }
 
     return file_out->getName();
+}
+
+STP_Executor::~STP_Executor()
+{
 }
 

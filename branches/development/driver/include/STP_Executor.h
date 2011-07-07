@@ -32,6 +32,7 @@ class STP_Executor : public LocalExecutor
 {
 public:
     STP_Executor(bool debug_full_enable, const std::string &install_dir);
+    ~STP_Executor();
     
     std::string run(const char *file_name, int thread_index = 0);
 

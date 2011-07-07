@@ -224,7 +224,8 @@ void reportResults()
     time_t end_time = time(NULL);
     LOG (Logger::REPORT, "\nTime statistics: " << 
         end_time - monitor->getGlobalStartTime() << " sec, " << 
-        monitor->getStats(end_time - monitor->getGlobalStartTime()));
+        monitor->getStats(end_time - monitor->getGlobalStartTime() - 
+                                     monitor->getNetworkOverhead()));
 
 }
 

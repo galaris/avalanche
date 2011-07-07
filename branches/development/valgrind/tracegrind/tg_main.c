@@ -108,6 +108,7 @@ Char* diVarName;
 
 Char* checkArgvList;
 Char* tempDir;
+Char* hostTempDir;
 
 Bool newSB;
 IRSB* printSB;
@@ -550,10 +551,17 @@ void taintMemoryFromArgv(HWord key, HWord offset)
   Char ss[256];
   Char format[256];
   Char argvFileBuf[256];
-  Char* argvFile = concatTempDir("argv.log");
-  Char* hyphenPos = VG_(strchr)(argvFile, '-');
+  Char *hyphenPos;
 #define TEMP_SEGMENT_SIZE 6
   Char tempSegment[TEMP_SEGMENT_SIZE + 1];
+  if (hostTempDir != NULL)
+  {
+    hyphenPos = VG_(strchr)(hostTempDir, '-');
+  }
+  else
+  {
+    hyphenPos = VG_(strchr)(tempDir, '-');
+  }
   VG_(strncpy)(tempSegment, hyphenPos + 1, TEMP_SEGMENT_SIZE);
   tempSegment[TEMP_SEGMENT_SIZE] = '\0';
   VG_(sprintf)(argvFileBuf, "file__slash_tmp_slash_avalanche_hyphen_%s_slash_argv_dot_log", tempSegment);
@@ -4013,6 +4021,10 @@ static Bool tg_process_cmd_line_option(Char* arg)
     checkArgvList = VG_(strdup)("checkArgvList", argValue);
     return True;
   }
+  else if (VG_STR_CLO(arg, "--host-temp-dir", hostTempDir))
+  {
+    return True;
+  }
   else if (VG_BOOL_CLO(arg, "--check-danger", checkDanger))
   {
     return True;
@@ -4128,7 +4140,15 @@ static void tg_post_clo_init(void)
     Char* argvFile = concatTempDir("argv.log");
     Int fdargv = sr_Res(VG_(open)(argvFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
     Char fileNameBuf[128], traceBuf[256];
-    Char* hyphenPos = VG_(strchr)(argvFile, '-');
+    Char* hyphenPos;
+    if (hostTempDir != NULL)
+    {
+      hyphenPos = VG_(strchr)(hostTempDir, '-');
+    }
+    else
+    {
+      hyphenPos = VG_(strchr)(tempDir, '-');
+    }
 #define TEMP_SEGMENT_SIZE 6
     Char tempSegment[TEMP_SEGMENT_SIZE + 1];
     VG_(strncpy)(tempSegment, hyphenPos + 1, TEMP_SEGMENT_SIZE);

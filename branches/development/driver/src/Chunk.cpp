@@ -26,12 +26,8 @@
 #include "FileBuffer.h"
 #include "Logger.h"
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-
-#include <vector>
 #include <cerrno>
+#include <cstring>
 
 using namespace std;
 
@@ -85,6 +81,7 @@ void Chunk::setExploitArgv(string _exploitArgv)
 
 void Chunk::print(string prefix, int chunkNum, int fd)
 {
+  bool printHyphen = false;
   ostringstream out;
   out << "  Chunk " << chunkNum << ": ";
   
@@ -102,6 +99,7 @@ void Chunk::print(string prefix, int chunkNum, int fd)
 
     if (inputNum > 0)
     {
+      printHyphen = true;
       for (int i = 0; i < inputNum - 1; i++)
       {
         out << prefix << errorType << "_" << exploitNum << "_" << i << " + ";
@@ -110,16 +108,21 @@ void Chunk::print(string prefix, int chunkNum, int fd)
     }
     else if (inputNum == -1)
     {
+      printHyphen = true;
       out << prefix << errorType << "_" << exploitNum;
     }
   }
+  if (printHyphen)
+  {
+    out << " - ";
+  }
   if (trace != NULL)
   {
-    out << " - " << prefix << "stacktrace_" << chunkNum << ".log";
+    out << prefix << "stacktrace_" << chunkNum << ".log";
   }
   else
   {
-    out << " - no stack trace available.";
+    out << "no stack trace available.";
   }
   if (exploitArgv != string(""))
   {
