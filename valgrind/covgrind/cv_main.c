@@ -1,10 +1,10 @@
 /*--------------------------------------------------------------------------------*/
 /*-------------------------------- AVALANCHE -------------------------------------*/
-/*-------- Covgring. Dumps IR basic blocks addresses to file.   cv_main.c --------*/
+/*-------- Covgrind. Dumps IR basic blocks addresses to file.   cv_main.c --------*/
 /*--------------------------------------------------------------------------------*/
 
 /*
-   This file is part of Tracegrind, the Valgrind tool,
+   This file is part of Covgrind, the Valgrind tool,
    which dumps addresses of all executed basic blocks
    in Valgrind IR
 

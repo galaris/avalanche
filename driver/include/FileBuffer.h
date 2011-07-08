@@ -24,8 +24,10 @@
 #ifndef __FILE_BUFFER__H__
 #define __FILE_BUFFER__H__
 
-#include <stddef.h>
+#include <cstddef>
 #include <string>
+#include <sys/types.h>
+
 
 class FileBuffer
 {
@@ -83,5 +85,8 @@ protected:
     FileBuffer() {}
 
 };
+
+#define PERM_R_W   S_IRUSR | S_IROTH | S_IRGRP | \
+                   S_IWUSR | S_IWOTH | S_IWGRP
 
 #endif

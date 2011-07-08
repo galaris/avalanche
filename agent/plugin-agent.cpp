@@ -28,10 +28,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <iostream>
+#include <sstream>
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <unistd.h>
 #include <cerrno>
@@ -141,25 +143,34 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
     {
         return -2;
     }
+
+    int extra_args = 5;
+
     readFromSocket(avalanche_fd, &args_num, sizeof(int));
-    args = (char **) calloc (args_num + 5, sizeof(char *));
+    args = (char **) calloc (args_num + extra_args + 1, sizeof(char *));
     string valgrind_path = prog_dir + "../lib/avalanche/valgrind";
     args[0] = strdup(valgrind_path.c_str());
 
+    ostringstream ss;
+    ss << "--remote-fd=" << avalanche_fd;
+
     switch(kind)
     {
-        case TG: args[1] = strdup("--tool=tracegrind"); 
+        case TG: args[1] = strdup("--tool=tracegrind");
+                 args[4] = strdup(ss.str().c_str());
             break;
         case CV: args[1] = strdup("--tool=covgrind"); 
+                 extra_args --;
             break;
         case MC: args[1] = strdup("--tool=memcheck"); 
+                 extra_args --;
             break;
         default: break;
     }
     args[2] = strdup((string("--temp-dir=") + temp_dir).c_str());
     args[3] = strdup((string("--log-file=") + temp_dir + 
                       string("execution.log")).c_str());
-    for (int i = 4; i < args_num + 4; i ++)
+    for (int i = extra_args; i < args_num + extra_args; i ++)
     {
         readFromSocket(avalanche_fd, &length, sizeof(int));
         args[i] = (char *) malloc(length + 1);
@@ -193,13 +204,13 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
     {
         readToFile(temp_dir + string("arg_lengths"));
     }
-    args[args_num + 4] = NULL;
+    args[args_num + extra_args] = NULL;
     pid = fork();
     if (pid == 0)
     {
 #ifdef DEBUG
         cout << endl << "executing command: " << endl;
-        for (int i = 0; i < args_num + 4; i ++)
+        for (int i = 0; i < args_num + extra_args; i ++)
         {
             cout << args[i] << " ";
         }
@@ -224,7 +235,7 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
     {
         return 1;
     }
-    for (int i = 0; i < args_num + 4; i ++)
+    for (int i = 0; i < args_num + extra_args; i ++)
     {
         free(args[i]);
     }
@@ -295,11 +306,11 @@ static int passResult(int ret_code)
     switch(kind)
     {
         case TG: 
-            writeFromFile(temp_dir + string("trace.log"));
+/*            writeFromFile(temp_dir + string("trace.log"));
             if (check_danger)
             {
                 writeFromFile(temp_dir + string("dangertrace.log"));
-            }
+            }*/
             if (dump_prediction)
             {
                 writeFromFile(temp_dir + string("actual.log"));

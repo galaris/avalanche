@@ -77,8 +77,7 @@ void readFileFromSocket(int fd, string file_name)
     size_t received = 0, r;
     char buf[CHUNK_SIZE];
     readFromSocket(fd, &length, sizeof(int));
-    file_fd = open(file_name.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 
-                   S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+    file_fd = open(file_name.c_str(), O_CREAT | O_TRUNC | O_WRONLY, PERM_R_W);
     if (file_fd == -1)
     {
         LOG(Logger::ERROR, "Cannot open file " << file_name <<
@@ -159,6 +158,49 @@ void writeFileToSocket(int fd, string file_name)
 }
 
 #undef CHUNK_SIZE
+
+static
+void readTraceOnTheRun(int fd, string temp_dir)
+{
+    int file_fd[2];
+    int length;
+    readFromSocket(fd, &length, sizeof(int));
+    char *buf = (char*) malloc(length);
+    string file_name[2];
+    int trace_kind = 0;
+    file_name[0] = temp_dir + string("trace.log");
+    file_name[1] = temp_dir + string("dangertrace.log");
+    for (int i = 0; i < 2; i ++)
+    {
+        file_fd[i] = open(file_name[i].c_str(), 
+                          O_WRONLY | O_TRUNC | O_CREAT, PERM_R_W);
+        if (file_fd[i] == -1)
+        {
+            LOG(Logger::ERROR, "Cannot open file " << file_name[i] <<
+                               ": " << strerror(errno));
+            throw "local";
+        }
+    }
+    do
+    {
+        readFromSocket(fd, &trace_kind, sizeof(int));
+        if ((trace_kind < 1) || trace_kind > 2)
+        {
+            break;
+        }
+        readFromSocket(fd, &length, sizeof(int));
+        readFromSocket(fd, buf, length);
+        if (write(file_fd[trace_kind - 1], buf, length) < 1)
+        {
+            LOG(Logger::ERROR, "Cannot write to file " << 
+                               file_name[trace_kind - 1] << 
+                               ": " << strerror(errno));
+            throw "local";
+        }
+    }
+    while (true);
+    free(buf);
+}
 
 bool RemotePluginExecutor::checkFlag(const char *flg_name)
 {
@@ -242,21 +284,24 @@ int RemotePluginExecutor::run(int thread_index)
         {
             writeFileToSocket(remote_fd, temp_dir + string("arg_lengths"));
         }
-        readFromSocket(remote_fd, &res, sizeof(int));
-        if (res == 1)
-        {
-            LOG(Logger::ERROR, "Plugin-agent ended abnormally");
-            return 1;
-        }
+      //  readFromSocket(remote_fd, &res, sizeof(int));
+
         switch (kind)
         {
             case TG: 
-               readFileFromSocket(remote_fd, temp_dir + string("trace.log"));
+               readTraceOnTheRun(remote_fd, temp_dir);
+               readFromSocket(remote_fd, &res, sizeof(int));
+               if (res == 1)
+               {
+                   LOG(Logger::ERROR, "Plugin-agent ended abnormally");
+                   return 1;
+               }
+/*               readFileFromSocket(remote_fd, temp_dir + string("trace.log"));
                if (checkFlag("--check-danger=yes"))
                {
                    readFileFromSocket(remote_fd, 
                                       temp_dir + string("dangertrace.log"));
-               }
+               }*/
                if (checkFlag("--dump-prediction=yes"))
                {
                    readFileFromSocket(remote_fd, 
@@ -281,6 +326,7 @@ int RemotePluginExecutor::run(int thread_index)
 
             case CV:     
             case MC:
+               readFromSocket(remote_fd, &res, sizeof(int));
                if (!checkFlag("--no-coverage=yes"))
                {
                    readFileFromSocket(remote_fd, 
