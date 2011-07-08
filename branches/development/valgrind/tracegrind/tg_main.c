@@ -133,6 +133,9 @@ extern ULong cursize;
 VgHashTable tempSizeTable;
 sizeNode* curNode;
 
+Int socketfd;
+Bool dumpChunkSize;
+
 ULong start = 0;
 
 static Bool isInputFile = False;
@@ -3413,6 +3416,11 @@ void instrumentExitRdTmp(IRStmt* clone, IRExpr* guard, UInt tmp, ULong dst)
     {
       dump(fdtrace);
       dump(fddanger);
+      if (dumpChunkSize)
+      {
+        Int size = 0;
+        VG_(write)(fdtrace, &size, sizeof(Int));
+      }
       if (dumpPrediction)
       {
         Char* actualFile = concatTempDir("actual.log");
@@ -3861,6 +3869,11 @@ static void tg_fini(Int exitcode)
 {
   dump(fdtrace);
   dump(fddanger);
+  if (dumpChunkSize)
+  {
+    Int size = 0;
+    VG_(write)(fdtrace, &size, sizeof(Int));
+  }
   if (fdfuncFilter >= 0)
   {
     dump(fdfuncFilter);
@@ -3921,6 +3934,11 @@ static Bool tg_process_cmd_line_option(Char* arg)
     depth -= 1;
     return True;
   }
+  else if (VG_INT_CLO(arg, "--remote-fd", socketfd))
+  {
+    dumpChunkSize = True;
+    return True;
+  }
   else if (VG_INT_CLO(arg, "--invertdepth", invertdepth))
   {
     if (invertdepth == 0)
@@ -3950,28 +3968,6 @@ static Bool tg_process_cmd_line_option(Char* arg)
   }
   else if (VG_STR_CLO(arg, "--temp-dir", tempDir))
   {
-    Int length = VG_(strlen)(tempDir);
-    Int lengthTrace = length + VG_(strlen)("trace.log");
-    Int lengthDanger = length + VG_(strlen)("dangertrace.log");
-    Char *traceFile = VG_(malloc)("traceFile", lengthTrace + 1);
-    VG_(strcpy)(traceFile, tempDir);
-    VG_(strcpy)(traceFile + length, "trace.log");
-    traceFile[lengthTrace] = '\0';
-    Char *dangerTraceFile = VG_(malloc)("traceDanger", lengthDanger + 1);
-    VG_(strcpy)(dangerTraceFile, tempDir);
-    VG_(strcpy)(dangerTraceFile + length, "dangertrace.log");
-    dangerTraceFile[lengthDanger] = '\0';
-    fdtrace = sr_Res(VG_(open)(traceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
-    fddanger = sr_Res(VG_(open)(dangerTraceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
-    VG_(free)(traceFile);
-    VG_(free)(dangerTraceFile);
-#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
-    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#elif defined(VGP_amd64_linux)
-    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#endif
     return True;
   }
   else if (VG_STR_CLO(arg, "--mask", argValue))
@@ -4080,18 +4076,34 @@ static void tg_post_clo_init(void)
 {
   Char* predictionFile = concatTempDir("prediction.log");
   Char* replaceFile = concatTempDir("replace_data");
-  if (tempDir == NULL)
+  if (socketfd != 0)
+  {
+    fdtrace = socketfd;
+    fddanger = -socketfd;
+    Int size = CHUNK_SIZE;
+    VG_(write)(fdtrace, &size, sizeof(Int));
+  }
+  else if (tempDir == NULL)
   {
     fdtrace = sr_Res(VG_(open)("trace.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
     fddanger = sr_Res(VG_(open)("dangertrace.log", VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
-#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
-    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#elif defined(VGP_amd64_linux)
-    my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-    my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
-#endif
   }
+  else
+  {
+    Char *traceFile = concatTempDir("trace.log");
+    Char *dangerFile = concatTempDir("dangertrace.log");
+    fdtrace = sr_Res(VG_(open)(traceFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+    fddanger = sr_Res(VG_(open)(dangerFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, PERM_R_W));
+    VG_(free)(traceFile);
+    VG_(free)(dangerFile);
+  }
+#if defined(VGP_arm_linux) || defined(VGP_x86_linux)
+  my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+  my_write(fddanger, "memory_0 : ARRAY BITVECTOR(32) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+#elif defined(VGP_amd64_linux)
+  my_write(fdtrace, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+  my_write(fddanger, "memory_0 : ARRAY BITVECTOR(64) OF BITVECTOR(8);\nregisters_0 : ARRAY BITVECTOR(8) OF BITVECTOR(8);\n", 98);
+#endif
   /* We need to parse --check-prediction and --replace here since
        we need a directory prefix for opening files */
   if (checkPrediction)

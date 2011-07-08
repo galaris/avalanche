@@ -32,9 +32,6 @@
 #include "buffer.h"
 #include "pub_tool_mallocfree.h"
 
-#define INIT_SIZE 1024
-#define SIZE 16192
-
 struct B
 {
   Int fd;
@@ -42,9 +39,10 @@ struct B
   UInt occ;
 };
 
-struct B bufs[5];
+static struct B bufs[5];
+static Int occ = 0;
 
-Int occ = 0;
+extern dumpChunkSize;
 
 void dump(Int fd)
 {
@@ -53,8 +51,18 @@ void dump(Int fd)
   {
     if (bufs[i].fd == fd)
     {
-      VG_(write)(fd, bufs[i].buffer, bufs[i].occ);
-      VG_(close)(fd);
+      Int destfd = ((fd > 0) ? fd : (-fd));
+      if (dumpChunkSize)
+      {
+        Int traceKind = ((fd > 0) ? 1 : 2);
+        VG_(write)(destfd, &traceKind, sizeof(Int));
+        VG_(write)(destfd, &(bufs[i].occ), sizeof(Int));
+      }
+      VG_(write)(destfd, bufs[i].buffer, bufs[i].occ);
+      if (!dumpChunkSize)
+      {
+        VG_(close)(fd);
+      }
       return;
     }
   }
@@ -74,14 +82,21 @@ void my_write(Int fd, Char* buf, Int size)
       goto out;
     }
   }
-  bufs[i].buffer = VG_(malloc)("buffer", SIZE);
+  bufs[i].buffer = VG_(malloc)("buffer", CHUNK_SIZE);
   bufs[i].fd = fd;
   bufs[i].occ = 0;
   occ++;
 out:
-  if (bufs[i].occ + size >= SIZE)
+  if (bufs[i].occ + size >= CHUNK_SIZE)
   {
-    VG_(write)(bufs[i].fd, bufs[i].buffer, bufs[i].occ);
+    Int dest_fd = ((fd > 0) ? fd : (-fd));
+    if (dumpChunkSize)
+    {
+      Int traceKind = ((fd > 0) ? 1 : 2);
+      VG_(write)(dest_fd, &traceKind, sizeof(Int));
+      VG_(write)(dest_fd, &(bufs[i].occ), sizeof(Int));
+    }
+    VG_(write)(dest_fd, bufs[i].buffer, bufs[i].occ);
     bufs[i].occ = 0;
   }
   Int j = 0;
@@ -91,4 +106,3 @@ out:
   }
   bufs[i].occ += size;
 }
-
