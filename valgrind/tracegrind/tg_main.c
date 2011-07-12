@@ -3656,14 +3656,20 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
        arg0 = data->Iex.Mux0X.cond;
        arg1 = data->Iex.Mux0X.expr0;
        arg2 = data->Iex.Mux0X.exprX;
-       value0 = adjustSize(sbOut, tyenv, arg0);
-       value1 = adjustSize(sbOut, tyenv, arg1);
-       value2 = adjustSize(sbOut, tyenv, arg2);
-       di = unsafeIRDirty_0_N(0, "instrumentWrTmpMux0X",
-                              VG_(fnptr_to_fnentry)(&instrumentWrTmpMux0X),
-                              mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), 
-                                            value0, value1, value2));
-       addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+       if ((typeOfIRExpr(tyenv, arg0) - Ity_INVALID <= 5) &&
+           (typeOfIRExpr(tyenv, arg1) - Ity_INVALID <= 5) &&
+           (typeOfIRExpr(tyenv, arg2) - Ity_INVALID <= 5))
+       {
+
+         value0 = adjustSize(sbOut, tyenv, arg0);
+         value1 = adjustSize(sbOut, tyenv, arg1);
+         value2 = adjustSize(sbOut, tyenv, arg2);
+         di = unsafeIRDirty_0_N(0, "instrumentWrTmpMux0X",
+                                VG_(fnptr_to_fnentry)(&instrumentWrTmpMux0X),
+                                mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), 
+                                              value0, value1, value2));
+         addStmtToIRSB(sbOut, IRStmt_Dirty(di));
+       }
        break;
 
     case Iex_CCall:

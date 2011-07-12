@@ -63,7 +63,7 @@ bool dump_calls;
 bool network;
 bool check_argv;
 string temp_dir;
-bool killed;
+bool killed = false;
 
 static bool parseArg(char *arg)
 {
@@ -278,10 +278,10 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
         cout << buf << endl;
         return 1;
     }
-    if (killed = true)
+    if (killed == true)
     {
-        return -1;
         killed = false;
+        return -1;
     }
     return ((WIFEXITED(status)) ? 0 : -1);
 }
