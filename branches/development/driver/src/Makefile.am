@@ -5,6 +5,9 @@ INCLUDES = -I../include
 CXXFLAGS += -pthread
 avalanche_CFLAGS = -Wno-deprecated
 
+CXXLD = $(CC)
+LIBS = -static-libgcc -Wl,-Bstatic,-lstdc++,-Bdynamic
+
 avalanche_SOURCES = \
        Chunk.cpp \
        Entry.cpp \
