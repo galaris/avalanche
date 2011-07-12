@@ -72,8 +72,8 @@ static Int socketsNum = 0;
 static Int socketsBoundary;
 static replaceData* replace_data;
 static Char* bbFileName = NULL;
-
-
+static Char* tempDir;
+static Char* replaceFileName;
 
 /* Set to 1 to do a little more sanity checking */
 #define VG_DEBUG_MEMORY 0
@@ -4823,7 +4823,6 @@ Int           MC_(clo_mc_level)               = 2;
 static Bool mc_process_cmd_line_options(Char* arg)
 {
   Char* addr;
-  Char* dataToReplace;
 
    Char* tmp_str;
 
@@ -4947,28 +4946,13 @@ static Bool mc_process_cmd_line_options(Char* arg)
   {
     return True;
   }
-  else if (VG_STR_CLO(arg, "--replace",  dataToReplace))
+  else if (VG_STR_CLO(arg, "--temp-dir", tempDir))
+  {
+    return True;
+  }
+  else if (VG_STR_CLO(arg, "--replace",  replaceFileName))
   { 
     replace = True;
-    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-    VG_(read)(fd, &socketsNum, 4);
-    socketsBoundary = socketsNum;
-    if (socketsNum > 0)
-    {
-      replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
-      Int i;
-      for (i = 0; i < socketsNum; i++)
-      {
-        VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
-        replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
-        VG_(read)(fd, replace_data[i].data, replace_data[i].length);
-      }
-    }
-    else
-    {
-      replace_data = NULL;
-    }
-    VG_(close)(fd);
     return True; 
   }
   else if (VG_STR_CLO(arg, "--host", addr))
@@ -5730,6 +5714,26 @@ static void ocache_sarp_Clear_Origins ( Addr a, UWord len ) {
 }
 
 
+static
+Char* concatTempDir(Char* fileName)
+{
+  Char* result;
+  if (tempDir == NULL)
+  {
+    result = VG_(malloc)(fileName, VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, fileName);
+  }
+  else
+  {
+    Int length = VG_(strlen)(tempDir);
+    result = VG_(malloc)(fileName, length + VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, tempDir);
+    VG_(strcpy)(result + length, fileName);
+    result[length + VG_(strlen)(fileName)] = '\0';
+  }
+  return result;
+}
+
 /*------------------------------------------------------------*/
 /*--- Setup and finalisation                               ---*/
 /*------------------------------------------------------------*/
@@ -5786,6 +5790,31 @@ static void mc_post_clo_init ( void )
       tl_assert(ocacheL1 == NULL);
       tl_assert(ocacheL2 == NULL);
    }
+  
+  if (replace)
+  {
+    Char *replaceFile = concatTempDir(replaceFileName);
+    Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+    VG_(read)(fd, &socketsNum, 4);
+    socketsBoundary = socketsNum;
+    if (socketsNum > 0)
+    {
+      replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
+      Int i;
+      for (i = 0; i < socketsNum; i++)
+      {
+        VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
+        replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
+        VG_(read)(fd, replace_data[i].data, replace_data[i].length);
+      }
+    }
+    else
+    {
+      replace_data = NULL;
+    }
+    VG_(close)(fd);
+    VG_(free)(replaceFile);
+  }
 
   if (alarm != 0)
   {
@@ -5811,14 +5840,19 @@ static void mc_fini ( Int exitcode )
     VG_(HT_ResetIter)(basicBlocksTable);
     bbNode* n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
     SysRes fd;
+    Char *bbFile;
     if (bbFileName != NULL)
     {
-      fd = VG_(open)(bbFileName, VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      bbFile = concatTempDir(bbFileName);
     }
     else
     {
-      fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      bbFile = concatTempDir("basic_blocks.log");
     }
+    fd = VG_(open)(bbFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, 
+                    VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP |
+                    VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP);
+    VG_(free)(bbFile);
     if (!sr_isError(fd))
     {
       while (n != NULL)
@@ -5952,7 +5986,7 @@ static void mc_fini ( Int exitcode )
    }
 }
 
-void pre_call(ThreadId tid, UInt syscallno)
+static void pre_call(ThreadId tid, UInt syscallno)
 {
   if (syscallno == __NR_read)
   {
@@ -5960,7 +5994,7 @@ void pre_call(ThreadId tid, UInt syscallno)
   }
 }
 
-void post_call(ThreadId tid, UInt syscallno, SysRes res)
+static void post_call(ThreadId tid, UInt syscallno, SysRes res)
 {
   if (syscallno == __NR_read)
   {

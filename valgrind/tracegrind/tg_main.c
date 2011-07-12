@@ -537,7 +537,7 @@ void instrumentIMark(UInt iaddrLowerBytes/*, UInt iaddrUpperBytes*/, UInt basicB
   }
 #endif
 #ifdef TAINTED_TRACE_PRINTOUT
-  VG_(printf)("------ IMark(0x%lx) ------\n", addr);
+  //VG_(printf)("------ IMark(0x%lx) ------\n", addr);
 #endif
 }
 

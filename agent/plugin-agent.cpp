@@ -63,6 +63,7 @@ bool dump_calls;
 bool network;
 bool check_argv;
 string temp_dir;
+bool killed;
 
 static bool parseArg(char *arg)
 {
@@ -94,6 +95,11 @@ static bool parseArg(char *arg)
     {
         check_argv = true;
     }
+    else if (strstr(arg, "--alarm="))
+    {
+        int alarm_value = strtol(arg + strlen("--alarm="), NULL, 10);
+        alarm(alarm_value);
+    }
     else if (strstr(arg, "argv.log"))
     {
         char *dir_pos = strchr(arg, '=');
@@ -105,6 +111,15 @@ static bool parseArg(char *arg)
     }
     return true;
 }
+
+void sigalarm_handler(int signo)
+{
+    if ((kind == CV) || (kind == MC))
+    {
+        kill(pid, SIGINT);
+        killed = true;
+    }
+}    
 
 static void readToFile(string file_name)
 {
@@ -263,6 +278,11 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
         cout << buf << endl;
         return 1;
     }
+    if (killed = true)
+    {
+        return -1;
+        killed = false;
+    }
     return ((WIFEXITED(status)) ? 0 : -1);
 }
 
@@ -418,7 +438,8 @@ int main(int argc, char** argv)
         perror("error connect failed");
         close(avalanche_fd);
         exit(EXIT_FAILURE);
-    }    
+    }
+    signal(SIGALRM, sigalarm_handler);
 
     try {
         writeToSocket(avalanche_fd, "avalanche", strlen("avalanche"));
