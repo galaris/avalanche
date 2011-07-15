@@ -115,7 +115,7 @@ FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file)
     {
         res = new FileBuffer(*this);
     }
-    catch (const char)
+    catch (const char*)
     {
         return NULL;
     }

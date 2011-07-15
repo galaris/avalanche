@@ -56,6 +56,7 @@ Monitor* monitor;
 ExecutionManager* em;
 OptionParser *op;
 
+extern Thread remote_thread;
 extern PoolThread *threads;
 extern Input* initial;
 extern vector<Chunk*> report;
@@ -249,6 +250,11 @@ void sig_hndlr(int signo)
         {
             threads[i].waitForThread();
         }
+    }
+    if ((thread_num > 0) && opt_config->getRemoteValgrind())
+    {
+        pthread_cancel(remote_thread.getTID());
+        remote_thread.waitForThread();
     }
     reportResults();
     cleanUp();

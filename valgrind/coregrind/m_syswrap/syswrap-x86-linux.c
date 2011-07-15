@@ -65,9 +65,8 @@
 
 #include <avalanche.h>
 
-Bool accept = False;
-Bool connect = False;
-Bool socket = False;
+Bool addTaintedSocket = False;
+Bool isMap = False;
 
 extern VgHashTable fds;
 extern Int cursocket;
@@ -1367,6 +1366,7 @@ PRE(old_mmap)
    PRINT("old_mmap ( %#lx, %llu, %ld, %ld, %ld, %ld )",
          a1, (ULong)a2, a3, a4, a5, a6 );
 
+   isMap = True;
    r = ML_(generic_PRE_sys_mmap)( tid, a1, a2, a3, a4, a5, (Off64T)a6 );
    SET_STATUS_from_SysRes(r);
 }
@@ -1389,6 +1389,7 @@ PRE(sys_mmap2)
                  unsigned long, prot,  unsigned long, flags,
                  unsigned long, fd,    unsigned long, offset);
 
+   isMap = True;
    r = ML_(generic_PRE_sys_mmap)( tid, ARG1, ARG2, ARG3, ARG4, ARG5, 
                                        4096 * (Off64T)ARG6 );
    SET_STATUS_from_SysRes(r);
@@ -1466,10 +1467,6 @@ PRE(sys_socketcall)
    PRINT("sys_socketcall ( %ld, %#lx )",ARG1,ARG2);
    PRE_REG_READ2(long, "socketcall", int, call, unsigned long *, args);
 
-   accept = False;
-   connect = False;
-   socket = False;
-
    switch (ARG1 /* request */) {
 
    case VKI_SYS_SOCKETPAIR:
@@ -1483,7 +1480,7 @@ PRE(sys_socketcall)
       //SOCK_DGRAM = 2
       if ((ARG2_1 & 0xff) == 2)
       {
-        socket = True;
+        addTaintedSocket = True;
       }
       PRE_MEM_READ( "socketcall.socket(args)", ARG2, 3*sizeof(Addr) );
       break;
@@ -1501,7 +1498,7 @@ PRE(sys_socketcall)
       break;
 
    case VKI_SYS_ACCEPT: {
-      accept = True;
+      addTaintedSocket = True;
       /* int accept(int s, struct sockaddr *addr, int *addrlen); */
       PRE_MEM_READ( "socketcall.accept(args)", ARG2, 3*sizeof(Addr) );
       ML_(generic_PRE_sys_accept)( tid, ARG2_0, ARG2_1, ARG2_2 );
@@ -1552,7 +1549,7 @@ PRE(sys_socketcall)
    case VKI_SYS_CONNECT:
       /* int connect(int sockfd, 
                      struct sockaddr *serv_addr, int addrlen ); */
-      connect = True;
+      addTaintedSocket = True;
       PRE_MEM_READ( "socketcall.connect(args)", ARG2, 3*sizeof(Addr) );
       ML_(generic_PRE_sys_connect)( tid, ARG2_0, ARG2_1, ARG2_2 );
       break;

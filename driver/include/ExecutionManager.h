@@ -125,7 +125,9 @@ public:
 
     void talkToServer();
     
-		int getMemchecks ();
+    int getMemchecks ();
+
+    void addInput(Input* input, unsigned int depth, unsigned int score);
 
     OptionConfig* getConfig() { return config; }
     static std::string getTempDir();

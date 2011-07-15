@@ -48,6 +48,7 @@
 #include <vector>
 #include <set>
 #include <cstring>
+#include <stack>
 
 #define N 5
 
@@ -56,6 +57,7 @@ using namespace std;
 extern Monitor* monitor;
 
 PoolThread *threads;
+Thread remote_thread;
 extern int thread_num;
 
 bool killed = false;
@@ -65,9 +67,6 @@ bool trace_kind;
 
 static Logger *logger = Logger::getLogger();
 Input* initial;
-int allSockets = 0;
-int listeningSocket;
-int fifofd;
 Kind kind;
 bool is_distributed = false;
 
@@ -76,14 +75,19 @@ vector<Chunk*> report;
 pthread_mutex_t add_inputs_mutex;
 pthread_mutex_t add_exploits_mutex;
 pthread_mutex_t add_bb_mutex;
+pthread_mutex_t add_remote_mutex;
 pthread_mutex_t finish_mutex;
 pthread_cond_t finish_cond;
+pthread_cond_t input_available_cond;
 
 int in_thread_creation = -1;
 
 int dist_fd;
 int remote_fd;
 int agents;
+
+stack<pair<Input*, unsigned int> > remote_inputs;
+bool launch_cv_stop;
 
 static int connectTo(string host, unsigned int port)
 {
@@ -165,7 +169,9 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
         pthread_mutex_init(&add_exploits_mutex, NULL);
         pthread_mutex_init(&add_bb_mutex, NULL);
         pthread_mutex_init(&finish_mutex, NULL);
+        pthread_mutex_init(&add_remote_mutex, NULL);
         pthread_cond_init(&finish_cond, NULL);
+        pthread_cond_init(&input_available_cond, NULL);
     }
 
     if (is_distributed)
@@ -495,6 +501,7 @@ int ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace,
   }
 
   LOG(Logger::JOURNAL, ""); // new line after exploit report
+  return 0;
 }
 
 // Dumping input for memory error: printing information about file with input 
@@ -1225,33 +1232,86 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
                                   !actual[st_depth + cur_depth - 1];
             next->prediction_size = st_depth + cur_depth;
             next->parent = first_input;
-            int score = checkAndScore(next, !trace_kind, false,  
-                                      input_modifier);
-            if (score == -1)
+            if ((thread_index > 0) && (config->getRemoteValgrind()))
             {
-                return -1;
+                pthread_mutex_lock(&add_remote_mutex);
+                remote_inputs.push(make_pair(next, first_depth + cur_depth + 1));
+                pthread_mutex_unlock(&add_remote_mutex);
+                pthread_cond_signal(&input_available_cond);
             }
-            if (trace_kind)
+            else
             {
-                if (thread_index)
+                int score = checkAndScore(next, !trace_kind, false,  
+                                          input_modifier);
+                if (score == -1)
                 {
-                    LOG(Logger::DEBUG, "Thread #" << thread_index << 
-                                       ": Score = " << score << ".");
-                    pthread_mutex_lock(&add_inputs_mutex);
+                    return -1;
                 }
-                else
+                if (trace_kind)
                 {
-                    LOG(Logger::DEBUG, "Score = " << score << ".");
-                }
-                inputs.insert(make_pair(Key(score, first_depth + cur_depth + 1), next));
-                if (thread_index) 
-                {
-                    pthread_mutex_unlock(&add_inputs_mutex);
+                    if (thread_index)
+                    {
+                        LOG(Logger::DEBUG, "Thread #" << thread_index << 
+                                           ": Score = " << score << ".");
+                        pthread_mutex_lock(&add_inputs_mutex);
+                    }
+                    else
+                    {
+                        LOG(Logger::DEBUG, "Score = " << score << ".");
+                    }
+                    inputs.insert(make_pair(Key(score, first_depth + cur_depth + 1), next));
+                    if (thread_index) 
+                    {
+                        pthread_mutex_unlock(&add_inputs_mutex);
+                    }
                 }
             }
         }
     }
     return 0;
+}
+
+void ExecutionManager::addInput(Input* input, unsigned int depth, 
+                                unsigned int score)
+{
+    inputs.insert(make_pair(Key(score, depth), input));
+}
+
+void* launch_cv(void* data)
+{
+    while(true)
+    {
+        pthread_mutex_lock(&add_remote_mutex);
+        if ((remote_inputs.size() == 0) && !launch_cv_stop)
+        {
+            pthread_cond_wait(&input_available_cond, &add_remote_mutex);
+        }
+        if (launch_cv_stop && (remote_inputs.size() == 0))
+        {
+            pthread_mutex_unlock(&add_remote_mutex);
+            break;
+        }
+        if (remote_inputs.size() > 0)
+        {
+            pair<Input*, unsigned int> remote_input = remote_inputs.top();
+            remote_inputs.pop();
+            ExecutionManager* this_pointer = (ExecutionManager*) data;
+            int score = 
+                  this_pointer->checkAndScore(remote_input.first, !trace_kind,
+                                              false, "");
+            if (score == -1)
+            {
+                return (void*) (-1);
+            }
+            LOG(Logger::REPORT, "Score = " << score << ".");
+            pthread_mutex_lock(&add_inputs_mutex);
+            this_pointer->addInput(remote_input.first, 
+                                   remote_input.second, score);
+            pthread_mutex_unlock(&add_inputs_mutex);
+        }
+        pthread_mutex_unlock(&add_remote_mutex);
+    }
+    return NULL;
 }
 
 int ExecutionManager::processTraceParallel(Input * first_input, 
@@ -1325,7 +1385,15 @@ int ExecutionManager::processTraceParallel(Input * first_input,
         threads[j].setPoolSync(&finish_mutex, &finish_cond, &active_threads);
     }
     int thread_counter, result = 0;
-    pool_data external_data[depth];
+    job_wrapper external_data[depth];
+    if (config->getRemoteValgrind())
+    {
+        job_wrapper remote_external_data;
+        remote_external_data.work_func = launch_cv;
+        remote_external_data.data = this;
+        launch_cv_stop = false;
+        remote_thread.createThread(&remote_external_data);
+    }
     for (int i = 0; i < depth; i ++)
     {
         pthread_mutex_lock(&finish_mutex);
@@ -1378,6 +1446,17 @@ int ExecutionManager::processTraceParallel(Input * first_input,
     for (int i = 0; i < ((depth < thread_num) ? depth : thread_num); i ++)
     {
         if (threads[i].waitForThread() < 0)
+        {
+            result = -1;
+        }
+    }
+    if (config->getRemoteValgrind())
+    {
+        pthread_mutex_lock(&add_remote_mutex);
+        launch_cv_stop = true;
+        pthread_mutex_unlock(&add_remote_mutex);
+        pthread_cond_signal(&input_available_cond);
+        if (remote_thread.waitForThread() < 0)
         {
             result = -1;
         }
@@ -2137,24 +2216,26 @@ ExecutionManager::~ExecutionManager()
 
     if (is_distributed)
     {
-      write(dist_fd, "q", 1);
-      shutdown(dist_fd, SHUT_RDWR);
-      close(dist_fd);
+        write(dist_fd, "q", 1);
+        shutdown(dist_fd, SHUT_RDWR);
+        close(dist_fd);
     }
     
     if (config->getRemoteValgrind())
     {
-      kind = UNID;
-      write(remote_fd, &kind, sizeof(int));
-      close(remote_fd);
+        kind = UNID;
+        write(remote_fd, &kind, sizeof(int));
+        close(remote_fd);
     }
 
     if (thread_num > 0)
     {
-      pthread_mutex_destroy(&add_inputs_mutex);
-      pthread_mutex_destroy(&add_exploits_mutex);
-      pthread_mutex_destroy(&add_bb_mutex);
-      pthread_mutex_destroy(&finish_mutex);
+        pthread_mutex_destroy(&add_inputs_mutex);
+        pthread_mutex_destroy(&add_exploits_mutex);
+        pthread_mutex_destroy(&add_bb_mutex);
+        pthread_mutex_destroy(&finish_mutex);
+        pthread_mutex_destroy(&add_remote_mutex);
+        pthread_cond_destroy(&input_available_cond);
     }
 
     delete config;

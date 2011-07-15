@@ -58,9 +58,8 @@
 #include "priv_syswrap-linux.h"     /* for decls of linux-ish wrappers */
 #include "priv_syswrap-main.h"
 
-Bool accept = False;
-Bool connect = False;
-Bool socket = False;
+Bool addTaintedSocket = False;
+Bool isMap = False;
 
 extern Int listeningSocket;
 extern Int boundSocket;
@@ -358,10 +357,6 @@ PRE(sys_socketcall)
 #  define ARG2_4  (((UWord*)ARG2)[4])
 #  define ARG2_5  (((UWord*)ARG2)[5])
 
-   accept = False;
-   connect = False;
-   socket = False;
-
    *flags |= SfMayBlock;
    PRINT("sys_socketcall ( %ld, %#lx )",ARG1,ARG2);
    PRE_REG_READ2(long, "socketcall", int, call, unsigned long *, args);
@@ -377,7 +372,7 @@ PRE(sys_socketcall)
    case VKI_SYS_SOCKET:
       if ((ARG2_1 & 0xff) == 2)
       {
-        socket = True;
+        addTaintedSocket = True;
       }
      /* int socket(int domain, int type, int protocol); */
       PRE_MEM_READ( "socketcall.socket(args)", ARG2, 3*sizeof(Addr) );
@@ -396,7 +391,7 @@ PRE(sys_socketcall)
       break;
 
    case VKI_SYS_ACCEPT: {
-      accept = True;
+      addTaintedSocket = True;
      /* int accept(int s, struct sockaddr *addr, int *addrlen); */
       PRE_MEM_READ( "socketcall.accept(args)", ARG2, 3*sizeof(Addr) );
       ML_(generic_PRE_sys_accept)( tid, ARG2_0, ARG2_1, ARG2_2 );
@@ -440,7 +435,7 @@ PRE(sys_socketcall)
    case VKI_SYS_CONNECT:
      /* int connect(int sockfd,
    struct sockaddr *serv_addr, int addrlen ); */
-     connect = True;
+     addTaintedSocket = True;
      PRE_MEM_READ( "socketcall.connect(args)", ARG2, 3*sizeof(Addr) );
      ML_(generic_PRE_sys_connect)( tid, ARG2_0, ARG2_1, ARG2_2 );
      break;
@@ -624,6 +619,7 @@ PRE(sys_socket)
 {
    PRINT("sys_socket ( %ld, %ld, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "socket", int, domain, int, type, int, protocol);
+   addTaintedSocket = True;
 }
 POST(sys_socket)
 {
@@ -663,6 +659,7 @@ PRE(sys_connect)
    PRINT("sys_connect ( %ld, %#lx, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "connect",
                  int, sockfd, struct sockaddr *, serv_addr, int, addrlen);
+   addTaintedSocket = True;
    ML_(generic_PRE_sys_connect)(tid, ARG1,ARG2,ARG3);
 }
 
@@ -672,6 +669,7 @@ PRE(sys_accept)
    PRINT("sys_accept ( %ld, %#lx, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "accept",
                  int, s, struct sockaddr *, addr, int, *addrlen);
+   addTaintedSocket = True;
    ML_(generic_PRE_sys_accept)(tid, ARG1,ARG2,ARG3);
 }
 POST(sys_accept)
@@ -1001,6 +999,7 @@ PRE(sys_mmap2)
                  unsigned long, prot,  unsigned long, flags,
                  unsigned long, fd,    unsigned long, offset);
 
+   isMap = True;
    r = ML_(generic_PRE_sys_mmap)( tid, ARG1, ARG2, ARG3, ARG4, ARG5, 
                                        4096 * (Off64T)ARG6 );
    SET_STATUS_from_SysRes(r);

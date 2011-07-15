@@ -37,7 +37,7 @@ struct data_wrapper
   void* data;
 };
 
-struct pool_data
+struct job_wrapper
 {
   void* (*work_func) (void*);
   void* data;
@@ -60,7 +60,7 @@ class Thread
            
            static void* createAndRun(void* input);
 
-           virtual void doWork(void* data) {}
+           virtual void doWork(void* data);
            
            void addPrivateData(void* _data_unit, std::string name) 
            { 

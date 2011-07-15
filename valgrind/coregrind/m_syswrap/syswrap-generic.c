@@ -76,7 +76,6 @@ Int boundSocket = -1;
 Int listeningSocket = -1;
 ULong curoffs;
 ULong cursize;
-//Char* inputfile = NULL;
 Bool caughtOpen = False;
 Bool curDeclared = True;
 Bool sockets = False;
@@ -87,7 +86,7 @@ UShort port;
 UChar ip1, ip2, ip3, ip4;
 
 
-/* Returns True iff address range is something the client can
+/* Returns True if address range is something the client can
    plausibly mess with: all of it is either already belongs to the
    client or is free or a reservation. */
 
@@ -1286,7 +1285,6 @@ ML_(generic_POST_sys_socket) ( ThreadId tid, SysRes res, UWord arg0, UWord arg1,
    //SOCK_DGRAM = 2
    if (datagrams && ((arg1 & 0xff) == 2))
    {
-     VG_(printf)("caught DGRAM socket creation res=%d\n", sr_Res(res));
      if (fds == NULL) 
      {
        fds = VG_(HT_construct)("fds");
@@ -1385,7 +1383,6 @@ ML_(generic_POST_sys_accept) ( ThreadId tid,
    }
    if (sockets && (arg0 == listeningSocket))
    {
-     VG_(printf)("caught accept, arg0=%x arg1=%x arg2=%x sd=%d\n", arg0, arg1, arg2, sr_Res(res));
      fdsNode* node = VG_(HT_lookup)(fds, sr_Res(res));
      if (node == NULL)
      {
@@ -1501,7 +1498,6 @@ ML_(generic_POST_sys_recvfrom) ( ThreadId tid,
        {
          node->offs = node->offs + sr_Res(res);
        }
-       VG_(printf)("caught recvfrom from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
      }
      else
      {
@@ -1558,7 +1554,6 @@ ML_(generic_POST_sys_recv) ( ThreadId tid,
        {
          node->offs = node->offs + res;
        }
-       VG_(printf)("caught recv from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
      }
      else
      {
@@ -1608,7 +1603,6 @@ ML_(generic_PRE_sys_connect) ( ThreadId tid,
        }
        if (sockets)
        {
-         VG_(printf)("caught connect arg0=%x arg1=%x arg2=%x\n", arg0, arg1, arg2);
          fdsNode* node = VG_(HT_lookup)(fds, arg0);
          if (node == NULL)
          {
@@ -3089,7 +3083,6 @@ POST(sys_close)
 {
    if ((fds != NULL) && (VG_(HT_lookup)(fds, ARG1) != NULL))
    {
-      VG_(printf)("caught close arg=%ld\n", ARG1);
       VG_(HT_remove)(fds, ARG1);
       curfile = NULL;
       curfilenum = -1;
@@ -3854,7 +3847,6 @@ HWord hashCode(Char* str)
 
 POST(sys_open)
 {
-   VG_(printf)("POST sys_open ARG1=%s, RES=%d\n", ARG1, RES);
    vg_assert(SUCCESS);
    if (fds == NULL) 
    {
@@ -3880,7 +3872,6 @@ POST(sys_open)
    if (sn != NULL)
    {
      caughtOpen = True;
-     VG_(printf)("caught open, ARG1=%s, RES=%d\n", ARG1, RES);
      fdsNode* node = VG_(HT_lookup)(fds, RES);
      Char* name;
      Int i = 0;
@@ -4003,7 +3994,6 @@ PRE(sys_read)
        cursize = node->size;
        curfilenum = node->seqnum;
        node->offs = node->offs + (ULong) ARG3 < cursize ? node->offs + (ULong) ARG3 : cursize;
-       VG_(printf)("caught read, curfile=%s curoffs=%d cursize=%d\n", curfile, curoffs, cursize);
      }
      else
      {
@@ -4036,7 +4026,6 @@ POST(sys_read)
        cursocket = node->seqnum;
        curoffs = node->offs;
        node->offs = node->offs + RES;
-       VG_(printf)("caught read from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
      }
      else
      {
