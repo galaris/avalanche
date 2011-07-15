@@ -1,9 +1,20 @@
+#if defined(VGP_amd64_linux)
+
 #include "pub_tool_basics.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_mallocfree.h"
 #include "libvex_ir.h"
 
 #include <avalanche.h>
+
+enum 
+{
+  X86CondO, X86CondNO, X86CondB, X86CondNB,
+  X86CondZ, X86CondNZ, X86CondBE, X86CondNBE,
+  X86CondS, X86CondNS, X86CondP, X86CondNP,
+  X86CondL, X86CondNL, X86CondLE, X86CondNLE,
+  X86CondAlways = 16  /* HACK */
+};
 
 extern void instrumentWrTmpCCall_Internal(UInt op, UInt ltmp, 
                                           UShort taintedness, 
@@ -18,24 +29,67 @@ extern void instrumentWrTmpLongBinop_Internal(UInt oprt, UInt ltmp,
 
 extern UShort isPropagation2(IRExpr* arg1, IRExpr* arg2);
 
-#if defined(VGP_amd64_linux)
+IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
+{
+  if (arg == NULL) {
+    return NULL;
+  }
+  IRTemp tmp;
+  IRExpr* e;
+  IRType argty = typeOfIRExpr(tyenv, arg);
+  switch (argty)
+  {
+    case Ity_I1:
+       tmp = newIRTemp(tyenv, Ity_I64);
+       e = IRExpr_Unop(Iop_1Uto64, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I8:
+       tmp = newIRTemp(tyenv, Ity_I64);
+       e = IRExpr_Unop(Iop_8Uto64, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I16:
+       tmp = newIRTemp(tyenv, Ity_I64);
+       e = IRExpr_Unop(Iop_16Uto64, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I32:
+       tmp = newIRTemp(tyenv, Ity_I64);
+       e = IRExpr_Unop(Iop_32Uto64, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I64:
+    case Ity_I128:
+       if (arg->tag == Iex_Const)
+       {
+         tmp = newIRTemp(tyenv, argty);
+         e = IRExpr_Const(arg->Iex.Const.con);
+         addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+         return IRExpr_RdTmp(tmp);
+       }
+       return arg;
+    default:
+       return arg;
+  }
+}
 
 static
 UInt translateNativeCondCode(UInt nativeCC)
 {
   switch(nativeCC)
   {
-    case X86CondB: 	return BVLT;
-    case X86CondNB:	return BVGE;
-    case X86CondZ:	return IFT;
-    case X86CondNZ:	return IFNOT;
-    case X86CondBE:	return BVLE;
-    case X86CondNBE:	return BVGT;
-    case X86CondL:	return SBVLT;
-    case X86CondNL:	return SBVGE;
-    case X86CondLE:	return SBVLE;
-    case X86CondNLE:	return SBVGT;
-    default:		return INVALID;
+    case X86CondB:   return BVLT;
+    case X86CondNB:  return BVGE;
+    case X86CondZ:   return IFT;
+    case X86CondNZ:  return IFNOT;
+    case X86CondBE:  return BVLE;
+    case X86CondNBE: return BVGT;
+    case X86CondL:   return SBVLT;
+    case X86CondNL:  return SBVGE;
+    case X86CondLE:  return SBVLE;
+    case X86CondNLE: return SBVGT;
+    default:         return INVALID;
   }
 }
 

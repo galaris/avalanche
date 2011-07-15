@@ -56,8 +56,8 @@
 #include "priv_syswrap-linux-variants.h" /* decls of linux variant wrappers */
 #include "priv_syswrap-main.h"
 
-Bool socket = False;
-
+Bool addTaintedSocket = False;
+Bool isMap = False;
 
 /* ---------------------------------------------------------------------
    clone() handling
@@ -639,7 +639,7 @@ PRE(sys_socket)
 {
    if ((ARG1 & 0xff) == 2)
    {
-     socket = True;
+     addTaintedSocket = True;
    }
    PRINT("sys_socket ( %ld, %ld, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "socket", int, domain, int, type, int, protocol);
@@ -682,6 +682,7 @@ PRE(sys_connect)
    PRINT("sys_connect ( %ld, %#lx, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "connect",
                  int, sockfd, struct sockaddr *, serv_addr, int, addrlen);
+   addTaintedSocket = True;
    ML_(generic_PRE_sys_connect)(tid, ARG1,ARG2,ARG3);
 }
 
@@ -691,6 +692,7 @@ PRE(sys_accept)
    PRINT("sys_accept ( %ld, %#lx, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "accept",
                  int, s, struct sockaddr *, addr, int, *addrlen);
+   addTaintedSocket = True;
    ML_(generic_PRE_sys_accept)(tid, ARG1,ARG2,ARG3);
 }
 POST(sys_accept)
@@ -998,6 +1000,7 @@ PRE(sys_mmap)
                  unsigned long, prot,  unsigned long, flags,
                  unsigned long, fd,    unsigned long, offset);
 
+   isMap = True;
    r = ML_(generic_PRE_sys_mmap)( tid, ARG1, ARG2, ARG3, ARG4, ARG5, ARG6 );
    SET_STATUS_from_SysRes(r);
 }

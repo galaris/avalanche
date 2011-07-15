@@ -41,7 +41,7 @@
 #include "pub_tool_xarray.h"
 
 extern VgHashTable funcNames;
-XArray** inputFilter;
+XArray* inputFilter;
 
 Bool isStandardFunction (Char* objName)
 {
@@ -285,7 +285,7 @@ Bool leaveFnName (Char* fnName)
 
 Bool parseArgvMask(Char* str, Int* argFilterUnits)
 {
-  Int i, curOffset = 0;
+  Int curOffset = 0;
   Char curStr[16];
   Char** endPtr = VG_(malloc) ("endPtr", sizeof (Char*));
   *endPtr = curStr;
@@ -334,7 +334,6 @@ Bool parseMask(Char* filename)
   Char* str = buf;
   Char** endptr = &str;
   XArray* curfilter = VG_(newXA)(VG_(malloc), "chunk", VG_(free), sizeof(offsetPair));
-  Int i = 0;
   for (;;)
   {
     while (VG_(isspace)(*str))
@@ -419,6 +418,10 @@ Bool parseMask(Char* filename)
 
 Bool checkInputOffset(Int curfilenum, ULong offs)
 {
+  if (inputFilter == NULL)
+  {
+    return True;
+  }
   if (curfilenum >= VG_(sizeXA)(inputFilter))
   {
     return False;
@@ -439,17 +442,17 @@ Bool checkInputOffset(Int curfilenum, ULong offs)
 void printInputOffsets()
 {
   Int i = 0;
-  VG_(printf)("VG_(sizeXA)(inputFilter)=%d\n", VG_(sizeXA)(inputFilter));
+  VG_(printf)("VG_(sizeXA)(inputFilter)=%d\n", (Int) VG_(sizeXA)(inputFilter));
   for (; i < VG_(sizeXA)(inputFilter); i++)
   {
     XArray** curfilter = (XArray**) VG_(indexXA)(inputFilter, i);
-    VG_(printf)("VG_(sizeXA)(curfilter)=%d\n", VG_(sizeXA)(*curfilter));
+    VG_(printf)("VG_(sizeXA)(curfilter)=%d\n", (Int) VG_(sizeXA)(*curfilter));
     Int j = 0;
     for (; j < VG_(sizeXA)(*curfilter); j++)
     {
       offsetPair* elem = (offsetPair*) VG_(indexXA)(*curfilter, j);
-      VG_(printf)("p1=%x ", elem->first);
-      VG_(printf)("p2=%x ", elem->last);
+      VG_(printf)("p1=%llx ", elem->first);
+      VG_(printf)("p2=%llx ", elem->last);
     }
     VG_(printf)("\n");
   }

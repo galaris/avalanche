@@ -263,11 +263,11 @@ OptionConfig *OptionParser::run() const
         cout << "you cannot specify '--filename' and '--sockets' or '--datagrams' at the same time\n";
         return NULL;
     }
-    else if (config->getRemoteValgrind() && (config->getSTPThreads() != 0)){
+   /* else if (config->getRemoteValgrind() && (config->getSTPThreads() != 0)){
         delete config;
         cout << "you cannot use remote valgrind plugin agent with STP parallelization enabled\n";
         return NULL;
-    }
+    }*/
     reportDummyOptions(config);
     return config;
 }

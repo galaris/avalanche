@@ -74,13 +74,23 @@ int Thread::waitForThread()
     return (long)(p_result);
 }
 
+void Thread::doWork(void* data)
+{
+    sigset_t sigmask;
+    sigemptyset(&sigmask);
+    sigaddset(&sigmask, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
+    (((job_wrapper*) data)->work_func) (((job_wrapper*) data)->data);
+    pthread_exit(NULL);
+}
+
 void PoolThread::doWork(void* data)
 {
     sigset_t sigmask;
     sigemptyset(&sigmask);
     sigaddset(&sigmask, SIGINT);
     pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
-    (((pool_data*) data)->work_func) (((pool_data*) data)->data);
+    (((job_wrapper*) data)->work_func) (((job_wrapper*) data)->data);
     pthread_mutex_lock(work_finish_mutex);
     thread_status = FREE;
     (*active_threads) ++;

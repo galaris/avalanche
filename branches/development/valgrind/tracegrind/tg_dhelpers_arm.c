@@ -1,9 +1,19 @@
+#if defined(VGP_arm_linux)
+
 #include "pub_tool_basics.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_mallocfree.h"
 #include "libvex_ir.h"
 
 #include <avalanche.h>
+
+enum 
+{
+  ARMCondEQ, ARMCondNE, ARMCondHS, ARMCondLO,
+  ARMCondMI, ARMCondPL, ARMCondVS, ARMCondVC,
+  ARMCondHI, ARMCondLS, ARMCondGE, ARMCondLT,
+  ARMCondGT, ARMCondLE, ARMCondAL, ARMCondNV
+};
 
 extern void instrumentWrTmpCCall_Internal(UInt op, UInt ltmp, 
                                           UShort taintedness, 
@@ -20,24 +30,63 @@ extern UShort isPropagation2(IRExpr* arg1, IRExpr* arg2);
 extern Bool firstTainted(UShort res);
 extern Bool secondTainted(UShort res);
 
-#if defined(VGP_arm_linux)
+IRExpr* adjustSize(IRSB* sbOut, IRTypeEnv* tyenv, IRExpr* arg)
+{
+  if (arg == NULL) {
+    return NULL;
+  }
+  IRTemp tmp;
+  IRExpr* e;
+  IRType argty = typeOfIRExpr(tyenv, arg);
+  switch (argty)
+  {
+    case Ity_I1: 
+       tmp = newIRTemp(tyenv, Ity_I32);
+       e = IRExpr_Unop(Iop_1Uto32, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I8:
+       tmp = newIRTemp(tyenv, Ity_I32);
+       e = IRExpr_Unop(Iop_8Uto32, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I16:
+       tmp = newIRTemp(tyenv, Ity_I32);
+       e = IRExpr_Unop(Iop_16Uto32, arg);
+       addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+       return IRExpr_RdTmp(tmp);
+    case Ity_I32:
+       return arg;
+    case Ity_I64:
+       if (arg->tag == Iex_Const)
+       {
+         tmp = newIRTemp(tyenv, Ity_I64);
+         e = IRExpr_Const(arg->Iex.Const.con);
+         addStmtToIRSB(sbOut, IRStmt_WrTmp(tmp, e));
+         return IRExpr_RdTmp(tmp);
+       }
+       return arg;
+    default:
+       return arg;
+  }
+}
 
 static
 UInt translateNativeCondCode(UInt nativeCC)
 {
   switch(nativeCC)
   {
-    case ARMCondLO: 	return BVLT;
-    case ARMCondHS:	return BVGE;
-    case ARMCondEQ:	return IFT;
-    case ARMCondNE:	return IFNOT;
-    case ARMCondLS:	return BVLE;
-    case ARMCondHI:	return BVGT;
-    case ARMCondLT:	return SBVLT;
-    case ARMCondGE:	return SBVGE;
-    case ARMCondLE:	return SBVLE;
-    case ARMCondGT:	return SBVGT;
-    default:		return INVALID;
+    case ARMCondLO: return BVLT;
+    case ARMCondHS: return BVGE;
+    case ARMCondEQ: return IFT;
+    case ARMCondNE: return IFNOT;
+    case ARMCondLS: return BVLE;
+    case ARMCondHI: return BVGT;
+    case ARMCondLT: return SBVLT;
+    case ARMCondGE: return SBVGE;
+    case ARMCondLE: return SBVLE;
+    case ARMCondGT: return SBVGT;
+    default:        return INVALID;
   }
 }
 
