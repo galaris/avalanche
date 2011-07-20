@@ -66,59 +66,6 @@ extern int in_thread_creation;
 int thread_num;
 extern int dist_fd;
 
-static void printHelpBanner()
-{
-    char banner[] =
-        "usage: avalanche [options] prog-and-args\n\n"
-        "  user options defined in [ ]:\n"
-        "    --help                       Print help and exit\n"
-        "    --use-memcheck               Use memcheck instead of covgrind\n"
-        "    --leaks                      Check for memory leaks\n"
-        "                                 (ignored if '--use-memcheck' isn't specified)\n"
-        "    --verbose, -v                Printing information about iteration (depth, heuristic), exploits/memchecks\n"
-        "                                 (time, output file)\n" 
-        "    --program-output             Show program output at logs\n" 
-        "    --network-log                Show network logs\n" 
-        "    --debug                      Save some debugging information - divergent inputs, etc.\n" 
-        "    --depth=<number>             The number of conditions collected during one run of tracegrind\n"
-        "                                 (default is 100). May be used in the form '--depth=infinity',\n"
-        "                                 which means that tracegrind should collect all conditions in the trace\n"
-        "    --alarm=<number>             Timer value in seconds (for infinite loop recognition) (default is 300)\n"
-        "    --filename=<input_file>      The path to the file with the input data for the application being tested\n"
-        "    --trace-children             Run valgrind plugins with '--trace-children=yes' option\n"
-        "    --check-danger               Emit special constraints for memory access operations\n"
-        "                                 and divisions (slows down the analysis)\n"
-        "    --dump-calls                 Dump the list of functions manipulating with tainted data to calldump.log\n"
-        "    --func-name=<name>           The name of function that should be used for separate function analysis\n"
-        "    --func-file=<name>           The path to the file with the list of functions that\n"
-        "                                 should be used for separate function analysis\n"
-        "    --mask=<mask_file>           The path to the file with input mask\n"
-        "    --suppress-subcalls          Ignore conditions in a nested function calls during separate analysis\n"
-        "    --stp-threads=<number>       The number of STP queries handled simultaneously. May be used in the form\n"
-        "                                 '--stp-threads=auto'. In this case the number of CPU cores is taken.\n"
-        "    --report-log=<filename>      Dump exploits report to the specified file\n"
-        "\n"
-        "  special options for sockets:\n"
-        "    --sockets                    Mark data read from TCP sockets as tainted\n"
-        "    --host=<IPv4 address>        IP address of the network connection (for TCP sockets only)\n"
-        "    --port=<number>              Port number of the network connection (for TCP sockets only)\n"
-        "    --datagrams                  Mark data read from UDP sockets as tainted\n"
-        "    --alarm=<number>             Timer for breaking infinite waitings in covgrind\n"
-        "                                 or memcheck (not set by default)\n" 
-        "    --tracegrind-alarm=<number>  Timer for breaking infinite waitings in tracegrind (not set by default)\n" 
-        "\n"
-        "  options for distributed Avalanche:\n"
-        "    --distributed                Tell Avalanche that it should connect to distribution server\n"
-        "                                 and run distributed analysis\n"
-        "    --dist-host=<IPv4 address>   IP address of the distribution server (default is 127.0.0.1)\n"
-        "    --dist-port=<number>         Port number of the distribution server (default is 12200)\n"
-        "    --protect-main-agent         Do not send inputs to the remore agents, if the overall number\n"
-        "                                 of inputs in the main agent do not exceed 5 * <number_of_agents>\n";
-
-
-    cout << banner << endl;
-}
-
 OptionConfig* opt_config;
 
 void cleanUp()
@@ -223,7 +170,7 @@ void reportResults()
     // Time statistics
 
     time_t end_time = time(NULL);
-    LOG (Logger::REPORT, "\nTime statistics: " << 
+    LOG (Logger::REPORT, "Time statistics: " << 
         end_time - monitor->getGlobalStartTime() << " sec, " << 
         monitor->getStats(end_time - monitor->getGlobalStartTime() - 
                                      monitor->getNetworkOverhead()));
@@ -269,9 +216,10 @@ int main(int argc, char *argv[])
     op = new OptionParser(argc, argv);
     opt_config = op->run();
         
-    if (opt_config == NULL || opt_config->empty()) {
-            printHelpBanner();
-            return EXIT_FAILURE;
+    if (opt_config == NULL || opt_config->empty()) 
+    {
+        LOG(Logger::JOURNAL, "Use 'avalanche --help' for a complete options list.");
+        return EXIT_FAILURE;
     }
 
     if (opt_config -> getVerbose ()) logger -> setVerbose ();
@@ -295,8 +243,7 @@ int main(int argc, char *argv[])
     time_t work_start_time = time(NULL);
     string t = string(ctime(&work_start_time));
 
-    LOG (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
-    LOG (Logger :: VERBOSE, ""); // new line
+    LOG_TIME (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
 
     if (opt_config->getResultDir() != string(""))
     {

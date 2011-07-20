@@ -114,7 +114,7 @@ public:
     int calculateScore(std::string filaNameModifier = "");
     int checkAndScore(Input* input, bool addNoCoverage, bool first_run, std::string fileNameModifier = "");
 
-    int dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group, Chunk* ch);
+    int dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group, Chunk* ch, std::string exploit_type);
     int dumpMemoryError (Input * input, FileBuffer * mc_output, bool sameExploit, int exploitGroup, Chunk* ch);
     
     bool updateArgv(Input* input);

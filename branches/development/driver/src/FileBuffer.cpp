@@ -323,43 +323,77 @@ long FileBuffer::filterCount(const char * str)
     return number;
 }
 
-// Memcheck error call stack
-string FileBuffer::getErrorType(int &position)
+// Exploit type
+
+string FileBuffer::getExploitType()
 {
-    int end;
+  string signals [] = {"SIGBUS", "SIGFPE", "SIGILL", "SIGSEGV", "SIGSYS", "SIGXCPU", "SIGXFSZ", ""};
+  string comments [] = 
+  {
+    "Bus error: access to undefined portion of memory object", 
+    "Floating point exception: erroneous arithmetic operation",
+    "Illegal instruction",
+    "Segmentation fault",
+    "Bad syscall",
+    "CPU time limit exceeded",
+    "File size limit exceeded",
+    "" 
+  };
 
-    string error_type;
+  int i = 0;
+  while (!signals[i].empty())
+  {
+    if (string(buf).find(signals[i], 0) != string::npos) 
+      return comments[i];
+    i++;
+  }
 
-    vector<string> memcheck_errors;
-    memcheck_errors.push_back(" contains unaddressable byte(s)");
-    memcheck_errors.push_back("Use of uninitialised value of size");
-    memcheck_errors.push_back("Conditional jump or move depends on uninitialised value(s)");
-    memcheck_errors.push_back("Syscall param");
-    memcheck_errors.push_back(" byte(s) found during client check request");
-    memcheck_errors.push_back("Invalid ");
-    memcheck_errors.push_back("Mismatched free() / delete / delete []");
-    memcheck_errors.push_back("Jump to the invalid address stated on the next line");
-    memcheck_errors.push_back("Source and destination overlap in");
-    memcheck_errors.push_back("Illegal memory pool address");
-    memcheck_errors.push_back(" loss record ");
+  return "Crash";
+}
 
-    for (vector<string>::iterator i = memcheck_errors.begin();
-                                  i != memcheck_errors.end(); i ++)
+// Memcheck error call stack
+string FileBuffer::getMemoryErrorType(int &position)
+{
+  int end;
+
+  string error_type;
+
+  string memory_errors [] =
+  {
+    " contains unaddressable byte(s)",
+    "Use of uninitialised value of size",
+    "Conditional jump or move depends on uninitialised value(s)",
+    "Syscall param",
+    " byte(s) found during client check request",
+    "Invalid ",
+    "Mismatched free() / delete / delete []",
+    "Jump to the invalid address stated on the next line",
+    "Source and destination overlap in",
+    "Illegal memory pool address",
+    " loss record ", 
+    ""
+  };
+
+  int i = 0;
+  while (!memory_errors[i].empty())
+  {
+    int found = string(buf).find(memory_errors[i], position);
+
+    if (found != string::npos) // if found
     {
-        int found = string (buf).find (*i, position);
-
-        if (found != string::npos) // if found
-        {
-            int j, k, l, m;
-            for (k = found; buf [k] != '='; k++);
-            for (j = found; buf [j] != '='; j--);
+      int j, k, l, m;
+      for (k = found; buf[k] != '='; k++);
+      for (j = found; buf[j] != '='; j--);
             
-            error_type = string (buf).substr (j + 2, k - j - 3);
+      error_type = string(buf).substr(j + 2, k - j - 3);
 
-            position = k;
-        }
+      position = k;
+
+      return error_type;
     }
-    return error_type;
+    i++;
+  }
+  return "Unknown memory error type";
 }
 
 // Memcheck error call stack
@@ -390,6 +424,8 @@ string FileBuffer::getCallStack (int & position)
         begin = call_stack.find ("==");
     }
     while (begin != string::npos);
+
+    call_stack.at(call_stack.size() - 1) = '\0';
 
     return call_stack;
 }

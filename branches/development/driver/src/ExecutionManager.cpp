@@ -384,11 +384,11 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
 
 int ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace, 
                                    bool info_available, bool same_exploit, 
-                                   int exploit_group, Chunk* ch)
+                                   int exploit_group, Chunk* ch, string exploit_type)
 {
-  LOG(Logger::DEBUG, ""); // new line
-  LOG_TIME(Logger::VERBOSE, "Exploit number " << exploits << ".");
-  LOG(Logger::JOURNAL, "\033[0;31m" << "  Crash detected." << "\033[0m");
+  LOG(Logger::VERBOSE, ""); // new line
+  LOG_TIME(Logger::VERBOSE, "Exploit detected.");
+  LOG(Logger::JOURNAL, "  \033[31m" << exploit_type << "\033[0m");
 
   // Information about stack
 
@@ -446,9 +446,9 @@ int ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace,
             " --replace=" << ss.str () << " --sockets=yes " << progAndArg;
 
 
-    LOG (Logger :: JOURNAL, "  \033[2mCommand:\033[0m " << command.str());
+    LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << command.str());
 
-    LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss.str() << ".");
+    LOG(Logger::VERBOSE, "  Dumping input for exploit to file " << ss.str() << ".");
     if (ch != NULL)
     {
       ch->setExploitArgv(command.str());
@@ -469,7 +469,7 @@ int ExecutionManager::dumpExploit(Input *input, FileBuffer* stack_trace,
       {
         return -1;
       }
-      LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss.str() << ".");
+      LOG(Logger::VERBOSE, "  Dumping input for exploit to file " << ss.str() << ".");
     }
 
     // Command line printing
@@ -545,7 +545,7 @@ int ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
 
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << command.str()); 
 
-    LOG(Logger::VERBOSE, "Dumping input for memcheck error to file " 
+    LOG(Logger::VERBOSE, "Dumping input for memory error to file " 
       << ss.str() << ".");
 
     if (ch != NULL)
@@ -570,8 +570,7 @@ int ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
       {
         return -1;
       }
-      LOG(Logger::VERBOSE, "Dumping input for memcheck error to file " << ss.str());
-      
+      LOG(Logger::VERBOSE, "Dumping input for memory error to file " << ss.str());
     }
 
     // Command line printing
@@ -596,6 +595,7 @@ int ExecutionManager::dumpMemoryError(Input * input, FileBuffer * mc_output,
     }
     LOG(Logger::JOURNAL, "  \033[2mCommand:\033[0m " << config->getValgrind()
       << "../lib/avalanche/valgrind " << progAndArg.str ());
+
     if (ch != NULL)
     {
       ch->setExploitArgv(progAndArg.str());
@@ -734,7 +734,6 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(),
                                      config->getValgrind(), new_prog_and_args, 
                                      plugin_opts, addNoCoverage ? CV : kind);
-
   }
   else
   {
@@ -798,6 +797,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   {
     int chunk_file_num = (config->usingSockets() || config->usingDatagrams())
                                 ? (-1) : (input->files.size());
+    string exploit_type;
     if ((config->getCheckArgv() != ""))
     {
       chunk_file_num --;
@@ -816,9 +816,10 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
       LOG(Logger::ERROR, strerror(errno));
       return -1;
     }
+    exploit_type = cv_output->getExploitType();
     infoAvailable = cv_output->filterCovgrindOutput();
 
-    // Exploit grouping
+   // Exploit grouping
 
     if (infoAvailable)
     {
@@ -843,7 +844,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
     // Exploit dumping
     if (dumpExploit(input, cv_output, infoAvailable, 
-                    same_exploit, exploit_group, ch) < 0)
+                    same_exploit, exploit_group, ch, exploit_type) < 0)
     {
       if (enable_mutexes) 
       {
@@ -891,7 +892,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
       return -1;
     }
 
-    long errors = mc_output->filterCount("ERROR SUMMARY: ");
+    long errors = mc_output->filterCount(" errors from ");
 
     int possibly_lost = -1;
     int definitely_lost = -1;
@@ -910,7 +911,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     if ((errors > 0) || 
         (((definitely_lost != -1) || (possibly_lost != -1)) && !killed))
     {
-      LOG(Logger::DEBUG, "");
+      LOG(Logger::VERBOSE, ""); // new line before memory error
 
       if (errors > 1) 
         LOG_TIME(Logger::VERBOSE, errors << " memory errors detected.");
@@ -921,7 +922,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
       for (int i = 0; i < errors; i++)
       {
-        error_type = mc_output->getErrorType(position);
+        error_type = mc_output->getMemoryErrorType(position);
         call_stack = mc_output->getCallStack(position);
 
         FileBuffer * all_call_stack;
@@ -949,28 +950,28 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
         // Memory errors grouping
 
-         for (vector <Chunk *>::iterator it = report.begin(); 
+        same_exploit = false;
+
+        for (vector <Chunk *>::iterator it = report.begin(); 
           it != report.end(); it++, exploit_group++)
         {
-          same_exploit = false;
-
           if (((* it)->getTrace() != NULL) &&
               (*((*it)->getTrace()) == *all_call_stack))
           {
             same_exploit = true;
             
-            LOG(Logger::JOURNAL, 
-              "\033[2m  This memory error has been detected previously.\033[0m\n");
+            LOG(Logger::JOURNAL, "  \033[34m" << error_type << "\033[0m");
+            LOG(Logger::JOURNAL, "  \033[2mThis memory error has been detected previously.\033[0m");
             ch = *it;
             break;
           }
-         }
+        }
 
-         if (!same_exploit)
-         {
+        if (!same_exploit)
+        {
           ch = new Chunk(all_call_stack, memchecks, chunk_file_num, false);
 
-          LOG(Logger::JOURNAL, "  \033[0;31m" << error_type << "\033[0m");
+          LOG(Logger::JOURNAL, "  \033[34m" << error_type << "\033[0m");
           LOG(Logger::JOURNAL, call_stack);
 
           // Dumping call stack to the file 'stacktrace_#.log'
@@ -995,7 +996,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
                                config->getResultDir() << config->getPrefix() <<
                                "stacktrace_" << exploit_group << ".log");
         }
-        LOG(Logger::VERBOSE, "");
+        LOG(Logger::VERBOSE, ""); // new line after memory error
       }
 
       // Leaks
@@ -1201,6 +1202,7 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
         {
             return -1;
         }
+
         LOG(Logger::DEBUG, "Thread #" << thread_index << ": STP output:\n");
         LOG(Logger::DEBUG, "\033[2m" << stp_out_file->buf << "\033[0m");
         Input* next = new Input();
@@ -1715,7 +1717,6 @@ void ExecutionManager::run()
     while (!inputs.empty()) 
     {
       delete_fi = false;
-      LOG(Logger::DEBUG, "");
       LOG_TIME(Logger::JOURNAL, "Iteration " << (runs + 1) << ".");
 
       monitor->removeTmpFiles();
@@ -1726,7 +1727,6 @@ void ExecutionManager::run()
       unsigned int dpth = it->first.depth;
       LOG(Logger::VERBOSE, "Inputs size = " << inputs.size() << ".");
       LOG(Logger::VERBOSE, "Selected next input with score " << scr << ".");
-      LOG(Logger::VERBOSE, "");
 
       if (config->usingSockets() || config->usingDatagrams())
       {
