@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <arpa/inet.h>
 
 using namespace std;
 
@@ -39,7 +40,8 @@ static bool distHostSpecified;
 static bool distPortSpecified;
 static Logger* logger = Logger::getLogger();
 
-int parseArgvMask (const char* str, int argc, int* argFilterUnits);
+int parseArgvMask(const char* str, int argc, int* argFilterUnits);
+long int isNumber(string number);
 
 static void printHelpBanner()
 {
@@ -124,11 +126,23 @@ OptionConfig *OptionParser::run() const
         }
         else if (args[i].find("--host=") != string::npos) {
             string host = args[i].substr(strlen("--host="));
+            struct in_addr p;
+            if (inet_pton(AF_INET, host.c_str(), &p) == 0) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--host=' parameter");
+                return NULL;
+            }
             config->setHost(host);
         }
         else if (args[i].find("--dist-host=") != string::npos) {
             distHostSpecified = true;
             string host = args[i].substr(strlen("--dist-host="));
+            struct in_addr p;
+            if (inet_pton(AF_INET, host.c_str(), &p) == 0) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--dist-host=' parameter");
+                return NULL;
+            }
             config->setDistHost(host);
         }
         else if (args[i].find("--report-log=") != string::npos) {
@@ -145,6 +159,11 @@ OptionConfig *OptionParser::run() const
                 config->setDepth(0);
             }
             else {
+                if (isNumber(depth) == -1) {
+                    delete config;
+                    LOG(Logger::ERROR, "invalid '--depth' parameter.");
+                    return NULL;
+                }
                 config->setDepth(atoi(depth.c_str()));
             }
         }
@@ -154,6 +173,11 @@ OptionConfig *OptionParser::run() const
         }
         else if (args[i].find("--alarm=") != string::npos) {
             string alarm = args[i].substr(strlen("--alarm="));
+            if (isNumber(alarm) == -1) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--alarm' parameter.");
+                return NULL;
+            }
             config->setAlarm(atoi(alarm.c_str()));
         }
         else if (args[i].find("--func-name=") != string::npos) {
@@ -170,19 +194,39 @@ OptionConfig *OptionParser::run() const
         }
         else if (args[i].find("--tracegrind-alarm=") != string::npos) {
             string alarm = args[i].substr(strlen("--tracegrind-alarm="));
+            if (isNumber(alarm) == -1) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--tracegrind-alarm' parameter.");
+                return NULL;
+            }
             config->setTracegrindAlarm(atoi(alarm.c_str()));
         }
         else if (args[i].find("--port=") != string::npos) {
             string port = args[i].substr(strlen("--port="));
+            if (isNumber(port) == -1 || isNumber(port) > 65535) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--port' parameter.");
+                return NULL;
+            }
             config->setPort(atoi(port.c_str()));
         }
         else if (args[i].find("--dist-port=") != string::npos) {
             distPortSpecified = true;
             string port = args[i].substr(strlen("--dist-port="));
+            if (isNumber(port) == -1 || isNumber(port) > 65535) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--dist-port' parameter.");
+                return NULL;
+            }
             config->setDistPort(atoi(port.c_str()));
         }
         else if (args[i].find("--remote-port=") != string::npos) {
             string port = args[i].substr(strlen("--remote-port="));
+            if (isNumber(port) == -1 || isNumber(port) > 65535) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--remote-port' parameter.");
+                return NULL;
+            }
             config->setRemotePort(atoi(port.c_str()));
         }
         else if (args[i].find("--stp-threads=") != string::npos) {
@@ -496,3 +540,16 @@ int parseArgvMask (const char* str, int argc, int* argFilterUnits)
     return 0;
 }
 
+// Determine whether a string is positive number
+
+long int isNumber(string number)
+{
+    char* p;
+    long int x = strtol(number.c_str(), &p, 10); 
+
+    if ((p - number.c_str()) == number.length()) {
+        if (x >= 0) return x;
+        else return -1;
+    }
+    else return -1;
+}
