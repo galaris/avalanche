@@ -63,7 +63,8 @@ public:
 
     // Get call stack from 'position' in 'buf'
     std::string getCallStack (int & position);
-    std::string getErrorType (int & position);
+    std::string getExploitType ();
+    std::string getMemoryErrorType (int & position);
 
     std::string getBuf ();
 

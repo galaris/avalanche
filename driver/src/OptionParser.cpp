@@ -26,6 +26,8 @@
 #include "OptionParser.h"
 #include "OptionConfig.h"
 
+#include "Logger.h"
+
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +37,61 @@ using namespace std;
 
 static bool distHostSpecified;
 static bool distPortSpecified;
+static Logger* logger = Logger::getLogger();
+
+int parseArgvMask (const char* str, int argc, int* argFilterUnits);
+
+static void printHelpBanner()
+{
+    char banner[] =
+        "usage: avalanche [options] prog-and-args\n\n"
+        "  user options defined in [ ]:\n"
+        "    --help                       Print help and exit\n"
+        "    --use-memcheck               Use memcheck instead of covgrind\n"
+        "    --leaks                      Check for memory leaks\n"
+        "                                 (ignored if '--use-memcheck' isn't specified)\n"
+        "    --verbose, -v                Printing information about iteration (depth, heuristic), exploits/memchecks\n"
+        "                                 (time, output file)\n"
+        "    --program-output             Show program output at logs\n"
+        "    --network-log                Show network logs\n"
+        "    --debug                      Save some debugging information - divergent inputs, etc.\n"
+        "    --depth=<number>             The number of conditions collected during one run of tracegrind\n"
+        "                                 (default is 100). May be used in the form '--depth=infinity',\n"
+        "                                 which means that tracegrind should collect all conditions in the trace\n"
+        "    --alarm=<number>             Timer value in seconds (for infinite loop recognition) (default is 300)\n"
+        "    --filename=<input_file>      The path to the file with the input data for the application being tested\n"
+        "    --trace-children             Run valgrind plugins with '--trace-children=yes' option\n"
+        "    --check-danger               Emit special constraints for memory access operations\n"
+        "                                 and divisions (slows down the analysis)\n"
+        "    --dump-calls                 Dump the list of functions manipulating with tainted data to calldump.log\n"
+        "    --func-name=<name>           The name of function that should be used for separate function analysis\n"
+        "    --func-file=<name>           The path to the file with the list of functions that\n"
+        "                                 should be used for separate function analysis\n"
+        "    --mask=<mask_file>           The path to the file with input mask\n"
+        "    --suppress-subcalls          Ignore conditions in a nested function calls during separate analysis\n"
+        "    --stp-threads=<number>       The number of STP queries handled simultaneously. May be used in the form\n"
+        "                                 '--stp-threads=auto'. In this case the number of CPU cores is taken.\n"
+        "    --report-log=<filename>      Dump exploits report to the specified file\n"
+        "\n"
+        "  special options for sockets:\n"
+        "    --sockets                    Mark data read from TCP sockets as tainted\n"
+        "    --host=<IPv4 address>        IP address of the network connection (for TCP sockets only)\n"
+        "    --port=<number>              Port number of the network connection (for TCP sockets only)\n"
+        "    --datagrams                  Mark data read from UDP sockets as tainted\n"
+        "    --alarm=<number>             Timer for breaking infinite waitings in covgrind\n"
+        "                                 or memcheck (not set by default)\n"
+        "    --tracegrind-alarm=<number>  Timer for breaking infinite waitings in tracegrind (not set by default)\n"
+        "\n"
+        "  options for distributed Avalanche:\n"
+        "    --distributed                Tell Avalanche that it should connect to distribution server\n"
+        "                                 and run distributed analysis\n"
+        "    --dist-host=<IPv4 address>   IP address of the distribution server (default is 127.0.0.1)\n"
+        "    --dist-port=<number>         Port number of the distribution server (default is 12200)\n"
+        "    --protect-main-agent         Do not send inputs to the remore agents, if the overall number\n"
+        "                                 of inputs in the main agent do not exceed 5 * <number_of_agents>\n";
+
+    LOG(Logger::JOURNAL, banner);
+}
 
 OptionParser::OptionParser(int argc, char *argv[])
 {
@@ -51,6 +108,7 @@ OptionConfig *OptionParser::run() const
     distPortSpecified = false;
     bool fileSpecified = false;
     size_t sl = progName.find_last_of('/');
+    size_t progArgc = 0;
     if (sl != string::npos) {
         config->setValgrind(progName.substr(0, sl + 1));
     }
@@ -225,6 +283,7 @@ OptionConfig *OptionParser::run() const
             config->setUsingDatagrams();
         }
         else if (args[i] == "--help") {
+            printHelpBanner();
             delete config;
             return NULL;
         }
@@ -232,42 +291,88 @@ OptionConfig *OptionParser::run() const
             // Program name and arguments
 
             config->addProgAndArg(args[i]);
-            for (size_t j = i + 1; j < args.size(); j++)
+            size_t j;
+            for (j = i + 1; j < args.size(); j++)
+            {
                 config->addProgAndArg(args[j]);
+            }
+            progArgc = j - i;
             break;
         }
     }
         if (config->getAgent() && config->getDistributed()) {
         delete config;
-        cout << "you cannot specify '--agent' and '--distributed' at the same time\n";
+        LOG(Logger::ERROR, "you cannot specify '--agent' and '--distributed' at the same time");
     }
 
     if (config->usingMemcheck() && config->getDumpCalls()) {
         delete config;
-        cout << "'--dump-calls' should be used without '--use-memcheck'\n";
+        LOG(Logger::ERROR, "'--dump-calls' should be used without '--use-memcheck'");
         return NULL;
     }
 
     if (!fileSpecified && !config->usingSockets() && !config->usingDatagrams() && (config->getCheckArgv() == "")) {
         delete config;
-        cout << "no input files or sockets specified and command line option checking is not enabled\n";
+        LOG(Logger::ERROR, "no input files or sockets specified and command line option checking is not enabled");
         return NULL;
     }
     else if (config->usingSockets() && ((config->getPort() == 65536) || (config->getHost() == ""))) {
         delete config;
-        cout << "if '--sockets' option is specified, then IP host address and port number must be also provided\n";
+        LOG(Logger::ERROR, "if '--sockets' option is specified, then IP host address and port number must be also provided");
         return NULL;
     }
     else if (fileSpecified && (config->usingSockets() || config->usingDatagrams())) {
         delete config;
-        cout << "you cannot specify '--filename' and '--sockets' or '--datagrams' at the same time\n";
+        LOG(Logger::ERROR, "you cannot specify '--filename' and '--sockets' or '--datagrams' at the same time");
         return NULL;
     }
    /* else if (config->getRemoteValgrind() && (config->getSTPThreads() != 0)){
         delete config;
-        cout << "you cannot use remote valgrind plugin agent with STP parallelization enabled\n";
+        LOG(Logger::ERROR, "you cannot use remote valgrind plugin agent with STP parallelization enabled");
         return NULL;
     }*/
+    else if (config->getCheckArgv() != "")
+    {
+        int* argFilterUnits = (int*) malloc((progArgc - 1) * sizeof(int));
+    
+        if (int error = parseArgvMask(config->getCheckArgv().c_str(), progArgc, argFilterUnits))
+        {
+            delete config;
+            switch (error)
+            {
+                case 1: LOG(Logger::ERROR, "invalid '--check-argv' argument."); break;
+                case 2: LOG(Logger::ERROR, "some '--check-argv' arguments are not a digits."); break;
+                case 3: LOG(Logger::ERROR, "invalid '--check-argv' argument number."); break;
+                case 4: LOG(Logger::ERROR, "duplicate '--check-argv' argument."); break;
+            }
+            return NULL;
+        }
+
+        for (int j = 0; j < config->getNumberOfFiles(); j++)
+        {
+            bool correspond = false;
+            for (int i = 0; i < progArgc; i++)
+            {
+                if (config->getFile(j) == config->getProgAndArg().at(i))
+                {
+                    if (argFilterUnits[i - 1]) 
+                    {
+                        delete config;
+                        LOG(Logger::ERROR, "you cannot specify '--filename' and '--check-argv' for the same files.");
+                        return NULL;
+                    }
+                    correspond = true;
+                }
+            }
+            if (!correspond)
+            {
+                LOG(Logger::ERROR, "file " + (config->getFile(j)) + " is not a program argument.");
+                delete config;
+                return NULL;
+            }
+        }
+        free(argFilterUnits);
+    }
     reportDummyOptions(config);
     return config;
 }
@@ -305,9 +410,9 @@ void OptionParser::reportDummyOptions(OptionConfig* config) const
         dummy_opts.push_back(opt.append("(you should specify '--distributed')"));
     }
     if (dummy_opts.size()) {
-        cout << "several options have no effect:\n";
+        LOG(Logger::ERROR, "several options have no effect:");
         for (vector <string>::iterator i = dummy_opts.begin(); i != dummy_opts.end(); i ++) {
-            cout << *i << endl;
+            LOG(Logger::ERROR, *i);
         }
     }
 }
@@ -340,3 +445,54 @@ void OptionParser::setProgName(const string &path)
         progName = path;
     } 
 }
+
+// Parsing mask from "--check-argv" argument
+
+int parseArgvMask (const char* str, int argc, int* argFilterUnits)
+{
+    for (int i = 0; i < argc - 1; i++)
+    {
+        argFilterUnits[i] = 0;
+    }
+    int i, curOffset = 0;
+    char* curStr = (char*) malloc(strlen(str) * sizeof(char));
+    char** endPtr = (char**) malloc(sizeof(char*));
+    *endPtr = curStr;
+    for (;;)
+    {
+        if (isspace(*str) || (*str == '\0'))
+        {
+            curStr[curOffset] = '\0';
+            curOffset = 0;
+            int index = strtol(curStr, endPtr, 10);
+            if (index > argc - 1 || index <= 0)
+            {
+                return 3; // invalid argument number
+            }
+            if (*endPtr == curStr)
+            {
+                return 1;
+            }
+            if (argFilterUnits[index - 1]) return 4; // duplicate
+            argFilterUnits[index - 1] = 1;
+            if (*str == 0)
+            {
+                break;
+            }
+            str++;
+        }
+        else if (isdigit(*str))
+        {
+            curStr[curOffset++] = *(str++);
+        }
+        else
+        {
+            return 2; // is not digit
+        }
+    }
+    free(endPtr);
+    free(curStr);
+
+    return 0;
+}
+

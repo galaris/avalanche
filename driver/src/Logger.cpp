@@ -71,12 +71,14 @@ void Logger::write(Level level, const string & msg, const char * file, size_t li
     int i = 0, j;
 
     while (1)
+    {
       if ((i = message.find ("\033", i)) != -1)
       {
         for (j = i; message [j] != 'm'; j++);
         message.replace (i, j - i + 1, "");
       }
       else break;
+    }
   }
 
   switch (level) 

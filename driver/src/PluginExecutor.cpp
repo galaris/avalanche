@@ -150,7 +150,7 @@ int PluginExecutor::run(int thread_index)
     {
         if (!monitor->getKilledStatus())
         {
-            LOG(Logger :: DEBUG, "Exited on signal.");
+            LOG(Logger::DEBUG, plugin_name + " exited on signal.");
             return -1;
         }
         else
@@ -167,17 +167,8 @@ int PluginExecutor::run(int thread_index)
     {
         msg << "Thread #" << thread_index << ": ";
     }
-      
-    switch (kind)
-    {
-        case TG: LOG(Logger :: DEBUG, msg.str().append("Tracegrind is finished."));
-                 break;
-        case MC: LOG(Logger :: DEBUG, msg.str().append("Memcheck is finished."));
-                 break;
-        case CV: LOG(Logger :: DEBUG, msg.str().append("Covgrind is finished."));
-                 break;
-        default: break;
-    }
+    
+    LOG(Logger::DEBUG, msg.str().append(plugin_name + " is finished."));
 
     return 0;
 }
