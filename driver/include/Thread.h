@@ -56,7 +56,7 @@ class Thread
            ~Thread() {}
 
            int createThread(void* data, bool is_joinable = true);
-           virtual int waitForThread();
+           virtual void waitForThread();
            
            static void* createAndRun(void* input);
 
@@ -119,7 +119,7 @@ class PoolThread : public Thread
            PoolThread() : work_finish_mutex(NULL), work_finish_cond(NULL), thread_status(-1), active_threads(NULL) {}
            ~PoolThread() {}
 
-           int waitForThread()
+           void waitForThread()
            {
              if (thread_status != UNINIT)
              {

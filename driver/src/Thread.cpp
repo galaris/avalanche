@@ -23,6 +23,7 @@
 
 #include "Thread.h"
 #include <signal.h>
+#include <iostream>
 
 using namespace std;
 
@@ -67,11 +68,9 @@ void Thread::printMessage(const char* message, bool show_real_tid)
     cout << ": " << message << endl; 
 }
 
-int Thread::waitForThread()
+void Thread::waitForThread()
 {
-    void *p_result;
-    pthread_join(tid, &p_result);
-    return (long)(p_result);
+    pthread_join(tid, NULL);
 }
 
 void Thread::doWork(void* data)

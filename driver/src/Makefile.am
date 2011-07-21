@@ -9,7 +9,7 @@ CXXLD = $(CC)
 LIBS = -static-libgcc -Wl,-Bstatic,-lstdc++,-Bdynamic
 
 avalanche_SOURCES = \
-       Chunk.cpp \
+       Error.cpp \
        Entry.cpp \
        LocalExecutor.cpp \
        RemotePluginExecutor.cpp \

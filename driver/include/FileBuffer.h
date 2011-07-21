@@ -56,7 +56,6 @@ public:
     virtual int applySTPSolution(char* buf);
     
     bool filterCovgrindOutput ();
-    char * filterMemcheckOutput (long errors);
 
     // Return the number after first appearence of 'str' in 'buf'
     long filterCount (const char *str);

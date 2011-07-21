@@ -267,14 +267,11 @@ bool FileBuffer::filterCovgrindOutput()
     int skipLength = check_pid - buf + 2;
     char* bug_start = strstr(buf, "Process terminating");
     if (bug_start == NULL) return false;
-    bug_start = strstr(bug_start, "at 0x");
-    if (bug_start == NULL) return false;
-    char* last_bug_line = bug_start;
+    char* stack_start = strstr(bug_start, "at 0x");
+    if (stack_start == NULL) return false;
+    char* last_bug_line = stack_start;
     char* last_bug_sym = strchr(last_bug_line, '\n');
-    if (last_bug_sym == NULL)
-    {
-        return false;
-    }
+    if (last_bug_sym == NULL) return false;
     last_bug_line = last_bug_sym + 1;
     char* tmp,* prev_new_line = last_bug_sym;
     while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && (tmp < last_bug_sym))
@@ -357,7 +354,10 @@ string FileBuffer::getMemoryErrorType(int &position)
   int end;
 
   string error_type;
-
+    
+    string str_buf = buf;
+    int min_pos = INT_MAX;
+    string min_error_type;
   string memory_errors [] =
   {
     " contains unaddressable byte(s)",
@@ -381,19 +381,22 @@ string FileBuffer::getMemoryErrorType(int &position)
 
     if (found != string::npos) // if found
     {
-      int j, k, l, m;
+      int j, k;
       for (k = found; buf[k] != '='; k++);
       for (j = found; buf[j] != '='; j--);
             
-      error_type = string(buf).substr(j + 2, k - j - 3);
-
-      position = k;
-
-      return error_type;
-    }
-    i++;
+            if (k < min_pos)
+            {
+                min_pos = k;
+                min_error_type = str_buf.substr (j + 2, k - j - 3);
+            }
+        }
+    i ++;
   }
-  return "Unknown memory error type";
+
+    position = min_pos;
+    return min_error_type;
+
 }
 
 // Memcheck error call stack
@@ -406,7 +409,11 @@ string FileBuffer::getCallStack (int & position)
 
     // Call stack parsing
 
-    int l; 
+    int l;
+    if (position > strlen(buf))
+    {
+        return "";
+    } 
 
     for (l = position; !(buf [l] == '=' && buf [l + 2] == '\n'); l++);
 
