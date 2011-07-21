@@ -384,11 +384,11 @@ OptionConfig *OptionParser::run() const
             delete config;
             switch (error)
             {
-                case 1: LOG(Logger::ERROR, "invalid '--check-argv' argument."); break;
-                case 2: LOG(Logger::ERROR, "some '--check-argv' arguments are not a digits."); break;
-                case 3: LOG(Logger::ERROR, "invalid '--check-argv' argument number."); break;
-                case 4: LOG(Logger::ERROR, "duplicate '--check-argv' argument."); break;
+                case 1: LOG(Logger::ERROR, "invalid '--check-argv' argument number."); break;
+                case 2: LOG(Logger::ERROR, "duplicate '--check-argv' argument."); break;
+                default: break;
             }
+            free(argFilterUnits);
             return NULL;
         }
 
@@ -499,7 +499,7 @@ int parseArgvMask (const char* str, int argc, int* argFilterUnits)
         argFilterUnits[i] = 0;
     }
     int i, curOffset = 0;
-    char* curStr = (char*) malloc(strlen(str) * sizeof(char));
+    char* curStr = (char*) malloc((strlen(str) + 1) * sizeof(char));
     char** endPtr = (char**) malloc(sizeof(char*));
     *endPtr = curStr;
     for (;;)
@@ -511,13 +511,13 @@ int parseArgvMask (const char* str, int argc, int* argFilterUnits)
             int index = strtol(curStr, endPtr, 10);
             if (index > argc - 1 || index <= 0)
             {
-                return 3; // invalid argument number
+                return 1; // invalid argument number
             }
             if (*endPtr == curStr)
             {
                 return 1;
             }
-            if (argFilterUnits[index - 1]) return 4; // duplicate
+            if (argFilterUnits[index - 1]) return 2; // duplicate
             argFilterUnits[index - 1] = 1;
             if (*str == 0)
             {
@@ -531,7 +531,7 @@ int parseArgvMask (const char* str, int argc, int* argFilterUnits)
         }
         else
         {
-            return 2; // is not digit
+            return 1; // is not digit
         }
     }
     free(endPtr);

@@ -42,7 +42,6 @@
 class FileBuffer;
 class OptionConfig;
 class Input;
-class Chunk;
 
 class Key
 {
@@ -91,16 +90,6 @@ public:
 
     void run();
 
-    void emulateClient();
-
-    void emulateServer();
-
-    void setupServer();
-
-    void makefifo();
-   
-    void cleanfifo();
-
     int processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index = 0);
 
     int processTraceSequental(Input* first_input, unsigned long first_depth);
@@ -114,8 +103,7 @@ public:
     int calculateScore(std::string filaNameModifier = "");
     int checkAndScore(Input* input, bool addNoCoverage, bool first_run, std::string fileNameModifier = "");
 
-    int dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group, Chunk* ch, std::string exploit_type);
-    int dumpMemoryError (Input * input, FileBuffer * mc_output, bool sameExploit, int exploitGroup, Chunk* ch);
+    int dumpError(Input *input, std::string error_trace, int error_type, bool store);
     
     bool updateArgv(Input* input);
 
@@ -141,7 +129,7 @@ private:
     std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
     int exploits;
-		int memchecks;
+    int memchecks;
     int divergences;
 };
 

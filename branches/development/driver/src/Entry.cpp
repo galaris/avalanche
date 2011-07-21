@@ -1,8 +1,8 @@
-/*----------------------------------------------------------------------------------------*/
-/*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------- Entry.cpp ----------------------------------------*/
-/*----------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+/*------------------------------ AVALANCHE ----------------------------------*/
+/*- Driver. Coordinates other processes, traverses conditional jumps tree. --*/
+/*------------------------------ Entry.cpp ----------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 /*
    Copyright (C) 2009 Ildar Isaev
@@ -36,7 +36,7 @@
 #include "OptionConfig.h"
 #include "OptionParser.h"
 #include "Input.h"
-#include "Chunk.h"
+#include "Error.h"
 #include "Thread.h"
 #include "Monitor.h"
 
@@ -47,6 +47,7 @@
 #include <cstdlib>
 #include <string.h>
 #include <cerrno>
+#include <fstream>
 
 using namespace std;
 
@@ -59,7 +60,7 @@ OptionParser *op;
 extern Thread remote_thread;
 extern PoolThread *threads;
 extern Input* initial;
-extern vector<Chunk*> report;
+extern vector<Error*> report;
 
 extern int in_thread_creation;
 
@@ -78,14 +79,15 @@ void cleanUp()
         {
             ostringstream file_modifier;
             file_modifier << "_" << i;
-            unlink((dir_name + string("basic_blocks").append(file_modifier.str()).append(".log")).c_str());
-            unlink((dir_name + string("execution").append(file_modifier.str()).append(".log")).c_str());
-            unlink((dir_name + string("curtrace").append(file_modifier.str()).append(".log")).c_str());
-            unlink((dir_name + string("replace_data").append(file_modifier.str())).c_str());
-            unlink((dir_name + string("argv.log").append(file_modifier.str())).c_str());
+            string modifier_log = file_modifier.str() + string(".log");
+            unlink((dir_name + string("basic_blocks") + modifier_log).c_str());
+            unlink((dir_name + string("execution") + modifier_log).c_str());
+            unlink((dir_name + string("curtrace") + modifier_log).c_str());
+            unlink((dir_name + string("replace_data") + modifier_log).c_str());
+            unlink((dir_name + string("argv.log") + modifier_log).c_str());
             for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
             {
-                unlink(opt_config->getFile(j).append(file_modifier.str()).c_str());
+                unlink((opt_config->getFile(j) + file_modifier.str()).c_str());
             }
         }
         delete []threads;
@@ -134,15 +136,14 @@ void reportResults()
 {
     // Exploits report
 
-    int fd = -1;
     bool to_file = (opt_config -> getReportLog() != string (""));
+    ofstream report_f;
 
     if (to_file)
     {
-        fd = open (opt_config -> getReportLog().c_str(), 
-                   O_WRONLY | O_CREAT | O_TRUNC,
-                   S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP );
-        if (fd == -1)
+        report_f.open((opt_config->getResultDir() + 
+                        opt_config->getReportLog()).c_str());
+        if (report_f.bad())
         {
           to_file = false;
         }
@@ -158,23 +159,44 @@ void reportResults()
     {
         for (int i = 0; i < report.size(); i++)
         {
-            report.at(i)->print(opt_config->getPrefix(), i, fd);
+            string summary = 
+                report.at(i)->getSummary(opt_config->getPrefix(),
+                                         opt_config->getNumberOfFiles(),false);
+            if (to_file)
+            {
+                report_f << summary;
+            }
+            else
+            {
+                LOG(Logger::REPORT, summary);
+            }
         }
     }
 
-    if (to_file)
+    ofstream error_f((opt_config->getResultDir() + "error_list.log").c_str());
+    if (error_f.bad())
     {
-        close(fd);
+        LOG(Logger::ERROR, 
+                "Error opening file " << opt_config->getResultDir() <<
+                "error_list.log: " << strerror(errno));
+    }
+    else
+    {
+        for (int i = 0; i < report.size(); i ++)
+        {
+            error_f << report[i]->getList();
+        }
+        error_f.close();
     }
 
     // Time statistics
 
     time_t end_time = time(NULL);
-    LOG (Logger::REPORT, "Time statistics: " << 
+    LOG (Logger::REPORT, endl << "Time statistics: " << 
         end_time - monitor->getGlobalStartTime() << " sec, " << 
         monitor->getStats(end_time - monitor->getGlobalStartTime() - 
                                      monitor->getNetworkOverhead()));
-
+    LOG(Logger::REPORT, "");
 }
 
 void sig_hndlr(int signo)
@@ -185,7 +207,9 @@ void sig_hndlr(int signo)
         shutdown(dist_fd, SHUT_RDWR);
         close(dist_fd);
     }
-    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+    if (!(opt_config->usingSockets()) && 
+        !(opt_config->usingDatagrams()) &&
+        (initial != NULL))
     {
         initial->dumpFiles();
     }
@@ -218,7 +242,8 @@ int main(int argc, char *argv[])
         
     if (opt_config == NULL || opt_config->empty()) 
     {
-        LOG(Logger::JOURNAL, "Use 'avalanche --help' for a complete options list.");
+        LOG(Logger::JOURNAL, 
+                "Use 'avalanche --help' for a complete options list.");
         return EXIT_FAILURE;
     }
 
@@ -228,11 +253,13 @@ int main(int argc, char *argv[])
     if (opt_config -> getNetworkLog ()) logger -> setNetworkLog ();
 
     thread_num = opt_config->getSTPThreads();
-    string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") : string("covgrind"));
+    string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") 
+                                                         : string("covgrind"));
     if (thread_num > 0)
     {
         monitor = new ParallelMonitor(checker_name, start_time, thread_num);
-        ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
+        ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), 
+                                              opt_config->getTracegrindAlarm());
         threads = new PoolThread[thread_num];
     }
     else
@@ -240,19 +267,18 @@ int main(int argc, char *argv[])
         monitor = new SimpleMonitor(checker_name, start_time);
     }
     checker_name.clear();
-    time_t work_start_time = time(NULL);
-    string t = string(ctime(&work_start_time));
-
     LOG_TIME (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
 
     if (opt_config->getResultDir() != string(""))
     {
-        if (mkdir(opt_config->getResultDir().c_str(), S_IRWXG | S_IRWXO | S_IRWXU) < 0)
+        if (mkdir(opt_config->getResultDir().c_str(), 
+                  S_IRWXG | S_IRWXO | S_IRWXU) < 0)
         {
             if (errno != EEXIST)
             {
-                LOG(Logger::ERROR, "Cannot create directory " << opt_config->getResultDir() <<
-                                   " : " << strerror(errno));
+                LOG(Logger::ERROR, 
+                        "Cannot create directory " << 
+                        opt_config->getResultDir() << ": " << strerror(errno));
                 opt_config->setResultDir("");
             }
         }
