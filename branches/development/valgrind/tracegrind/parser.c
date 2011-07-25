@@ -39,9 +39,15 @@
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_hashtable.h"
 #include "pub_tool_xarray.h"
+#include "pub_tool_oset.h"
 
 extern VgHashTable funcNames;
 XArray* inputFilter;
+
+/* This has a pair {index, offsets} for each file */
+extern XArray *usedOffsets;
+/* This has a pair {index, filename} for each file */
+extern XArray *inputFiles;
 
 Bool isStandardFunction (Char* objName)
 {
@@ -188,6 +194,45 @@ Bool cmpNames (Char* fnName, Char* checkName)
   if (iCh == sizeCh && iFn == sizeFn) 
     return True;
   return False;
+}
+
+Bool storeUsedOffsets(Char* fileName)
+{
+  SysRes openRes = 
+    VG_(open)(fileName, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT,
+              VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP | 
+              VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP);
+  if (sr_isError(openRes))
+  {
+    return False;
+  }
+  Int fd = sr_Res(openRes);
+
+  Int previousOffset = 0, i, j;
+  Word value;
+  for (j = 0; j < VG_(sizeXA) (usedOffsets); j ++)
+  {
+    OSet *offsetSet = *((OSet **) VG_(indexXA) (usedOffsets, j));
+    Char *fileName = * ((Char **) VG_(indexXA) (inputFiles, j));
+    VG_(OSetWord_ResetIter) (offsetSet);
+    VG_(write) (fd, fileName, VG_(strlen) (fileName));
+    while(VG_(OSetWord_Next) (offsetSet, &value)) 
+    {
+      for (i = previousOffset; i < value - 1; i ++) 
+      {
+        VG_(write) (fd, "\0", 1);
+      }
+      VG_(write) (fd, "\1", 1);
+      previousOffset = value;
+    }
+    VG_(OSetWord_Destroy) (offsetSet);
+    VG_(free) (fileName);
+    VG_(write) (fd, "\n", 1);
+  }
+  VG_(close) (fd);
+  VG_(deleteXA) (inputFiles);
+  VG_(deleteXA) (usedOffsets);
+  return True;
 }
 
 Bool cutTemplates(Char* fnName)

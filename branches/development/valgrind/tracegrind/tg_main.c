@@ -37,6 +37,7 @@
 #include "pub_tool_tooliface.h"
 #include "pub_tool_hashtable.h"
 #include "pub_tool_xarray.h"
+#include "pub_tool_oset.h"
 #include "pub_tool_clientstate.h"
 #include "pub_tool_aspacemgr.h"
 #include "pub_tool_libcfile.h"
@@ -90,6 +91,12 @@ Char* hostTempDir;
 
 Bool newSB;
 IRSB* printSB;
+
+/* We can't use curfilenum, since one file can be opened several
+     times. Using {file_name, offsets} map will be costly, that's why
+     we'll make two arrays and use indices in both as a link key. */
+XArray *inputFiles;
+XArray *usedOffsets;
 
 Int fdfuncFilter = -1;
 
@@ -444,6 +451,7 @@ void taintMemoryFromArgv(HWord key, HWord offset)
   node->key = key;
   node->filename = "argv_dot_log";
   node->offset = offset;
+  node->fileIndex = 'a';
   VG_(HT_add_node)(taintedMemory, node);
   if (hostTempDir != NULL)
   {
@@ -464,7 +472,7 @@ void taintMemoryFromArgv(HWord key, HWord offset)
 }
 
 static
-void taintMemoryFromFile(HWord key, HWord offset)
+void taintMemoryFromFile(HWord key, HWord offset, Char fileIndex)
 {
   Int l;
   Char ss[256];
@@ -472,6 +480,7 @@ void taintMemoryFromFile(HWord key, HWord offset)
   node->key = key;
   node->filename = curfile;
   node->offset = offset;
+  node->fileIndex = fileIndex;
   VG_(HT_add_node)(taintedMemory, node);
   l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(" PTR_SIZE ") OF BITVECTOR(8) = memory_%d WITH [0hex" PTR_FMT "] := file_%s[0hex%08lx];\n", 
                    memory + 1, memory, key, curfile, offset);
@@ -488,6 +497,7 @@ void taintMemoryFromSocket(HWord key, HWord offset)
   taintedNode* node = VG_(malloc)("taintMemoryNode", sizeof(taintedNode));
   node->key = key;
   node->filename = NULL;
+  node->fileIndex = 0;
   node->offset = offset;
   VG_(HT_add_node)(taintedMemory, node);
   l = VG_(sprintf)(ss, "memory_%d : ARRAY BITVECTOR(" PTR_SIZE ") OF BITVECTOR(8) = memory_%d WITH [0hex" PTR_FMT "] := socket_%d[0hex%08lx];\n", 
@@ -959,12 +969,31 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
   UWord index;
   if (isRead && (curfile != NULL))
   {
+    Int i;
+    Bool makeNewEntry = True;
+    for (i = 0; i < VG_(sizeXA) (inputFiles); i ++)
+    {
+      if (!VG_(strcmp) (*((Char**)(VG_(indexXA) (inputFiles, i))), curfile))
+      {
+        makeNewEntry = False;
+        break;
+      }
+    }
+    if (makeNewEntry)
+    {
+      Char *newInputFile = VG_(strdup) ("inputFilesEntry", curfile);
+      VG_(addToXA) (inputFiles, &newInputFile);
+    }
     for (index = a; (index < (a + size)) && (curoffs + (index - a) < cursize); index += 1)
     {
-      if (checkInputOffset(curfilenum, curoffs + (index - a)))
+      if (inputFilterEnabled)
       {
-        taintMemoryFromFile(index, curoffs + (index - a));
+        if (checkInputOffset(curfilenum, curoffs + (index - a)))
+        {
+          taintMemoryFromFile(index, curoffs + (index - a), i + 1);
+        }
       }
+      else taintMemoryFromFile(index, curoffs + (index - a), i + 1);
     }
   }
   else if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
@@ -1031,12 +1060,30 @@ void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_h
   Addr index = a;
   if (isMap && (curfile != NULL))
   {
+    Int i;
+    Bool makeNewEntry = True;
+    for (i = 0; i < VG_(sizeXA) (inputFiles); i ++)
+    {
+      if (!VG_(strcmp) (VG_(indexXA) (inputFiles, i), curfile))
+      {
+        makeNewEntry = False;
+        break;
+      }
+    }
+    if (makeNewEntry)
+    {
+      VG_(addToXA) (inputFiles, VG_(strdup) ("inputFilesEntry", curfile));
+    }
     for (index = a; (index < (a + size)) && (index < (a + cursize)); index += 1)
     {
-      if (checkInputOffset(curfilenum, index - a))
+      if (inputFilterEnabled)
       {
-        taintMemoryFromFile(index, index - a);
+        if (checkInputOffset(curfilenum, index - a))
+        {
+          taintMemoryFromFile(index, index - a, i + 1);
+        }
       }
+      else taintMemoryFromFile(index, index - a, i + 1);
     }
   }
   isMap = False;
@@ -1382,6 +1429,44 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
     }
     my_write(fdtrace, s, l);
     my_write(fddanger, s, l);
+    /* The first instruction in the chain of tainted operations is always
+         load from memory to IRTmp. Those tainted nodes that have filename
+         correspond to data directly read from input files. Only offsets
+         that are encountered here are used in the current run.
+       
+       Nodes with fileIndex = 'a' corresponds to program arguments.
+         We don't want these to be included in offsets.log. */
+    Int size = curNode->tempSize[tmp];
+    if ((t->fileIndex != '\0') && 
+        (t->fileIndex != 'a') 
+        && (t->filename != NULL))
+    {
+      Int i = 0;
+      OSet *offsetSet;
+      /* Haven't previously encountered loads from this file. Add it! */
+      if (t->fileIndex - 1 >= VG_(sizeXA) (usedOffsets))
+      {
+        offsetSet = VG_(OSetWord_Create) (VG_(malloc), 
+                                          "usedOffsetsChunk", VG_(free));
+        VG_(addToXA) (usedOffsets, &offsetSet);
+      }
+      else
+      {
+        offsetSet = *((OSet **)VG_(indexXA) (usedOffsets, t->fileIndex - 1));
+      }
+      /* We have to get initial offsets of all loaded bytes, 
+           so we load all nodes.*/
+      do
+      {
+        if (!VG_(OSetWord_Contains) (offsetSet, t->offset))
+	{ 
+	  VG_(OSetWord_Insert) (offsetSet, t->offset);
+	}
+        i ++;
+	t = VG_(HT_lookup) (taintedMemory, addr + i);
+      }
+      while ((i < (size >> 3)) && (t != NULL));
+    }
   }
 }
 
@@ -3084,6 +3169,9 @@ void instrumentExitRdTmp(IRStmt* clone, HWord guard, UInt tmp, ULong dst)
         VG_(close)(fd);
         VG_(free)(replaceFile);
       }
+      Char* offsetFile = concatTempDir("offsets.log");
+      storeUsedOffsets(offsetFile);
+      VG_(free)(offsetFile);
       VG_(exit)(0);
     }
   }
@@ -3458,6 +3546,9 @@ static void tg_fini(Int exitcode)
   {
     VG_(close)(fdfuncFilter);
   }
+  Char* offsetFile = concatTempDir("offsets.log");
+  storeUsedOffsets(offsetFile);
+  VG_(free)(offsetFile);
 //  if (inputFilterEnabled) 
 //  {
 //    VG_(deleteXA)(inputFilter);
@@ -3830,7 +3921,10 @@ static void tg_pre_clo_init(void)
 
   taintedMemory = VG_(HT_construct)("taintedMemory");
   taintedRegisters = VG_(HT_construct)("taintedRegisters");
-
+  
+  usedOffsets = VG_(newXA) (VG_(malloc), "usedOffsets", VG_(free), sizeof(OSet*));
+  inputFiles = VG_(newXA) (VG_(malloc), "inputFiles", VG_(free), sizeof(Char*));
+  
   tempSizeTable = VG_(HT_construct)("tempSizeTable");
  
   funcNames = VG_(HT_construct)("funcNames");

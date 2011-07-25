@@ -62,6 +62,7 @@ struct _taintedNode
   HWord key;
   HChar* filename;
   ULong offset;
+  Char fileIndex;
 };
 
 typedef struct _taintedNode taintedNode;

@@ -61,7 +61,8 @@ SocketBuffer::SocketBuffer(const SocketBuffer& other)
     buf[size] = '\0';
 }
 
-FileBuffer* SocketBuffer::forkInput(FileBuffer *stp_file)
+FileBuffer* SocketBuffer::forkInput(FileBuffer *stp_file,
+                                    vector<FileOffsetSet> &used_offsets)
 {
     if (stp_file->getSize() > strlen("Valid"))
     {
@@ -84,7 +85,7 @@ FileBuffer* SocketBuffer::forkInput(FileBuffer *stp_file)
         LOG(Logger::ERROR, strerror(errno));
         return NULL;
     }
-    if (res->applySTPSolution(stp_file->buf) < 0)
+    if (res->applySTPSolution(stp_file->buf, used_offsets) < 0)
     {
         return NULL;
     }
@@ -95,7 +96,8 @@ int SocketBuffer::dumpFile(string file_name)
 {    
 }
     
-int SocketBuffer::applySTPSolution(char* buf)
+int SocketBuffer::applySTPSolution(char* buf,
+                                   vector<FileOffsetSet> &used_offsets)
 {
     char* pointer = buf;
     char* byte_value;

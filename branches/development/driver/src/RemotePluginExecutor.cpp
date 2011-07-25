@@ -296,12 +296,7 @@ int RemotePluginExecutor::run(int thread_index)
                    LOG(Logger::ERROR, "Plugin-agent ended abnormally");
                    return 1;
                }
-/*               readFileFromSocket(remote_fd, temp_dir + string("trace.log"));
-               if (checkFlag("--check-danger=yes"))
-               {
-                   readFileFromSocket(remote_fd, 
-                                      temp_dir + string("dangertrace.log"));
-               }*/
+               readFileFromSocket(remote_fd, temp_dir + string("offsets.log"));
                if (checkFlag("--dump-prediction=yes"))
                {
                    readFileFromSocket(remote_fd, 

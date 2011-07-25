@@ -1025,6 +1025,57 @@ void* process_query(void* data)
   return NULL;
 }
 
+int ExecutionManager::parseOffsetLog(vector<FileOffsetSet> &used_offsets)
+{
+  FileOffsetSet cur_offset_set;
+  string cur_file_name;
+  bool read_file_name = true;
+  bool saved_name = false;
+  char value;
+  unsigned long count = 0;
+  int fd = open((temp_dir + "offsets.log").c_str(), O_RDONLY,
+                 S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
+  if (fd < 0)
+  {
+    LOG(Logger::ERROR, 
+            "Cannot open file " << temp_dir << 
+            "offsets.log: " << strerror(errno));                    
+    return 0;
+  }
+  while (read(fd, &value, 1) > 0)
+  {
+    if (value == '\1')
+    {
+      cur_offset_set.offset_set.insert(count);
+      read_file_name = false;
+      count ++;
+    }
+    else if (value == '\n')
+    {
+      used_offsets.push_back(cur_offset_set);
+      cur_offset_set.offset_set.clear();
+      cur_file_name.clear();
+      count = 0;
+      saved_name = false;
+    }
+    else if (value == '\0')
+    {
+      read_file_name = false;
+    }
+    if (read_file_name)
+    {
+      cur_file_name.push_back(value);
+    }
+    else if (!saved_name)
+    {
+      cur_offset_set.file_name = cur_file_name;
+      saved_name = true;
+    }
+  }
+  close(fd);
+  return 1;
+}
+
 // Run STP
 
 int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index)
@@ -1070,15 +1121,15 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
         {
             return -1;
         }
-
-        LOG(Logger::DEBUG, "Thread #" << thread_index << ": STP output:\n");
+        vector<FileOffsetSet> used_offsets;
+        parseOffsetLog(used_offsets);
         LOG(Logger::DEBUG, "\033[2m" << stp_out_file->buf << "\033[0m");
         Input* next = new Input();
         int st_depth = first_input->startdepth;
         for (int k = 0; k < first_input->files.size(); k++)
         { 
             FileBuffer* fb = first_input->files.at(k);
-            fb = fb->forkInput(stp_out_file);
+            fb = fb->forkInput(stp_out_file, used_offsets);
             if (fb == NULL)
             {
                 delete next;

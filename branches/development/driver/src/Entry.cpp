@@ -103,6 +103,7 @@ void cleanUp()
         unlink((dir_name + string("actual.log")).c_str());
         unlink((dir_name + string("divergence.log")).c_str());
         unlink((dir_name + string("replace_data")).c_str());
+        unlink((dir_name + string("offsets.log")).c_str());
         if (opt_config->getCheckArgv() != "")
         {
             unlink((dir_name + string("argv.log")).c_str());
