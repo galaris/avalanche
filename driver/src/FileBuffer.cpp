@@ -97,7 +97,8 @@ FileBuffer::FileBuffer(char* _buf) // it is not file_name!
     buf[size] = '\0';
 }
 
-FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file)
+FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file, 
+                                  vector<FileOffsetSet> &used_offsets)
 {
     if (stp_file->getSize() > strlen("Valid"))
     {
@@ -124,7 +125,7 @@ FileBuffer* FileBuffer::forkInput(FileBuffer *stp_file)
         LOG(Logger::ERROR, strerror(errno));
         return NULL;
     }
-    if (res->applySTPSolution(stp_file->buf) < 0)
+    if (res->applySTPSolution(stp_file->buf, used_offsets) < 0)
     {
         return NULL;
     }
@@ -199,11 +200,34 @@ int FileBuffer::cutQueryAndDump(std::string file_name, bool do_invert)
     }
     size = old_size;
 }
-    
-int FileBuffer::applySTPSolution(char* buf)
+
+static 
+bool checkOffset(vector<FileOffsetSet> &used_offsets, 
+                 string file_name, unsigned long offset)
+{
+  for (vector<FileOffsetSet>::iterator it = used_offsets.begin(); 
+                                       it != used_offsets.end();
+                                       it ++)
+  {
+    if (it->file_name == file_name)
+    {
+      if (it->offset_set.find(offset) != it->offset_set.end())
+      {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+
+int FileBuffer::applySTPSolution(char* buf, 
+                                 vector<FileOffsetSet> &used_offsets)
 {
     char* pointer = buf;
     char* byte_value;
+    bool use_offset_log = (used_offsets.size() != 0);
+    string original_file_name;
     while ((byte_value = strstr(pointer, "file_")) != NULL)
     {
         char* brack = strchr(byte_value, '[');
@@ -213,6 +237,7 @@ int FileBuffer::applySTPSolution(char* buf)
         }
         *brack = '\0';
         std::string file_name(byte_value + 5);
+        original_file_name = file_name;
         size_t found = file_name.find("_slash_");
         while (found != std::string::npos) 
         {
@@ -242,7 +267,11 @@ int FileBuffer::applySTPSolution(char* buf)
             }
             char* value_begin = posend + 9;
             long value = strtol(value_begin, &pointer, 16);
-            this->buf[index] = value;
+            if (checkOffset(used_offsets, original_file_name, index) ||
+                !use_offset_log)
+            {
+                this->buf[index] = value;
+            }
         }
         else
         {
@@ -318,34 +347,6 @@ long FileBuffer::filterCount(const char * str)
         number = strtol(find + strlen(str), NULL, 10);
     }    
     return number;
-}
-
-// Exploit type
-
-string FileBuffer::getExploitType()
-{
-  string signals [] = {"SIGBUS", "SIGFPE", "SIGILL", "SIGSEGV", "SIGSYS", "SIGXCPU", "SIGXFSZ", ""};
-  string comments [] = 
-  {
-    "Bus error: access to undefined portion of memory object", 
-    "Floating point exception: erroneous arithmetic operation",
-    "Illegal instruction",
-    "Segmentation fault",
-    "Bad syscall",
-    "CPU time limit exceeded",
-    "File size limit exceeded",
-    "" 
-  };
-
-  int i = 0;
-  while (!signals[i].empty())
-  {
-    if (string(buf).find(signals[i], 0) != string::npos) 
-      return comments[i];
-    i++;
-  }
-
-  return "Crash";
 }
 
 // Memcheck error call stack
@@ -432,7 +433,7 @@ string FileBuffer::getCallStack (int & position)
     }
     while (begin != string::npos);
 
-    call_stack.at(call_stack.size() - 1) = '\0';
+    call_stack.at(call_stack.size() - 1) = '\n';
 
     return call_stack;
 }

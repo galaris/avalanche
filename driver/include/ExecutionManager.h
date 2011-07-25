@@ -42,6 +42,7 @@
 class FileBuffer;
 class OptionConfig;
 class Input;
+struct FileOffsetSet;
 
 class Key
 {
@@ -112,6 +113,8 @@ public:
     void updateInput(Input* input);
 
     void talkToServer();
+    
+    int parseOffsetLog(std::vector<FileOffsetSet> &used_offsets);
     
     int getMemchecks ();
 

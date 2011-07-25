@@ -36,11 +36,13 @@ public:
 
   SocketBuffer(const SocketBuffer& other);
 
-  virtual FileBuffer* forkInput(FileBuffer *stp_file);
+  virtual FileBuffer* forkInput(FileBuffer *stp_file, 
+                                std::vector<FileOffsetSet> &used_offsets);
 
   virtual int dumpFile(std::string file_name);
   
-  virtual int applySTPSolution(char* buf);
+  virtual int applySTPSolution(char* buf, 
+                               std::vector<FileOffsetSet> &used_offsets);
 
   ~SocketBuffer();
 

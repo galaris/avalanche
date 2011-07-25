@@ -326,11 +326,7 @@ static int passResult(int ret_code)
     switch(kind)
     {
         case TG: 
-/*            writeFromFile(temp_dir + string("trace.log"));
-            if (check_danger)
-            {
-                writeFromFile(temp_dir + string("dangertrace.log"));
-            }*/
+            writeFromFile(temp_dir + string("offsets.log"));
             if (dump_prediction)
             {
                 writeFromFile(temp_dir + string("actual.log"));
@@ -483,6 +479,7 @@ int main(int argc, char** argv)
     unlink((temp_dir + string("execution.log")).c_str());
     unlink((temp_dir + string("argv.log")).c_str());
     unlink((temp_dir + string("divergence.log")).c_str());
+    unlink((temp_dir + string("offsets.log")).c_str());
 
     /* STP multi-threading currently cannot be used in split mode */
     

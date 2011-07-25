@@ -211,6 +211,7 @@ string Error::getSummary(string prefix, int input_num, bool verbose)
 string Error::getList()
 {
     ostringstream out_stream;
+    out_stream << "Error " << id << endl;
     out_stream << trace << endl;
     out_stream << all_command << endl << endl;
     return out_stream.str();

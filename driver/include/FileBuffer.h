@@ -27,7 +27,14 @@
 #include <cstddef>
 #include <string>
 #include <sys/types.h>
+#include <set>
+#include <vector>
 
+struct FileOffsetSet
+{
+  std::string file_name;
+  std::set<unsigned long> offset_set;
+};
 
 class FileBuffer
 {
@@ -35,10 +42,6 @@ public:
 
     char* buf;
     int sd;
-    //unsigned int startdepth;
-    //bool* prediction;
-    //int predictionSize;
-    //FileBuffer* parent;
 
     friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
 
@@ -47,13 +50,15 @@ public:
     FileBuffer(const FileBuffer& other);
     FileBuffer(char* buf);
 
-    virtual FileBuffer* forkInput(FileBuffer *stp_file);
+    virtual FileBuffer* forkInput(FileBuffer *stp_file, 
+                                  std::vector<FileOffsetSet> &used_offsets);
 
     virtual int dumpFile(std::string file_name = "");
 
     int cutQueryAndDump(std::string file_name, bool do_invert = false);
 
-    virtual int applySTPSolution(char* buf);
+    virtual int applySTPSolution(char* buf, 
+                                 std::vector<FileOffsetSet> &used_offsets);
     
     bool filterCovgrindOutput ();
 
@@ -62,7 +67,6 @@ public:
 
     // Get call stack from 'position' in 'buf'
     std::string getCallStack (int & position);
-    std::string getExploitType ();
     std::string getMemoryErrorType (int & position);
 
     std::string getBuf ();
