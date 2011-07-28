@@ -2430,11 +2430,11 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, HWord value2, ULong value1)
     translate2(arg2, value2, taintedness);
     if (oprt == Iop_DivModU64to32)
     {
-      l = VG_(sprintf)(s, ")[31:0] @ 0hex00000000) | (0hex00000000 @ BVDIV(64,");
+      l = VG_(sprintf)(s, "))[31:0] @ 0hex00000000) | (0hex00000000 @ BVDIV(64,");
     }
     else
     {
-      l = VG_(sprintf)(s, ")[31:0] @ 0hex00000000) | (0hex00000000 @ SBVDIV(64,");
+      l = VG_(sprintf)(s, "))[31:0] @ 0hex00000000) | (0hex00000000 @ SBVDIV(64,");
     }
     my_write(fdtrace, s, l);
     my_write(fddanger, s, l);
@@ -2443,7 +2443,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, HWord value2, ULong value1)
     my_write(fdtrace, s, l);
     my_write(fddanger, s, l);
     translate2(arg2, value2, taintedness);
-    l = VG_(sprintf)(s, ")) @ 0hex00000000)[31:0]));\n");
+    l = VG_(sprintf)(s, "))[31:0]));\n");
     my_write(fdtrace, s, l);
     my_write(fddanger, s, l);
   }
