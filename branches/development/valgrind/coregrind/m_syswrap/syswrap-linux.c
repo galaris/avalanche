@@ -58,6 +58,16 @@
 #include "priv_syswrap-generic.h"
 #include "priv_syswrap-linux.h"
 
+#include "pub_core_hashtable.h"
+#include "avalanche.h"
+
+#ifdef _AVALANCHE
+
+extern VgHashTable fds;
+extern HChar* curfile;
+extern Int curfilenum;
+
+#endif
 
 // Run a thread from beginning to end and return the thread's
 // scheduler-return-code.
@@ -614,6 +624,36 @@ PRE(sys_exit_group)
 PRE(sys_llseek)
 {
    PRINT("sys_llseek ( %ld, 0x%lx, 0x%lx, %#lx, %ld )", ARG1,ARG2,ARG3,ARG4,ARG5);
+
+#ifdef _AVALANCHE
+
+   fdsNode* node = VG_(HT_lookup)(fds, ARG1);
+   ULong hi_offs, lo_offs;
+   hi_offs = ((ULong) ARG2) << 32;
+   lo_offs = ARG3;
+   HWord res_offs = (HWord) (hi_offs | lo_offs);
+
+   if (node != NULL)
+   {
+      switch(ARG5)
+      {
+         case VKI_SEEK_SET: node->offs = res_offs;
+                            break;
+         case VKI_SEEK_CUR: node->offs += res_offs; 
+                            break;
+         case VKI_SEEK_END: node->offs = node->size + res_offs; 
+                            break;
+         default:           break;
+      }
+   }
+   else
+   {
+      curfile = NULL;
+      curfilenum = -1;
+   }
+
+#endif
+
    PRE_REG_READ5(long, "llseek",
                  unsigned int, fd, unsigned long, offset_high,
                  unsigned long, offset_low, vki_loff_t *, result,
@@ -2633,6 +2673,31 @@ PRE(sys_utime)
 PRE(sys_lseek)
 {
    PRINT("sys_lseek ( %ld, %ld, %ld )", ARG1,ARG2,ARG3);
+
+#ifdef _AVALANCHE
+
+   fdsNode* node = VG_(HT_lookup)(fds, ARG1);
+   if (node != NULL)
+   {
+      switch(ARG3)
+      {
+         case VKI_SEEK_SET: node->offs = ARG2; 
+                            break;
+         case VKI_SEEK_CUR: node->offs += ARG2; 
+                            break;
+         case VKI_SEEK_END: node->offs = node->size + ARG2; 
+                            break;
+         default:           break;
+      }
+   }
+   else
+   {
+      curfile = NULL;
+      curfilenum = -1;
+   }
+
+#endif
+
    PRE_REG_READ3(vki_off_t, "lseek",
                  unsigned int, fd, vki_off_t, offset, unsigned int, whence);
 }

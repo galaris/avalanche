@@ -930,7 +930,7 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
       {
         ostringstream ss;
         ss << config->getPrefix() << "divergence_" << divergences;
-        if (first_input->parent->dumpExploit((char*) ss.str().c_str(), false) < 0)
+        if (first_input->dumpExploit((char*) ss.str().c_str(), false) < 0)
         {
           return -1;
         }
@@ -939,11 +939,11 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
       }
       else
       {
-        for (int i = 0; i < first_input->parent->files.size(); i++)
+        for (int i = 0; i < first_input->files.size(); i++)
         {
           ostringstream ss;
           ss << config->getPrefix() << "divergence_" << divergences << "_" << i;
-          if (first_input->parent->files.at(i)->FileBuffer::dumpFile(ss.str()) < 0)
+          if (first_input->files.at(i)->FileBuffer::dumpFile(ss.str()) < 0)
           {
             return -1;
           }
@@ -951,7 +951,7 @@ int ExecutionManager::checkDivergence(Input* first_input, int score)
         }
       }
       divergences++;
-      LOG(Logger::DEBUG, "with startdepth = " << first_input->parent->startdepth << " and invertdepth = " << config->getDepth() << "\n");
+      LOG(Logger::DEBUG, "with startdepth = " << first_input->startdepth << " and invertdepth = " << config->getDepth() << "\n");
       close(divfd);
       if (score == 0) 
       {
@@ -1061,6 +1061,7 @@ int ExecutionManager::parseOffsetLog(vector<FileOffsetSet> &used_offsets)
     else if (value == '\0')
     {
       read_file_name = false;
+      count ++;
     }
     if (read_file_name)
     {

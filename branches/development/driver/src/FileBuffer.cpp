@@ -42,7 +42,7 @@ FileBuffer::FileBuffer(std::string file_name)
 {
     struct stat fileInfo;
     this->name = file_name;
-    int fd = open(name.c_str(), O_RDONLY | O_CREAT,
+    int fd = open(name.c_str(), O_RDONLY,
                   S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (fd == -1)
     {

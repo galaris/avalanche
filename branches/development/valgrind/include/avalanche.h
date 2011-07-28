@@ -61,7 +61,7 @@ struct _taintedNode
   struct _taintedNode* next;
   HWord key;
   HChar* filename;
-  ULong offset;
+  HWord offset;
   Char fileIndex;
 };
 
@@ -79,5 +79,7 @@ struct _sizeNode
 typedef struct _sizeNode sizeNode;
 
 HWord hashCode(Char* str);
+
+#define _AVALANCHE
 
 #endif
