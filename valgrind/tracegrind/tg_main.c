@@ -994,6 +994,7 @@ void tg_track_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
         }
       }
       else taintMemoryFromFile(index, curoffs + (index - a), i + 1);
+
     }
   }
   else if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
@@ -1072,7 +1073,8 @@ void tg_track_mem_mmap(Addr a, SizeT size, Bool rr, Bool ww, Bool xx, ULong di_h
     }
     if (makeNewEntry)
     {
-      VG_(addToXA) (inputFiles, VG_(strdup) ("inputFilesEntry", curfile));
+      Char* newInputFile = VG_(strdup)("inputFilesEntry", curfile);
+      VG_(addToXA) (inputFiles, &newInputFile);
     }
     for (index = a; (index < (a + size)) && (index < (a + cursize)); index += 1)
     {
@@ -1576,7 +1578,7 @@ void instrumentWrTmpUnop(IRStmt* clone, UInt ltmp, UInt rtmp, IROp op)
       case Iop_8Sto64:  	
       case Iop_16Sto32:
       case Iop_16Sto64:
-      case Iop_32Sto64:     l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, %d));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited, curNode->tempSize[rtmp]);
+      case Iop_32Sto64:     l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVSX(t_%lx_%u_%u, %d));\n", curblock, ltmp, curvisited, curblock, rtmp, curvisited, curNode->tempSize[ltmp]);
 				break;
       case Iop_16to8:
       case Iop_32to8:
@@ -2393,74 +2395,57 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, HWord value2, ULong value1)
     ppIRStmt(clone);
     VG_(printf) ("\n");
 #endif
-    switch (oprt)
+    /* I64 x = DivMod(I64 a, I32 b): x_hi is a mod b, x_lo is a div b
+       I64 x = sDivMod(I64, I32): signed version of above */
+    if (checkDanger && (arg2->tag == Iex_RdTmp) && 
+        secondTainted(taintedness) && (!enableFiltering || useFiltering()))
     {
-      case Iop_DivModU64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(taintedness) && (!enableFiltering || useFiltering()))
-				{
-				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
-				  my_write(fddanger, s, l);
-				  printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (fdfuncFilter >= 0)
-                                  {
-                                    dumpCall();
-                                  }
-				  my_write(fddanger, s, l);
-				}
-				l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVMOD(64,", curblock, ltmp, curvisited);
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translateLong1(arg1, value1, taintedness);
-				l = VG_(sprintf)(s, ",(0hex00000000 @ ");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translate2(arg2, value2, taintedness);
-				l = VG_(sprintf)(s, ")) | (BVDIV(64,");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translateLong1(arg1, value1, taintedness);
-				l = VG_(sprintf)(s, ",(0hex00000000 @ ");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translate2(arg2, value2, taintedness);
-				l = VG_(sprintf)(s, ")) @ 0hex00000000)[63:0]);\n");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				break;
-      case Iop_DivModS64to32:	if (checkDanger && (arg2->tag == Iex_RdTmp) && secondTainted(taintedness) && (!enableFiltering || useFiltering()))
-				{
-				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
-				  my_write(fddanger, s, l);
-				  printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
-				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
-                                  if (fdfuncFilter >= 0)
-                                  {
-                                    dumpCall();
-                                  }
-				  my_write(fddanger, s, l);
-				}
-				l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=SBVMOD(64,", curblock, ltmp, curvisited);
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translateLong1(arg1, value1, taintedness);
-				l = VG_(sprintf)(s, ",(0hex00000000 @ ");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translate2(arg2, value2, taintedness);
-				l = VG_(sprintf)(s, ")) | (SBVDIV(64,");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translateLong1(arg1, value1, taintedness);
-				l = VG_(sprintf)(s, ",(0hex00000000 @ ");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				translate2(arg2, value2, taintedness);
-				l = VG_(sprintf)(s, ")) @ 0hex00000000)[63:0]);\n");
-				my_write(fdtrace, s, l);
-				my_write(fddanger, s, l);
-				break;
-      default: 			break;
+      l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", 
+                          curblock, arg2->Iex.RdTmp.tmp, curvisited);
+      my_write(fddanger, s, l);
+      printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
+      l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
+      if (fdfuncFilter >= 0)
+      {
+        dumpCall();
+      }
+      my_write(fddanger, s, l);
     }
+    if (oprt == Iop_DivModU64to32)
+    {
+      l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=(BVMOD(64,", 
+                          curblock, ltmp, curvisited);
+    }
+    else
+    {
+      l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=(SBVMOD(64,", 
+                          curblock, ltmp, curvisited);
+    }
+    my_write(fdtrace, s, l);
+    my_write(fddanger, s, l);
+    translateLong1(arg1, value1, taintedness);
+    l = VG_(sprintf)(s, ",(0hex00000000 @ ");
+    my_write(fdtrace, s, l);
+    my_write(fddanger, s, l);
+    translate2(arg2, value2, taintedness);
+    if (oprt == Iop_DivModU64to32)
+    {
+      l = VG_(sprintf)(s, ")[31:0] @ 0hex00000000) | (0hex00000000 @ BVDIV(64,");
+    }
+    else
+    {
+      l = VG_(sprintf)(s, ")[31:0] @ 0hex00000000) | (0hex00000000 @ SBVDIV(64,");
+    }
+    my_write(fdtrace, s, l);
+    my_write(fddanger, s, l);
+    translateLong1(arg1, value1, taintedness);
+    l = VG_(sprintf)(s, ",(0hex00000000 @ ");
+    my_write(fdtrace, s, l);
+    my_write(fddanger, s, l);
+    translate2(arg2, value2, taintedness);
+    l = VG_(sprintf)(s, ")) @ 0hex00000000)[31:0]));\n");
+    my_write(fdtrace, s, l);
+    my_write(fddanger, s, l);
   }
 }
 
@@ -2872,6 +2857,31 @@ void instrumentWrTmpBinop(IRStmt* clone, HWord value1, HWord value2)
 				my_write(fdtrace, s, l);
 				my_write(fddanger, s, l);
 				break;
+      /* Widening multiplies: */
+      case Iop_MullU8: // I16 = I8 x I8
+      case Iop_MullU16: // I32 = I16 x I16
+      case Iop_MullU32: // I64 = I32 x I32
+                l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=BVMULT(%u,(", 
+                                    curblock, ltmp, curvisited, size);
+                my_write(fdtrace, s, l);
+                my_write(fddanger, s, l);
+                printSizedBool(size >> 1, False);
+                l = VG_(sprintf)(s, " @ ");
+                my_write(fdtrace, s, l);
+                my_write(fddanger, s, l);
+                translate1(arg1, value1, r);
+                l = VG_(sprintf)(s, "),(");
+                my_write(fdtrace, s, l);
+                my_write(fddanger, s, l);
+                printSizedBool(size >> 1, False);
+                l = VG_(sprintf)(s, " @ ");
+                my_write(fdtrace, s, l);
+                my_write(fddanger, s, l);
+                translate2(arg2, value2, r);
+                l = VG_(sprintf)(s, ")));\n");
+                my_write(fdtrace, s, l);
+                my_write(fddanger, s, l);
+                break;
       default: 			break;
     }
   }

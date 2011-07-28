@@ -208,7 +208,7 @@ Bool storeUsedOffsets(Char* fileName)
   }
   Int fd = sr_Res(openRes);
 
-  Int previousOffset = 0, i, j;
+  Int previousOffset = -1, i, j;
   Word value;
   for (j = 0; j < VG_(sizeXA) (usedOffsets); j ++)
   {
