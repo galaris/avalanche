@@ -1370,7 +1370,11 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
   UInt rtmp = clone->Ist.WrTmp.data->Iex.Load.addr->Iex.RdTmp.tmp;
   HWord addr = (HWord) loadAddr;
 
-  if (checkDanger && (VG_(HT_lookup)(taintedTemps, rtmp) != NULL) && (!enableFiltering || useFiltering()))
+  /* This shouldn't work properly without VG_(am_get_client_segment_starts),
+     better remove it. Also address is not guaranteed to be in a temporary
+     anymore, it can be a number - (check issue 7 on googlecode). */
+
+  /* if (checkDanger && (VG_(HT_lookup)(taintedTemps, rtmp) != NULL) && (!enableFiltering || useFiltering()))
   {
     Char s[256];
     Int l = 0;
@@ -1387,8 +1391,8 @@ void instrumentWrTmpLoad(IRStmt* clone, IRExpr* loadAddr)
     }
     l = VG_(sprintf)(s, format, curblock, rtmp, curvisited, seg->start);
     my_write(fddanger, s, l);
+  } */
 
-  }
   taintedNode* t = VG_(HT_lookup)(taintedMemory, addr);
   if (t != NULL)
   {
@@ -2978,11 +2982,16 @@ void instrumentStoreGet(IRStmt* clone, IRExpr* storeAddr, UInt offset)
 }
 
 static
-void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
+void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp)
 {
   UShort size = curNode->tempSize[tmp];
   UWord addr = (UWord) storeAddr;
-  if (checkDanger && (VG_(HT_lookup)(taintedTemps, ltmp) != NULL) && (!enableFiltering || useFiltering()))
+
+  /* This shouldn't work properly without am_get_client_segment_starts,
+     better remove it. Also address is not guaranteed to be in a temporary
+     anymore, it can be a number - (check issue 7 on googlecode). */
+
+  /* if (checkDanger && (VG_(HT_lookup)(taintedTemps, ltmp) != NULL) && (!enableFiltering || useFiltering()))
   {
     Char s[256];
     Int l = 0;
@@ -2998,7 +3007,8 @@ void instrumentStoreRdTmp(IRStmt* clone, IRExpr* storeAddr, UInt tmp, UInt ltmp)
     }
     l = VG_(sprintf)(s, format, curblock, ltmp, curvisited, seg->start);
     my_write(fddanger, s, l);
-  }
+  } */
+
   if (VG_(HT_lookup)(taintedTemps, tmp) != NULL)
   {
     taintMemory(addr, size);
@@ -3234,14 +3244,11 @@ void instrumentWrTmp(IRStmt* clone, IRSB* sbOut, IRTypeEnv* tyenv)
   switch (data->tag)
   {
     case Iex_Load:
-       if (data->Iex.Load.addr->tag == Iex_RdTmp)
-       {
-         di = unsafeIRDirty_0_N(0, "instrumentWrTmpLoad", 
-                                VG_(fnptr_to_fnentry)(&instrumentWrTmpLoad),
-                                mkIRExprVec_2(mkIRExpr_HWord((HWord) clone), 
-                                              data->Iex.Load.addr));
-         addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-       }
+       di = unsafeIRDirty_0_N(0, "instrumentWrTmpLoad", 
+                              VG_(fnptr_to_fnentry)(&instrumentWrTmpLoad),
+                              mkIRExprVec_2(mkIRExpr_HWord((HWord) clone), 
+                                            data->Iex.Load.addr));
+       addStmtToIRSB(sbOut, IRStmt_Dirty(di));
        break;
 
     case Iex_Get:
@@ -3369,15 +3376,11 @@ void instrumentStore(IRStmt* clone, IRSB* sbOut)
        break;
 
     case Iex_RdTmp:
-       if (addr->tag == Iex_RdTmp)
-       {
-         di = unsafeIRDirty_0_N(0, "instrumentStoreRdTmp", 
-                                VG_(fnptr_to_fnentry)(&instrumentStoreRdTmp), 
-                                mkIRExprVec_4(mkIRExpr_HWord((HWord) clone), addr, 
-                                              mkIRExpr_HWord(data->Iex.RdTmp.tmp), 
-                                              mkIRExpr_HWord(addr->Iex.RdTmp.tmp)));
-         addStmtToIRSB(sbOut, IRStmt_Dirty(di));
-       }
+       di = unsafeIRDirty_0_N(0, "instrumentStoreRdTmp", 
+                              VG_(fnptr_to_fnentry)(&instrumentStoreRdTmp), 
+                              mkIRExprVec_3(mkIRExpr_HWord((HWord) clone), addr, 
+                                            mkIRExpr_HWord(data->Iex.RdTmp.tmp)));
+       addStmtToIRSB(sbOut, IRStmt_Dirty(di));
        break;
 
     case Iex_Const:
