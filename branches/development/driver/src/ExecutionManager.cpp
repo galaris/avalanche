@@ -559,11 +559,11 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
         }
         for (int i = 0; i < f_num; i++)
         {
-            ss_input_file.flush();
-            ss_input_file << input_file_m << error_i << "_" << i;
+            ostringstream ss_m_input_file;
+            ss_m_input_file << input_file_m << error_i << "_" << i;
             LOG(Logger::VERBOSE, "  Dumping an exploit to file " << 
-                                 ss_input_file.str() << ".");
-            if (input->files.at(i)->dumpFile(ss_input_file.str()) < 0)
+                                 ss_m_input_file.str() << ".");
+            if (input->files.at(i)->dumpFile(ss_m_input_file.str()) < 0)
             {
                 if (same_exploit == report.size())
                 {
