@@ -1,8 +1,8 @@
-/*----------------------------------------------------------------------------------------*/
-/*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------- Error.cpp ----------------------------------------*/
-/*----------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+/*------------------------------ AVALANCHE ----------------------------------*/
+/*- Driver. Coordinates other processes, traverses conditional jumps tree.  -*/
+/*------------------------------ Error.cpp ----------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 /*
    Copyright (C) 2010-2011 Ildar Isaev
@@ -38,10 +38,8 @@ enum {
 static Logger* logger = Logger::getLogger();
 
 static const char* error_pattern[] = {
-                "SIGSEGV",
-                "SIGABRT",
+                "terminating with",
                 "SIGALRM",
-                "SIGFPE",
                 "uninitialised",
                 "Invalid read",
                 "Invalid free",
@@ -53,10 +51,8 @@ static const char* error_pattern[] = {
 
 
 static const char* error_name[] = { 
-                "Segmentation fault",
-                "Aborted",
-                "Exited due to alarm",
-                "Floating point exception",
+                "Received terminating signal",
+                "Exited due to alarm (possible infinite loop)",
                 "Use of unitialised values",
                 "Invalid read/write",
                 "Invalid free",
@@ -66,15 +62,24 @@ static const char* error_name[] = {
                 NULL
 };
 
-Error::Error(unsigned int _id, int _input, string _trace, int _error_type) :
+Error::Error(unsigned int _id, int _input, string _trace, 
+             int _error_type, int _signal_source) :
     id(_id), trace(_trace), error_type(_error_type)
 {
+    signal_source = _signal_source;
+    if (Error::isExploit(error_type) && (trace != ""))
+    {
+        size_t sig_s_pos = trace.find("SIG");
+        size_t sig_e_pos = trace.find(')', sig_s_pos);
+        signo = trace.substr(sig_s_pos, sig_e_pos - sig_s_pos);
+    }
     inputs.push_back(_input);
 }
 
 Error::Error(unsigned int _id, int _input, int _error_type) : 
     id(_id), error_type(_error_type)
 {
+    signal_source = -1;
     inputs.push_back(_input);
 }
 
@@ -135,7 +140,7 @@ void Error::addInput(int _input)
 string Error::getSummary(string prefix, int input_num, bool verbose)
 {
     string input_file_m;
-    if (Error::isExploit(error_type))
+    if (Error::isExploit(error_type) || (error_type == UNKNOWN))
     {
         input_file_m = prefix + string("exploit_");
     }
@@ -188,22 +193,22 @@ string Error::getSummary(string prefix, int input_num, bool verbose)
         }
     }
     out_stream << endl;
-    if (verbose)
+    if (verbose && (trace != ""))
     {
-        out_stream << " Stack trace";
-        if (trace == "")
-        {
-            out_stream << " unavailable";
-        }
-        else
-        {
-            out_stream << ":" << endl << "  " << trace << endl;
-        }
+            out_stream << "  Stack trace:" << endl << "  " << trace << endl;
     }
-/*    else
+    if (trace == "")
     {
-        out_stream << "- " << trace_file << endl;
-    }*/
+        out_stream << "  Warning: application was likely terminated"
+                      " by SIGKILL signal.\n  Manual checking is required"
+                      " to validate the error.\n";
+    }
+    if (signal_source == 0)
+    { 
+        out_stream << "  Warning: terminating signal wasn't sent by kernel"
+                      " or the analyzed process.\n  Manual checking is required to"
+                      " validate the error.\n";
+    }
     out_stream << "  Command: " << command << endl;
     return out_stream.str();
 }
@@ -232,7 +237,7 @@ string Error::getErrorName(unsigned int error_type)
     if (Error::isExploit(error_type) || 
         Error::isMemoryError(error_type))
     {
-        return string(error_name[error_type]);
+        return string(error_name[error_type]) + " " + signo;
     }
     return string("");
 }
@@ -240,21 +245,26 @@ string Error::getErrorName(unsigned int error_type)
 int Error::getErrorType(string error_name)
 {
     int i = 0;
+    if (error_name.find(error_pattern[CRASH_SIGALRM]) != string::npos)
+    {
+        return CRASH_SIGALRM;
+    }
     while(error_pattern[i] != NULL)
     {
         if (error_name.find(error_pattern[i]) != string::npos)
         {
+
             return i;
         }
         i ++;
     }
-    return -1;
+    return UNKNOWN;
 }
 
 bool Error::isExploit(unsigned int error_type)
 {
-    return ((error_type >= CRASH_SIGSEGV) && 
-            (error_type <= CRASH_SIGFPE));
+    return ((error_type == CRASH_TERMINATED) ||
+            (error_type == CRASH_SIGALRM));
 }
 
 bool Error::isMemoryError(unsigned int error_type)

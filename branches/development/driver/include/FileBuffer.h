@@ -60,7 +60,7 @@ public:
     virtual int applySTPSolution(char* buf, 
                                  std::vector<FileOffsetSet> &used_offsets);
     
-    bool filterCovgrindOutput ();
+    bool filterCovgrindOutput (int &signal_source);
 
     // Return the number after first appearence of 'str' in 'buf'
     long filterCount (const char *str);

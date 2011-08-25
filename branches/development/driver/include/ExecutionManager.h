@@ -104,7 +104,7 @@ public:
     int calculateScore(std::string filaNameModifier = "");
     int checkAndScore(Input* input, bool addNoCoverage, bool first_run, std::string fileNameModifier = "");
 
-    int dumpError(Input *input, std::string error_trace, int error_type, bool store);
+    int dumpError(Input *input, std::string error_trace, int error_type, bool store, int signal_source);
     
     bool updateArgv(Input* input);
 
