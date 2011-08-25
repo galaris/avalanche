@@ -221,6 +221,12 @@
 #include "pub_core_tooliface.h"
 #include "pub_core_coredump.h"
 
+/* Start of Avalanche code */
+
+Bool isKernelSignal = False;
+Bool isSelfSignal = False;
+
+/* End of Avalanche code */
 
 /* ---------------------------------------------------------------------
    Forwards decls.
@@ -1536,8 +1542,15 @@ static void default_action(const vki_siginfo_t *info, ThreadId tid)
          "Process terminating with default action of signal %d (%s)%s\n",
          sigNo, signame(sigNo), core ? ": dumping core" : "");
 
+/* Start of Avalanche code */
+ 	  isSelfSignal = (info->_sifields._kill._pid == VG_(getpid)());
+/* End of Avalanche code */
+
       /* Be helpful - decode some more details about this fault */
       if (is_signal_from_kernel(tid, sigNo, info->si_code)) {
+/* Start of Avalanche code */
+	 isKernelSignal = True;
+/* End of Avalanche code */
 	 const Char *event = NULL;
 	 Bool haveaddr = True;
 

@@ -29,10 +29,8 @@
 
 enum {
     /* Exploits */
-    CRASH_SIGSEGV,      /* received SIGSEGV */
-    CRASH_SIGABRT,      /* received SIGABRT XXX: no stack trace */
-    CRASH_SIGALRM,      /* reveived SIGALRM */
-    CRASH_SIGFPE,       /* received SIGFPE */
+    CRASH_TERMINATED,   /* received terminating signal */
+    CRASH_SIGALRM,      /* received SIGALRM */
 
     /* Memchecks */
     MC_UNINIT,          /* Use of uninitialized values */
@@ -49,15 +47,17 @@ class Error
 {
 private:
     unsigned int id;
+    std::string signo;
     std::string trace;
     std::vector<int> inputs;
     std::string command;
     std::string all_command;
     unsigned int error_type;
     std::string trace_file;
+    int signal_source;
 
 public:
-    Error(unsigned int _id, int _input, std::string _trace, int _error_type);
+    Error(unsigned int _id, int _input, std::string _trace, int _error_type, int _signal_source);
     Error(unsigned int _id, int _input, int _error_type);
     ~Error();
 
@@ -79,7 +79,7 @@ public:
 
     std::string getErrorName();
 
-    static std::string getErrorName(unsigned int error_type);
+    std::string getErrorName(unsigned int error_type);
     static int getErrorType(std::string error_name);
     static bool isExploit(unsigned int error_type);
     static bool isMemoryError(unsigned int error_type);

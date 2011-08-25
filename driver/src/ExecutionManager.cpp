@@ -392,10 +392,10 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
 static
 string replaceNumber(string src, const char *pattern)
 {
-    unsigned int position = 0, initial_position;
+    unsigned int position = 0, initial_position = 0;
     while (true)
     {
-        position = src.find(pattern, position);
+        position = src.find(pattern, initial_position);
         if (position == string::npos) return src;
         position += strlen(pattern);
         initial_position = position;
@@ -407,7 +407,7 @@ string replaceNumber(string src, const char *pattern)
             }
             position ++;
         }
-        src.replace(initial_position, position, "?");
+        src.replace(initial_position, position - initial_position, "?");
     }
     return src;
 }
@@ -415,60 +415,35 @@ string replaceNumber(string src, const char *pattern)
 static
 string filterMemErrReport(string src)
 {
-    if (src.length() > 0)
-    {
-        if (isdigit(src[0]))
-        {
-            int i = 0, initial_i = 0;
-            while (i < src.length())
-            {
-                if (!isdigit(src[i]) && !isalpha(src[i])) break;
-                i ++;
-            }
-            src.replace(initial_i, i, "?");
-        }
-    }
     src = replaceNumber(src, "0x");
     src = replaceNumber(src, "of size ");
-    src = replaceNumber(src, " is ");
-    src = replaceNumber(src, " in ");
-    src = replaceNumber(src, " of ");
-    src = replaceNumber(src, " loss record ");
+    src = replaceNumber(src, "loss record ");
     return src;
 }
 
-int ExecutionManager::dumpError(Input *input, string error_trace, int error_type, bool store)
+int ExecutionManager::dumpError(Input *input, string error_trace, int error_type, bool store, int signal_source)
 {
-    bool info_available = false;
     int i = 0, same_exploit = -1;
     int error_i = -1;
     LOG(Logger::VERBOSE, "");
     LOG_TIME(Logger::VERBOSE, "Error detected.");
-//    LOG(Logger::JOURNAL, "  \033[31m" << Error::getErrorName(error_type) << "\033[0m");
 
     ostringstream ss_input_file;
     ostringstream ss_command;
     string input_file_m;
-    string filtered_error_trace;
+    string filtered_error_trace = filterMemErrReport(error_trace);
+
     string cur_error_trace;
 
-    if (Error::isExploit(error_type))
+    if (Error::isExploit(error_type) || (error_type == UNKNOWN))
     {
         error_i = exploits;
-        input_file_m = 
-            config->getResultDir() + config->getPrefix() + "exploit_";
-        filtered_error_trace = error_trace;
+        input_file_m = config->getResultDir() + config->getPrefix() + "exploit_";
     }
     else if (Error::isMemoryError(error_type))
     {
         error_i = memchecks;
-        input_file_m =
-            config->getResultDir() + config->getPrefix() + "memcheck_";
-        filtered_error_trace = filterMemErrReport(error_trace);
-    }
-    else
-    {
-        LOG(Logger::ERROR, "Unknown error type");
+        input_file_m = config->getResultDir() + config->getPrefix() + "memcheck_";
     }
         
     Error *active_err;
@@ -478,38 +453,39 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
         for (vector<Error*>::iterator it = report.begin(); 
                                       it != report.end(); 
                                       it ++, i ++)
-      {
-          if (Error::isMemoryError(error_type))
-          {
-              cur_error_trace = filterMemErrReport((*it)->getTrace());
-          }
-          else
-          {
-              cur_error_trace = (*it)->getTrace();
-          }
-          if (cur_error_trace == filtered_error_trace)
-          {
-              same_exploit = i;
-              (*it)->addInput(error_i);
-              active_err = *it;
-              break;
-          }
-      }
-      if (same_exploit == -1) 
-      {
-          active_err = new Error(report.size(), error_i, 
-                                 error_trace, error_type);
-          report.push_back(active_err);
-          same_exploit = report.size();
-      }
+        {
+            cur_error_trace = filterMemErrReport((*it)->getTrace());
+            if (cur_error_trace == filtered_error_trace)
+            {
+                same_exploit = i;
+                (*it)->addInput(error_i);
+                active_err = *it;
+                break;
+            }
+        }
+        if (same_exploit == -1) 
+        {
+            active_err = new Error(report.size(), error_i, 
+                                   error_trace, error_type, signal_source);
+            report.push_back(active_err);
+            same_exploit = report.size();
+        }
+        if (signal_source == 0)
+        {
+            LOG(Logger::REPORT, "  \033[31mWarning: terminating signal wasn't sent by kernel"
+                                " or the analyzed process.\n  Manual checking required to"
+                                " validate the error.\033[0m");
+        }
     }
     else
     {
         active_err = new Error(report.size(), error_i, error_type);
         report.push_back(active_err);
         same_exploit = report.size();
+        LOG(Logger::REPORT, "  \033[31mWarning: application was likely terminated"
+                            " with SIGKILL signal.\n  Manual checking required"
+                            " to validate the error.\033[0m");
     }
-
 
     string shifted_error_trace = "  ";
     error_trace = active_err->getTraceBody();
@@ -521,8 +497,7 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
             shifted_error_trace.append("  ");
         }
     }
-    LOG(Logger::JOURNAL, 
-            "  \033[31m" << active_err->getErrorName() << "\033[0m");
+    LOG(Logger::JOURNAL, "  \033[31m" << active_err->getErrorName() << "\033[0m");
     if (same_exploit != report.size())
     {
         LOG(Logger::VERBOSE, "  \033[2mError was detected previously.\033[0m");
@@ -534,7 +509,7 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
 
     if ((config->usingSockets() || config->usingDatagrams()) && store)
     {
-        ss_input_file << input_file_m;
+        ss_input_file << input_file_m << error_i;
         LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss_input_file.str());
         if (input->dumpExploit(ss_input_file.str(), false) < 0)
         {
@@ -666,8 +641,9 @@ int ExecutionManager::calculateScore(string fileNameModifier)
   }
   else
   {
-    LOG(Logger::ERROR, "Cannot open file  " << temp_dir << "basic_blocks" <<
-                       fileNameModifier << ".log :" << strerror(errno));
+    LOG(Logger::ERROR, "Cannot open file " << temp_dir << "basic_blocks" <<
+                       fileNameModifier << ".log: " << strerror(errno));
+    return -1;
   }
   return res;
 }
@@ -800,18 +776,19 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   }
   int trace_i = -1;
   bool info_available = false;
+  int signal_source = 0;
   int error_type;
   if (isExploit)
   {
-    info_available = plugin_log->filterCovgrindOutput();
+    info_available = plugin_log->filterCovgrindOutput(signal_source);
     error_type = Error::getErrorType(plugin_log->buf);
     if (info_available)
     {
-      trace_i = dumpError(input, plugin_log->buf, error_type, true);
+      trace_i = dumpError(input, plugin_log->buf, error_type, true, signal_source);
     }
     else
     {
-      trace_i = dumpError(input, "", error_type, true);
+      trace_i = dumpError(input, "", error_type, true, true);
     }
     if (trace_i < 0)
     {
@@ -848,7 +825,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
         call_stack = plugin_log->getCallStack(position);
 
         temp_trace_i = dumpError(input, error_type + "\n" + call_stack, 
-                                 Error::getErrorType(error_type), (i == 0));
+                                 Error::getErrorType(error_type), (i == 0), true);
 
         if (temp_trace_i < 0)
         {

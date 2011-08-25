@@ -282,7 +282,7 @@ int FileBuffer::applySTPSolution(char* buf,
     return 0;
 }
 
-bool FileBuffer::filterCovgrindOutput()
+bool FileBuffer::filterCovgrindOutput(int &signal_source)
 {
     char* check_pid = buf;
     int eqNum = 0;
@@ -303,7 +303,9 @@ bool FileBuffer::filterCovgrindOutput()
     if (last_bug_sym == NULL) return false;
     last_bug_line = last_bug_sym + 1;
     char* tmp,* prev_new_line = last_bug_sym;
-    while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && (tmp < last_bug_sym))
+    while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && 
+            ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && 
+            (tmp < last_bug_sym))
     {
         prev_new_line = last_bug_sym;
         last_bug_line = last_bug_sym + 1;
@@ -311,6 +313,14 @@ bool FileBuffer::filterCovgrindOutput()
     last_bug_sym = prev_new_line;
     if (last_bug_sym == NULL) return false;
     if (last_bug_sym <= bug_start + 1) return false;
+    if (strstr(buf, "Terminated by kernel signal") != NULL)
+    {
+        signal_source = -1;
+    }
+    else if (strstr(buf, "Terminated by self-sent signal") != NULL)
+    {
+        signal_source = 1;
+    }
     char* new_buf = (char*) malloc (last_bug_sym - bug_start);
     int i = 0, j;
     while (bug_start < last_bug_sym && bug_start != NULL)
@@ -330,6 +340,7 @@ bool FileBuffer::filterCovgrindOutput()
         buf[j] = new_buf[j];
     }
     buf[j] = '\0';
+
     size = i;
     free(new_buf);
     return true;

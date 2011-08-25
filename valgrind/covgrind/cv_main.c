@@ -48,6 +48,9 @@ VgHashTable basicBlocksTable;
 
 UInt alarm = 0;
 
+extern Bool isKernelSignal;
+extern Bool isSelfSignal;
+
 extern UShort port;
 extern Bool sockets;
 extern Bool datagrams;
@@ -154,6 +157,14 @@ static void cv_fini(Int exitcode)
       VG_(close)(sr_Res(fd));
     }
     VG_(free)(bbFile);
+  }
+  if (isKernelSignal)
+  {
+    VG_(printf)("Terminated by kernel signal\n");
+  }
+  if (isSelfSignal)
+  {
+    VG_(printf)("Terminated by self-sent signal\n");
   }
 }
 
