@@ -60,17 +60,6 @@ public:
     virtual int applySTPSolution(char* buf, 
                                  std::vector<FileOffsetSet> &used_offsets);
     
-    bool filterCovgrindOutput (int &signal_source);
-
-    // Return the number after first appearence of 'str' in 'buf'
-    long filterCount (const char *str);
-
-    // Get call stack from 'position' in 'buf'
-    std::string getCallStack (int & position);
-    std::string getMemoryErrorType (int & position);
-
-    std::string getBuf ();
-
     std::string getName() const
     { return name; }
 

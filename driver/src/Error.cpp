@@ -1,12 +1,12 @@
-/*---------------------------------------------------------------------------*/
-/*------------------------------ AVALANCHE ----------------------------------*/
+//*---------------------------------------------------------------------------*/
+/*------------------------------- AVALANCHE ---------------------------------*/
 /*- Driver. Coordinates other processes, traverses conditional jumps tree.  -*/
-/*------------------------------ Error.cpp ----------------------------------*/
+/*-------------------------------- Error.h ----------------------------------*/
 /*---------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2010-2011 Ildar Isaev
-      iisaev@ispras.ru
+   Copyright (C) 2011 Mikhail Ermakov
+      mermakov@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -35,56 +35,123 @@ enum {
     ERROR_LOG
 };
 
+static const errorInfo error_pattern[] = {
+                {CRASH_TERMINATED, ""},
+                {CRASH_SIGALRM, ""},
+                {MC_UNINIT, "uninitialised"},
+                {MC_UNADDR, "unaddressable"},
+                {MC_INVALID_R, "Invalid read"},
+                {MC_INVALID_W, "Invalid write"},
+                {MC_INVALID_FREE, "Invalid free"},
+                {MC_INVALID_MEM, "Mismatched"},
+                {MC_OVERLAP, "Source and destination overlap"},
+                {MC_DEF_LOST, "are definitely lost"},
+                {MC_POSS_LOST, "are possibly lost"},
+                {HG_LOCK_ORDER, "lock order"},
+                {HG_PTHREAD_API, "call to"},
+                {HG_UNLOCK_INVALID, "unlocked an invalid lock"},
+                {HG_UNLOCK_FOREIGN, "currently held by"},
+                {HG_UNLOCK_UNLOCKED, "unlocked a not-locked lock"},
+                {HG_DATA_RACE, "Possible data race"},
+                {UNKNOWN, ""}};
+
 static Logger* logger = Logger::getLogger();
 
-static const char* error_pattern[] = {
-                "terminating with",
-                "SIGALRM",
-                "uninitialised",
-                "Invalid read",
-                "Invalid free",
-                "Mismatched",
-                "are definitely lost",
-                "are possibly lost",
-                NULL
-};
+int Error::error_num = 0;
+int Error::subtype_num[NO_CHECK];
 
-
-static const char* error_name[] = { 
-                "Received terminating signal",
-                "Exited due to alarm (possible infinite loop)",
-                "Use of unitialised values",
-                "Invalid read/write",
-                "Invalid free",
-                "Use of mismatched memory allocation/deallocation functions",
-                "Definite memory leak",
-                "Possible memory leak",
-                NULL
-};
-
-Error::Error(unsigned int _id, int _input, string _trace, 
-             int _error_type, int _signal_source) :
-    id(_id), trace(_trace), error_type(_error_type)
+Error::Error(int _type, int _status) : type(_type), status(_status)
 {
-    signal_source = _signal_source;
-    if (Error::isExploit(error_type) && (trace != ""))
+    id = Error::error_num ++;
+}
+
+void Error::initCounters()
+{
+    for (int i = 0; i < NO_CHECK; i ++)
     {
-        size_t sig_s_pos = trace.find("SIG");
-        size_t sig_e_pos = trace.find(')', sig_s_pos);
-        signo = trace.substr(sig_s_pos, sig_e_pos - sig_s_pos);
+        subtype_num[i] = 0;
     }
-    inputs.push_back(_input);
 }
 
-Error::Error(unsigned int _id, int _input, int _error_type) : 
-    id(_id), error_type(_error_type)
+int Error::getFilterCode(string plugin_name)
 {
-    signal_source = -1;
-    inputs.push_back(_input);
+    if (plugin_name == "covgrind") {
+        return CRASH;
+    }
+    else if (plugin_name == "memcheck") {
+        return MC_MEMORY;
+    }
+    else if (plugin_name == "helgrind") {
+        return HG_THREAD;
+    }
+    else {
+        return NO_CHECK;
+    }
+}
+        
+        
+pair<int, int> Error::getFilterLimits(int filter)
+{
+    switch(filter)
+    {
+        case CRASH:
+        case NO_CHECK:  return make_pair<int,int>(UNKNOWN, UNKNOWN);
+        case MC_MEMORY: return make_pair<int,int>(MC_UNINIT, MC_POSS_LOST);
+        case HG_THREAD: return make_pair<int,int>(HG_LOCK_ORDER, HG_DATA_RACE);
+        default:        return make_pair<int,int>(MC_UNINIT, UNKNOWN - 1);
+    }
 }
 
-Error::~Error()
+char* Error::match(char* source, errorInfo &result, int filter)
 {
+    char* min_pos = NULL, *temp_pos;
+    int i, min_index = -1;
+    pair<int, int> error_limits = Error::getFilterLimits(filter);
+    if (error_limits.first == UNKNOWN)
+    {
+        return NULL;
+    }
+    for (i = error_limits.first; i <= error_limits.second; i ++)
+    {
+        temp_pos = strstr(source, error_pattern[i].pattern);
+        if (temp_pos != NULL)
+        {
+            if ((min_pos == NULL) || (temp_pos < min_pos))
+            {
+                min_pos = temp_pos;
+                min_index = i;
+            }
+        }
+    }
+    if (min_index < 0)
+    {
+        min_index = UNKNOWN;
+    }
+    result = error_pattern[min_index];
+    while (min_pos >= source)
+    {
+        if (*min_pos == '\n') break;
+        min_pos --;
+    }
+    return min_pos;
+}
+
+int Error::getSubtypeNumber()
+{
+    int subtype = getType();
+    if ((subtype >= 0) && (subtype < NO_CHECK))
+    {
+        return subtype_num[subtype];
+    }
+}
+
+void Error::incSubtypeNumber()
+{
+    int subtype = getType();
+    if ((subtype >= 0) && (subtype < NO_CHECK))
+    {
+        subtype_num[subtype] ++;
+    }
 }
 
 void Error::setTrace(string _trace)
@@ -92,17 +159,27 @@ void Error::setTrace(string _trace)
     trace = _trace;
 }
 
-std::string Error::getTrace()
+string Error::getTrace()
 {
     return trace;
 }
 
-std::string Error::getTraceBody()
+string Error::getTraceBody()
 {
     unsigned int endl_pos = trace.find("\n");
     if (endl_pos != string::npos)
     {
         return trace.substr(endl_pos + 1);
+    }
+    return string("");
+}
+
+string Error::getTraceHeader()
+{
+    unsigned int endl_pos = trace.find("\n");
+    if (endl_pos != string::npos)
+    {
+        return trace.substr(0, endl_pos);
     }
     return string("");
 }
@@ -132,32 +209,42 @@ string Error::getTraceFile()
     return trace_file;
 }
 
+void Error::setStatus(int _status)
+{
+    status = _status;
+}
+
+int Error::getStatus()
+{
+    return status;
+}
+
 void Error::addInput(int _input)
 {
-    inputs.push_back(_input);
+    inputs.insert(_input);
 }
 
 string Error::getSummary(string prefix, int input_num, bool verbose)
 {
     string input_file_m;
-    if (Error::isExploit(error_type) || (error_type == UNKNOWN))
-    {
-        input_file_m = prefix + string("exploit_");
-    }
-    else if (Error::isMemoryError(error_type))
-    {
-        input_file_m = prefix + string("memcheck_");
-    }
+    input_file_m = prefix + getFileNameModifier() + "_";
     ostringstream out_stream;
     out_stream << endl << " Error #" << id << ": ";
-    out_stream << Error::getErrorName(error_type) << endl;
+    if (verbose)
+    {
+        out_stream << getTraceHeader() << endl;
+    }
+    else
+    {
+        out_stream << getShortName() << endl;
+    }
     if (input_num != 0)
     {
         out_stream << "  Inputs: ";
     }
-    for (vector <int>::iterator it = inputs.begin();
-                                it != inputs.end();
-                                it ++)
+    for (set<int>::iterator it = inputs.begin();
+                            it != inputs.end();
+                            it ++)
     {
 
         if (it == inputs.begin())
@@ -203,7 +290,7 @@ string Error::getSummary(string prefix, int input_num, bool verbose)
                       " by SIGKILL signal.\n  Manual checking is required"
                       " to validate the error.\n";
     }
-    if (signal_source == 0)
+    if (status == OTHER_SIGNAL)
     { 
         out_stream << "  Warning: terminating signal wasn't sent by kernel"
                       " or the analyzed process.\n  Manual checking is required to"
@@ -222,53 +309,88 @@ string Error::getList()
     return out_stream.str();
 }
 
-string Error::getErrorName()
+int Error::getType()
 {
-    unsigned int endl_pos = trace.find("\n");
-    if (endl_pos != string::npos)
+    if (type <= CRASH_SIGALRM)
     {
-        return trace.substr(0, endl_pos);
+        return CRASH;
     }
-    return string("");
-}
-
-string Error::getErrorName(unsigned int error_type)
-{
-    if (Error::isExploit(error_type) || 
-        Error::isMemoryError(error_type))
+    if (type <= MC_POSS_LOST)
     {
-        return string(error_name[error_type]) + " " + signo;
+        return MC_MEMORY;
     }
-    return string("");
-}
-
-int Error::getErrorType(string error_name)
-{
-    int i = 0;
-    if (error_name.find(error_pattern[CRASH_SIGALRM]) != string::npos)
+    if (type <= HG_DATA_RACE)
     {
-        return CRASH_SIGALRM;
-    }
-    while(error_pattern[i] != NULL)
-    {
-        if (error_name.find(error_pattern[i]) != string::npos)
-        {
-
-            return i;
-        }
-        i ++;
+        return HG_THREAD;
     }
     return UNKNOWN;
 }
 
-bool Error::isExploit(unsigned int error_type)
+string Error::getShortName()
 {
-    return ((error_type == CRASH_TERMINATED) ||
-            (error_type == CRASH_SIGALRM));
+    string result = "Received ";
+    size_t pos;
+    switch (type)
+    {
+        case CRASH_TERMINATED:
+                if ((pos = trace.find("SIG")) != string::npos)
+                {
+                    result += trace.substr(pos, trace.find(')') - pos);
+                }
+                else
+                {
+                    result += "signal";
+                }
+                return result;
+        case CRASH_SIGALRM:
+                return string("Received SIGALRM (possible infinite loop)");
+        case MC_UNINIT:
+                return string("Use of uninitialized byte(s)");
+        case MC_UNADDR:
+                return string("Use of unaddressable byte(s)");
+        case MC_INVALID_R:
+                return string("Invalid read");
+        case MC_INVALID_W:
+                return string("Invalid write");
+        case MC_INVALID_FREE:
+                return string("Invalid free/delete");
+        case MC_INVALID_MEM:
+                return string("Mismatched alloc/dealloc functions");
+        case MC_OVERLAP:
+                return string("Source and destination overlap");
+        case MC_DEF_LOST:
+                return string("Definite memory loss");
+        case MC_POSS_LOST:
+                return string("Possible memory loss");
+        case HG_LOCK_ORDER:
+                return string("Lock order violated");
+        case HG_PTHREAD_API:
+                return string("Call to pthread function failed");
+        case HG_UNLOCK_INVALID:
+                return string("Invalid lock unlocked");
+        case HG_UNLOCK_FOREIGN:
+                return string("Foreign lock unlocked");
+        case HG_UNLOCK_UNLOCKED:
+                return string("Double unlock");
+        case HG_DATA_RACE:
+                return string("Possible data race");
+        default:return string("Unknown error");
+    }
 }
 
-bool Error::isMemoryError(unsigned int error_type)
+string Error::getFileNameModifier()
 {
-    return ((error_type >= MC_UNINIT) &&
-            (error_type <= MC_POSS_LOST));
+    if (type <= CRASH_SIGALRM)
+    {
+        return "exploit";
+    }
+    if (type <= MC_POSS_LOST)
+    {
+        return "memcheck";
+    }
+    if (type <= HG_DATA_RACE)
+    {
+        return "concurrency";
+    }
+    return "unknown";
 }

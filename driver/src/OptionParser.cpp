@@ -36,6 +36,13 @@
 
 using namespace std;
 
+static string supported_plugins[] = {
+                "covgrind",
+                "memcheck",
+                "helgrind",
+                ""
+};
+
 static bool distHostSpecified;
 static bool distPortSpecified;
 static Logger* logger = Logger::getLogger();
@@ -50,6 +57,7 @@ static void printHelpBanner()
         "  user options defined in [ ]:\n"
         "    --help                       Print help and exit\n"
         "    --use-memcheck               Use memcheck instead of covgrind\n"
+        "    --use-helgrind               Use helgrind instead of covgrind\n"
         "    --leaks                      Check for memory leaks\n"
         "                                 (ignored if '--use-memcheck' isn't specified)\n"
         "    --verbose, -v                Printing information about iteration (depth, heuristic), exploits/memchecks\n"
@@ -271,6 +279,15 @@ OptionConfig *OptionParser::run() const
             }
             config->setAgentDir(agent_dir.substr(strlen("--agent-dir=")));
         }
+        else if (args[i].find("--tool=") != string::npos) {
+            string plugin_name = args[i].substr(strlen("--tool="));
+            if (!checkSupportedPlugins(plugin_name))
+            {
+                LOG(Logger::ERROR, "Plugin \'" << plugin_name << "\' is not supported");
+                return NULL;
+            }
+            config->setPlugin(plugin_name);
+        }
         else if (args[i] == "--debug") {
             config->setDebug();
         }
@@ -313,9 +330,8 @@ OptionConfig *OptionParser::run() const
         else if (args[i] == "--network-log") {
             config->setNetworkLog ();
         }
-
-        else if (args[i] == "--use-memcheck") {
-            config->setUsingMemcheck();
+        else if (args[i] == "--use-helgrind") {
+            config->setPlugin("helgrind");
         }
         else if (args[i] == "--leaks") {
             config->setLeaks();
@@ -349,9 +365,9 @@ OptionConfig *OptionParser::run() const
         LOG(Logger::ERROR, "you cannot specify '--agent' and '--distributed' at the same time");
     }
 
-    if (config->usingMemcheck() && config->getDumpCalls()) {
+    if ((config->getPlugin() != "covgrind") && config->getDumpCalls()) {
         delete config;
-        LOG(Logger::ERROR, "'--dump-calls' should be used without '--use-memcheck'");
+        LOG(Logger::ERROR, "'--dump-calls' can only be used with covgrind");
         return NULL;
     }
 
@@ -437,8 +453,8 @@ void OptionParser::reportDummyOptions(OptionConfig* config) const
     if (config->getSuppressSubcalls() && (config->getFuncFilterFile() == "") && (config->getFuncFilterUnitsNum() == 0)) {
         dummy_opts.push_back(string("'--suppress-subcalls' (you should specify '--func-filter' or '--func-name')"));
     }
-    if (config->checkForLeaks() && !config->usingMemcheck()) {
-        dummy_opts.push_back(string("'--leaks' (you should specify '--use-memcheck')"));
+    if (config->checkForLeaks() && (config->getPlugin() != "memcheck")) {
+        dummy_opts.push_back(string("'--leaks' (use '--tool=memcheck')"));
     }
     if ((distPortSpecified || distHostSpecified || config->getProtectMainAgent()) && !config->getDistributed()) {
         string opt;
@@ -451,7 +467,7 @@ void OptionParser::reportDummyOptions(OptionConfig* config) const
         if (config->getProtectMainAgent()) {
             opt.append(string("'--protect-main-agent' "));
         }
-        dummy_opts.push_back(opt.append("(you should specify '--distributed')"));
+        dummy_opts.push_back(opt.append("(use '--distributed')"));
     }
     if (dummy_opts.size()) {
         LOG(Logger::ERROR, "several options have no effect:");
@@ -552,4 +568,17 @@ long int isNumber(string number)
         else return -1;
     }
     else return -1;
+}
+
+bool OptionParser::checkSupportedPlugins(string plugin_name) const
+{
+    int i = 0;
+    while (supported_plugins[i] != "")
+    {
+        if (plugin_name == supported_plugins[i ++])
+        {
+            return true;
+        }
+    }
+    return false;
 }

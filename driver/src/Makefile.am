@@ -19,6 +19,7 @@ avalanche_SOURCES = \
        PluginExecutor.cpp \
        FileBuffer.cpp \
        SocketBuffer.cpp \
+       ExecutionLogBuffer.cpp \
        Input.cpp \
        STP_Executor.cpp \
        TmpFile.cpp \

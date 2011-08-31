@@ -1,14 +1,12 @@
 /*---------------------------------------------------------------------------*/
-/*------------------------------ AVALANCHE ----------------------------------*/
+/*------------------------------- AVALANCHE ---------------------------------*/
 /*- Driver. Coordinates other processes, traverses conditional jumps tree.  -*/
-/*------------------------------ Executor.h ---------------------------------*/
+/*-------------------------- ExecutionLogBuffer.h ---------------------------*/
 /*---------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Ildar Isaev
-      iisaev@ispras.ru
-   Copyright (C) 2009 Nick Lugovskoy
-      lugovskoy@ispras.ru
+   Copyright (C) 2011 Mikhail Ermakov
+      mermakov@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -23,38 +21,22 @@
    limitations under the License.
 */
 
-#ifndef __EXECUTOR__H__
-#define __EXECUTOR__H__
+#ifndef __EXECUTION_LOG_BUFFER__H__
+#define __EXECUTION_LOG_BUFFER__H__
 
-#include <cstdlib>
+#include "FileBuffer.h"
+#include "Error.h"
+#include <string>
+#include <vector>
 
-enum Kind
-{
-    TG,
-    CV,
-    MC,
-    HG,
-    UNID
-};
-
-class Executor
+class ExecutionLogBuffer : public FileBuffer
 {
 public:
-    Executor() : args(NULL), argsnum(0) {}
-    virtual ~Executor()
-    {
-        for (int i = 0; i < argsnum; i ++)
-        {
-            free(args[i]);
-        }
-        free(args);
-    }
-    virtual int run(int thread_index = 0) = 0;
-
-protected:
-    char **args;
-    unsigned int argsnum;
+    ExecutionLogBuffer(std::string _file_name);
+    ~ExecutionLogBuffer() {}
+ 
+    Error* getCrashError();   
+    std::vector<Error*> getErrors(std::string plugin_name);
 };
 
-#endif //__EXECUTOR__H__
-
+#endif // __EXECUTION_LOG_BUFFER__H__

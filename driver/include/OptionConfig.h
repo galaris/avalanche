@@ -49,7 +49,6 @@ public:
                     distributed(false), 
                     remoteValgrind(false),
                     agent(false), 
-                    useMemcheck(false),
                     suppressSubcalls(false),
                     dumpCalls(false),
                     leaks(false),
@@ -60,6 +59,7 @@ public:
                     startdepth(1),
                     alarm(300),
                     tracegrindAlarm(0),
+                    plugin(std::string("covgrind")),
                     host(std::string("")),
                     prefix(std::string("")),
                     distHost(std::string("127.0.0.1")),
@@ -99,7 +99,6 @@ public:
         distPort        = opt_config->distPort;
         remotePort      = opt_config->remotePort;
         remoteValgrind  = opt_config->remoteValgrind;
-        useMemcheck     = opt_config->useMemcheck;
         leaks           = opt_config->leaks;
         funcFilterFile  = opt_config->funcFilterFile;
         funcFilterUnits = opt_config->funcFilterUnits;
@@ -108,6 +107,7 @@ public:
         inputFilterFile = opt_config->inputFilterFile;
         STPThreads      = opt_config->STPThreads;
         STPThreadsAuto	= opt_config->STPThreadsAuto;
+        plugin          = opt_config->plugin;
         prefix          = opt_config->prefix;
         checkArgv       = opt_config->checkArgv;
         protectArgName  = opt_config->protectArgName;
@@ -155,6 +155,12 @@ public:
 
     void setAgentDir(std::string agentDir)
     { this->agentDir = agentDir; }
+
+    const std::string getPlugin() const
+    { return plugin; }
+
+    void setPlugin(std::string plugin)
+    { this->plugin = plugin; }
 
     void setDebug()
     { debug = true; }
@@ -291,12 +297,6 @@ public:
     bool checkForLeaks() const
     { return leaks; }
 
-    void setUsingMemcheck()
-    { useMemcheck = true; }
-    
-    bool usingMemcheck() const
-    { return useMemcheck; }
-
     void setDepth(std::size_t max_depth)
     { depth = max_depth; }
 
@@ -409,10 +409,6 @@ private:
        Not set by default (false). */
     bool                     datagrams;
 
-    /* Use memcheck instead of covgrind.
-       Not set by default (false). */
-    bool                     useMemcheck;
-
     /* Enable dangertrace.log parsing.
        Disabled by default (false). */
     bool                     checkDanger;
@@ -463,7 +459,11 @@ private:
     /* Enable removal of /tmp/avalanche-XXXXXX/ upon finishing the analysis.
        Enabled by default (true). */
     bool                     cleanUp;
-    
+
+    /* Valgrind plugin to check inputs for errors.
+       Set to "covgrind" by default. */
+    std::string              plugin;
+
     /* Path to folder to store exploits, memchecks, stacktraces and calldump. 
        Not set by default (""). */
     std::string              resultDir;

@@ -52,6 +52,8 @@
 
 #include <avalanche.h>
 
+#ifdef WITH_AVALANCHE
+
 VgHashTable basicBlocksTable;
 
 UInt alarm = 0;
@@ -74,6 +76,8 @@ static replaceData* replace_data;
 static Char* bbFileName = NULL;
 static Char* tempDir;
 static Char* replaceFileName;
+
+#endif
 
 /* Set to 1 to do a little more sanity checking */
 #define VG_DEBUG_MEMORY 0
@@ -3815,6 +3819,8 @@ static
 void mc_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
 {
   MC_(make_mem_defined)(a, size);
+  
+#ifdef WITH_AVALANCHE
   Addr index; 
   if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
   {
@@ -3858,6 +3864,7 @@ void mc_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
       }
     }
   }
+#endif
 }
 
 
@@ -4864,7 +4871,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
       }
    }
 
-	if VG_BOOL_CLO(arg, "--partial-loads-ok", MC_(clo_partial_loads_ok)) {}
+   if VG_BOOL_CLO(arg, "--partial-loads-ok", MC_(clo_partial_loads_ok)) {}
    else if VG_BOOL_CLO(arg, "--show-reachable",   MC_(clo_show_reachable))   {}
    else if VG_BOOL_CLO(arg, "--show-possibly-lost",
                                             MC_(clo_show_possibly_lost))     {}
@@ -4921,61 +4928,53 @@ static Bool mc_process_cmd_line_options(Char* arg)
    else if VG_BHEX_CLO(arg, "--malloc-fill", MC_(clo_malloc_fill), 0x00,0xFF) {}
    else if VG_BHEX_CLO(arg, "--free-fill",   MC_(clo_free_fill),   0x00,0xFF) {}
 
-  else if (VG_INT_CLO(arg, "--alarm", alarm))
-  { 
-    return True;
-  }
-  else if (VG_STR_CLO(arg, "--port", addr))
-  {
-    port = (UShort) VG_(strtoll10)(addr, NULL);
-    return True;
-  }
-  else if (VG_BOOL_CLO(arg, "--sockets", sockets))
-  { 
-    return True; 
-  }
-  else if (VG_BOOL_CLO(arg, "--datagrams", datagrams))
-  { 
-    return True; 
-  }
-  else if (VG_BOOL_CLO(arg, "--no-coverage", noCoverage))
-  { 
-    return True; 
-  }
-  else if (VG_STR_CLO(arg, "--filename", bbFileName))
-  {
-    return True;
-  }
-  else if (VG_STR_CLO(arg, "--temp-dir", tempDir))
-  {
-    return True;
-  }
-  else if (VG_STR_CLO(arg, "--replace",  replaceFileName))
-  { 
-    replace = True;
-    return True; 
-  }
-  else if (VG_STR_CLO(arg, "--host", addr))
-  {
-    Char* dot = VG_(strchr)(addr, '.');
-    *dot = '\0';
-    ip1 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
-    *dot = '\0';
-    ip2 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
-    *dot = '\0';
-    ip3 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    ip4 = (UShort) VG_(strtoll10)(addr, NULL);
-    return True;
-  }
-  else
-  {
-    return VG_(replacement_malloc_process_cmd_line_option)(arg);
-  }
+#ifdef WITH_AVALANCHE
+   else if (VG_INT_CLO(arg, "--alarm", alarm)) { 
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--port", addr)) {
+      port = (UShort) VG_(strtoll10)(addr, NULL);
+      return True;
+   }
+   else if (VG_BOOL_CLO(arg, "--sockets", sockets)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--datagrams", datagrams)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--no-coverage", noCoverage)) { 
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--filename", bbFileName)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--temp-dir", tempDir)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--replace",  replaceFileName)) { 
+      replace = True;
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--host", addr)) {
+      Char* dot = VG_(strchr)(addr, '.');
+      *dot = '\0';
+      ip1 = (UShort) VG_(strtoll10)(addr, NULL);
+      addr = dot + 1;
+      dot = VG_(strchr)(addr, '.');
+      *dot = '\0';
+      ip2 = (UShort) VG_(strtoll10)(addr, NULL);
+      addr = dot + 1;
+      dot = VG_(strchr)(addr, '.');
+      *dot = '\0';
+      ip3 = (UShort) VG_(strtoll10)(addr, NULL);
+      addr = dot + 1;
+      ip4 = (UShort) VG_(strtoll10)(addr, NULL);
+      return True;
+   }
+#endif
+   else {
+      return VG_(replacement_malloc_process_cmd_line_option)(arg);
+   }
 
    return True;
 
@@ -5790,37 +5789,32 @@ static void mc_post_clo_init ( void )
       tl_assert(ocacheL1 == NULL);
       tl_assert(ocacheL2 == NULL);
    }
-  
-  if (replace)
-  {
-    Char *replaceFile = concatTempDir(replaceFileName);
-    Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-    VG_(read)(fd, &socketsNum, 4);
-    socketsBoundary = socketsNum;
-    if (socketsNum > 0)
-    {
-      replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
-      Int i;
-      for (i = 0; i < socketsNum; i++)
-      {
-        VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
-        replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
-        VG_(read)(fd, replace_data[i].data, replace_data[i].length);
+
+#ifdef WITH_AVALANCHE  
+   if (replace) {
+      Char *replaceFile = concatTempDir(replaceFileName);
+      Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+      VG_(read)(fd, &socketsNum, 4);
+      socketsBoundary = socketsNum;
+      if (socketsNum > 0) {
+         replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
+         Int i;
+         for (i = 0; i < socketsNum; i++) {
+            VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
+            replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
+            VG_(read)(fd, replace_data[i].data, replace_data[i].length);
+         }
+      } else {
+         replace_data = NULL;
       }
-    }
-    else
-    {
-      replace_data = NULL;
-    }
-    VG_(close)(fd);
-    VG_(free)(replaceFile);
-  }
+      VG_(close)(fd);
+      VG_(free)(replaceFile);
+   }
 
-  if (alarm != 0)
-  {
-    VG_(alarm)(alarm);
-  }
-
+   if (alarm != 0) {
+      VG_(alarm)(alarm);
+   }
+#endif
 }
 
 static void print_SM_info(char* type, int n_SMs)
@@ -5835,6 +5829,7 @@ static void print_SM_info(char* type, int n_SMs)
 
 static void mc_fini ( Int exitcode )
 {
+#ifdef WITH_AVALANCHE
   if (!noCoverage)
   {
     VG_(HT_ResetIter)(basicBlocksTable);
@@ -5864,6 +5859,7 @@ static void mc_fini ( Int exitcode )
       VG_(close)(sr_Res(fd));
     }
   }
+#endif
 
    MC_(print_malloc_stats)();
 
@@ -5986,6 +5982,7 @@ static void mc_fini ( Int exitcode )
    }
 }
 
+#ifdef WITH_AVALANCHE
 static void pre_call(ThreadId tid, UInt syscallno)
 {
   if (syscallno == __NR_read)
@@ -6006,6 +6003,7 @@ static void post_call(ThreadId tid, UInt syscallno, SysRes res)
     //VG_(exit)(0);
   }
 }
+#endif
 
 
 static void mc_pre_clo_init(void)
@@ -6202,10 +6200,12 @@ static void mc_pre_clo_init(void)
    tl_assert(MASK(8) == 0xFFFFFFF800000007ULL);
 #  endif
 
+#ifdef WITH_AVALANCHE
    VG_(needs_syscall_wrapper)(pre_call,
  			      post_call);
 
    basicBlocksTable = VG_(HT_construct)("basicBlocksTable");
+#endif
 }
 
 VG_DETERMINE_INTERFACE_VERSION(mc_pre_clo_init)

@@ -26,6 +26,7 @@
 
 #include "Logger.h"
 #include "LocalExecutor.h"
+#include "FileBuffer.h"
 
 #include <cerrno>
 #include <cstring>
@@ -83,30 +84,21 @@ int LocalExecutor::wait()
 
     if (ret_proc == (pid_t)(-1)) return -1;
 
-#define VG_CODE_EXEC_ERROR 126
-#define VG_CODE_PATH_ERROR 127
-
-    /* Return codes 126 and 127 cover the following situations:
-         * Command not found
-         * Permission denied (launching executable)
-         * No such file or directory */
-
-    if ((WEXITSTATUS(status) == VG_CODE_EXEC_ERROR) ||
-        (WEXITSTATUS(status) == VG_CODE_PATH_ERROR))
+    try
     {
-        struct stat file_stat;
-        int fd = open(file_err_name, O_RDONLY, S_IRWXU);
-        fstat(fd, &file_stat);
-        char error_out[file_stat.st_size + 1];
-        read(fd, error_out, file_stat.st_size);
-        error_out[file_stat.st_size] = '\0';
-        LOG(Logger::ERROR, error_out);
-        close(fd);
+        string f_name = file_err_name;
+        FileBuffer error_f(f_name);
+        char *err_start;
+        if ((err_start = strstr(error_f.buf, "valgrind:")) != NULL)
+        {
+            LOG(Logger::ERROR, err_start);
+            return 1;
+        }
+    }
+    catch (...)
+    {
         return 1;
     }
-
-#undef VALGRIND_RET_CODE_EXEC_ERROR
-#undef VALGRIND_RET_CODE_PATH_ERROR
 
     if (WIFEXITED(status))
     {

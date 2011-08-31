@@ -45,10 +45,9 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
                                bool trace_children,
                                const string &install_dir,
                                const vector<string> &cmd,
-                               const vector<string> &tg_args, 
-                               Kind kind) : debug_full(debug_full_enabled),
-                                            trace_children(trace_children),
-                                            kind(kind)
+                               const vector<string> &tg_args) : 
+                                            debug_full(debug_full_enabled),
+                                            trace_children(trace_children)
 {
     if (cmd.size() < 1) {
         LOG(Logger :: ERROR, "No program name");
@@ -61,17 +60,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
     args = (char **)calloc(cmd.size() + tg_args.size() + 4, sizeof(char *)); 
 
     args[0] = strdup(prog);
-    switch (kind)
-    {
-        case TG: args[1] = strdup("--tool=tracegrind");
-                 break;
-        case MC: args[1] = strdup("--tool=memcheck");
-                 break;      
-        case CV: args[1] = strdup("--tool=covgrind");
-                 break;
-        default: break;
-    }
-
+    args[1] = strdup(tg_args.begin()->c_str());
     if (trace_children)
     {
         args[2] = strdup("--trace-children=yes");
@@ -81,14 +70,14 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
         args[2] = strdup("--trace-children=no");
     }
     
-    for (size_t i = 0; i < tg_args.size(); i++)
+    for (size_t i = 1; i < tg_args.size(); i++)
     {
-        args[i + 3] = strdup(tg_args[i].c_str());
+        args[i + 2] = strdup(tg_args[i].c_str());
     }
 
     for (size_t i = 0; i < cmd.size(); i++)
     {
-        args[i + tg_args.size() + 3] = strdup(cmd[i].c_str());
+        args[i + tg_args.size() + 2] = strdup(cmd[i].c_str());
     }
 
 }
@@ -98,17 +87,10 @@ int PluginExecutor::run(int thread_index)
     if (prog == NULL)
         return NULL;
 
-    string plugin_name = "Unknown";
-
-    switch (kind)
+    string plugin_name = string(args[1]).substr(strlen("--tool="));
+    if (plugin_name.length() > 0)
     {
-        case TG: plugin_name = "Tracegrind"; 
-                 break;
-        case MC: plugin_name = "Memcheck"; 
-                 break;
-        case CV: plugin_name = "Covgrind";
-                 break;
-        default: break;
+        plugin_name[0] = toupper(plugin_name[0]);
     }
 
     if (!thread_num)

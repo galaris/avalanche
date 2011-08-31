@@ -45,9 +45,7 @@ using namespace std;
 enum Kind
 {
     TG,
-    CV,
-    MC,
-    UNID
+    OTHER
 };
 
 #define DEBUG
@@ -95,6 +93,14 @@ static bool parseArg(char *arg)
     {
         check_argv = true;
     }
+    else if (strstr(arg, "--tool=tracegrind"))
+    {
+        kind = TG;
+    }
+    else if (strstr(arg, "--tool="))
+    {
+        kind = OTHER;
+    }
     else if (strstr(arg, "--alarm="))
     {
         int alarm_value = strtol(arg + strlen("--alarm="), NULL, 10);
@@ -114,7 +120,7 @@ static bool parseArg(char *arg)
 
 void sigalarm_handler(int signo)
 {
-    if ((kind == CV) || (kind == MC))
+    if (kind == OTHER)
     {
         kill(pid, SIGINT);
         killed = true;
@@ -153,39 +159,36 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
     char **args;
     char util_c;
     no_coverage = false;
-    readFromSocket(avalanche_fd, &kind, sizeof(int));
-    if (kind == UNID)
-    {
-        return -2;
-    }
-
+    
     int extra_args = 5;
 
     readFromSocket(avalanche_fd, &args_num, sizeof(int));
     args = (char **) calloc (args_num + extra_args + 1, sizeof(char *));
     string valgrind_path = prog_dir + "../lib/avalanche/valgrind";
     args[0] = strdup(valgrind_path.c_str());
+    
+    /* Read --tool= option */
+    readFromSocket(avalanche_fd, &length, sizeof(int));
+    args[1] = (char *) malloc(length + 1);
+    readFromSocket(avalanche_fd, args[1], length);
+    args[1][length] = '\0';
+    parseArg(args[1]);
+    readFromSocket(avalanche_fd, &util_c, 1);
 
     ostringstream ss;
     ss << "--remote-fd=" << avalanche_fd;
 
     switch(kind)
     {
-        case TG: args[1] = strdup("--tool=tracegrind");
-                 args[4] = strdup(ss.str().c_str());
-            break;
-        case CV: args[1] = strdup("--tool=covgrind"); 
-                 extra_args --;
-            break;
-        case MC: args[1] = strdup("--tool=memcheck"); 
-                 extra_args --;
-            break;
-        default: break;
+        case TG:    args[4] = strdup(ss.str().c_str());
+                    break;
+        case OTHER: extra_args --;
+                    break;
     }
     args[2] = strdup((string("--temp-dir=") + temp_dir).c_str());
     args[3] = strdup((string("--log-file=") + temp_dir + 
                       string("execution.log")).c_str());
-    for (int i = extra_args; i < args_num + extra_args; i ++)
+    for (int i = extra_args; i < args_num + extra_args - 1; i ++)
     {
         readFromSocket(avalanche_fd, &length, sizeof(int));
         args[i] = (char *) malloc(length + 1);
@@ -344,8 +347,8 @@ static int passResult(int ret_code)
                 writeFromFile(temp_dir + string("argv.log"));
             }
             break;
-        case CV:
-        case MC: if (!no_coverage)
+        case OTHER:
+            if (!no_coverage)
             {
                 writeFromFile(temp_dir + string("basic_blocks.log"));
             }
