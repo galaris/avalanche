@@ -254,8 +254,7 @@ int main(int argc, char *argv[])
     if (opt_config -> getNetworkLog ()) logger -> setNetworkLog ();
 
     thread_num = opt_config->getSTPThreads();
-    string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") 
-                                                         : string("covgrind"));
+    string checker_name = (opt_config->getPlugin());
     if (thread_num > 0)
     {
         monitor = new ParallelMonitor(checker_name, start_time, thread_num);
@@ -268,6 +267,7 @@ int main(int argc, char *argv[])
         monitor = new SimpleMonitor(checker_name, start_time);
     }
     checker_name.clear();
+    Error::initCounters();
     LOG_TIME (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
 
     if (opt_config->getResultDir() != string(""))

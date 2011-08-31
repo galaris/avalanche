@@ -1,12 +1,12 @@
-/*----------------------------------------------------------------------------------------*/
-/*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*-------------------------------------- Error.h -----------------------------------------*/
-/*----------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+/*------------------------------- AVALANCHE ---------------------------------*/
+/*- Driver. Coordinates other processes, traverses conditional jumps tree.  -*/
+/*-------------------------------- Error.h ----------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2010-2011 Ildar Isaev
-      iisaev@ispras.ru
+   Copyright (C) 2011 Mikhail Ermakov
+      mermakov@ispras.ru
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -24,42 +24,76 @@
 #ifndef __ERROR__H__
 #define __ERROR__H__
 
-#include <vector>
+#include <set>
 #include <string>
+#include <utility>
+
+enum {
+    KERNEL_SIGNAL,
+    OWN_SIGNAL,
+    OTHER_SIGNAL
+};
+
+enum {
+    CRASH,
+    MC_MEMORY,
+    HG_THREAD,
+    
+    NO_CHECK
+};
+
+/* Do not change the order and append new errors to the end,
+   or matching will break. */
 
 enum {
     /* Exploits */
     CRASH_TERMINATED,   /* received terminating signal */
     CRASH_SIGALRM,      /* received SIGALRM */
-
-    /* Memchecks */
-    MC_UNINIT,          /* Use of uninitialized values */
-    MC_INVALID_RW,      /* Invalid read/write */
+    
+    /* Memcheck error */
+    MC_UNINIT,          /* Use of uninitialized byte(s) */
+    MC_UNADDR,          /* Use of unaddressable byte(s) */
+    MC_INVALID_R,       /* Invalid read */
+    MC_INVALID_W,       /* Invalid write */
     MC_INVALID_FREE,    /* Invalid free */
     MC_INVALID_MEM,     /* Mismatched alloc/free */
+    MC_OVERLAP,         /* Src and dst overlap */
     MC_DEF_LOST,        /* Definite leak */
     MC_POSS_LOST,       /* Possible leak */
-
+    
+    /* Helgrind error */
+    HG_LOCK_ORDER,      /* Violated lock order */
+    HG_PTHREAD_API,     /* pthread API error */
+    HG_UNLOCK_INVALID,  /* Unlocked invalid lock */
+    HG_UNLOCK_FOREIGN,  /* Unlocked foreign lock */
+    HG_UNLOCK_UNLOCKED, /* Double unlock */
+    HG_DATA_RACE,       /* Possible data race */
+    
     UNKNOWN
+};
+
+struct errorInfo
+{
+    unsigned int error_code;
+    const char* pattern;
 };
 
 class Error
 {
-private:
+protected:
+    static int error_num;
+    static int subtype_num[NO_CHECK];
     unsigned int id;
-    std::string signo;
     std::string trace;
-    std::vector<int> inputs;
+    std::set<int> inputs;
     std::string command;
     std::string all_command;
-    unsigned int error_type;
     std::string trace_file;
-    int signal_source;
-
+    int type;
+    int status;
 public:
-    Error(unsigned int _id, int _input, std::string _trace, int _error_type, int _signal_source);
-    Error(unsigned int _id, int _input, int _error_type);
-    ~Error();
+    Error(int _type, int _status);
+    ~Error() {}
 
     std::string getSummary(std::string prefix, int input_num, bool verbose);
     std::string getList();
@@ -71,18 +105,31 @@ public:
     void setTrace(std::string _trace);
     std::string getTrace();
     std::string getTraceBody();
-
+    std::string getTraceHeader();
+    
+    int getSubtypeNumber();
+    void incSubtypeNumber();
+    
+    std::string getShortName();
+    std::string getFileNameModifier();
+    
+    void setStatus(int _status);
+    int getStatus();
+    
+    int getType();
+        
     void setTraceFile(std::string _trace_file);
     std::string getTraceFile();
     
     void addInput(int input);
-
-    std::string getErrorName();
-
-    std::string getErrorName(unsigned int error_type);
-    static int getErrorType(std::string error_name);
-    static bool isExploit(unsigned int error_type);
-    static bool isMemoryError(unsigned int error_type);
+    
+    static void initCounters();
+    
+    static char* match(char* source, errorInfo &result, int filter);
+    static Error* create(unsigned int error_code);
+    
+    static std::pair<int, int> getFilterLimits(int filter);
+    static int getFilterCode(std::string plugin_name);
 };
 
 #endif

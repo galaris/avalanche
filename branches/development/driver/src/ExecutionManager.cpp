@@ -32,6 +32,7 @@
 #include "RemotePluginExecutor.h"
 #include "STP_Executor.h"
 #include "FileBuffer.h"
+#include "ExecutionLogBuffer.h"
 #include "SocketBuffer.h"
 #include "Input.h"
 #include "Thread.h"
@@ -151,8 +152,6 @@ string ExecutionManager::getTempDir()
 
 ExecutionManager::ExecutionManager(OptionConfig *opt_config)
 {
-//    LOG(Logger::DEBUG, "Initializing plugin manager.");
-
     config      = new OptionConfig(opt_config);
     cur_argv    = config->getProgAndArg();
     for (vector <string>::iterator i = cur_argv.begin() + 1; i != cur_argv.end(); i ++)
@@ -160,8 +159,6 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
         args_length += (*i).size();
     }
     args_length += cur_argv.size() - 2;
-    exploits    = 0;
-    memchecks   = 0;
     divergences = 0;
     is_distributed = opt_config->getDistributed();
     if (thread_num > 0)
@@ -413,7 +410,7 @@ string replaceNumber(string src, const char *pattern)
 }
 
 static
-string filterMemErrReport(string src)
+string filterErrorInfo(string src)
 {
     src = replaceNumber(src, "0x");
     src = replaceNumber(src, "of size ");
@@ -421,41 +418,33 @@ string filterMemErrReport(string src)
     return src;
 }
 
-int ExecutionManager::dumpError(Input *input, string error_trace, int error_type, bool store, int signal_source)
+int ExecutionManager::dumpError(Input *input, Error *error)
 {
     int i = 0, same_exploit = -1;
     int error_i = -1;
-    LOG(Logger::VERBOSE, "");
-    LOG_TIME(Logger::VERBOSE, "Error detected.");
-
     ostringstream ss_input_file;
     ostringstream ss_command;
-    string input_file_m;
-    string filtered_error_trace = filterMemErrReport(error_trace);
+    string input_file_m, cur_error_trace;
+    
+    LOG(Logger::VERBOSE, "");
+    LOG_TIME(Logger::VERBOSE, "Error detected.");
+    
+    error_i = error->getSubtypeNumber();
 
-    string cur_error_trace;
+    input_file_m = config->getResultDir() + config->getPrefix() + 
+                        error->getFileNameModifier() + "_";
 
-    if (Error::isExploit(error_type) || (error_type == UNKNOWN))
-    {
-        error_i = exploits;
-        input_file_m = config->getResultDir() + config->getPrefix() + "exploit_";
-    }
-    else if (Error::isMemoryError(error_type))
-    {
-        error_i = memchecks;
-        input_file_m = config->getResultDir() + config->getPrefix() + "memcheck_";
-    }
         
     Error *active_err;
 
-    if (error_trace != "")
+    if (error->getTrace() != "")
     {
         for (vector<Error*>::iterator it = report.begin(); 
                                       it != report.end(); 
                                       it ++, i ++)
         {
-            cur_error_trace = filterMemErrReport((*it)->getTrace());
-            if (cur_error_trace == filtered_error_trace)
+            cur_error_trace = filterErrorInfo((*it)->getTrace());
+            if (cur_error_trace == filterErrorInfo(error->getTrace()))
             {
                 same_exploit = i;
                 (*it)->addInput(error_i);
@@ -465,12 +454,12 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
         }
         if (same_exploit == -1) 
         {
-            active_err = new Error(report.size(), error_i, 
-                                   error_trace, error_type, signal_source);
+            active_err = error;
+            error->addInput(error_i);
             report.push_back(active_err);
             same_exploit = report.size();
         }
-        if (signal_source == 0)
+        if (active_err->getStatus() == OTHER_SIGNAL)
         {
             LOG(Logger::REPORT, "  \033[31mWarning: terminating signal wasn't sent by kernel"
                                 " or the analyzed process.\n  Manual checking required to"
@@ -479,7 +468,8 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
     }
     else
     {
-        active_err = new Error(report.size(), error_i, error_type);
+        active_err = error;
+        error->addInput(error_i);
         report.push_back(active_err);
         same_exploit = report.size();
         LOG(Logger::REPORT, "  \033[31mWarning: application was likely terminated"
@@ -488,7 +478,7 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
     }
 
     string shifted_error_trace = "  ";
-    error_trace = active_err->getTraceBody();
+    string error_trace = active_err->getTraceBody();
     for (int i = 0; i < error_trace.size(); i ++)
     {
         shifted_error_trace.push_back(error_trace[i]);
@@ -497,7 +487,14 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
             shifted_error_trace.append("  ");
         }
     }
-    LOG(Logger::JOURNAL, "  \033[31m" << active_err->getErrorName() << "\033[0m");
+    if (config->getVerbose())
+    {
+        LOG(Logger::JOURNAL, "  \033[31m" << active_err->getTraceHeader() << "\033[0m");
+    }
+    else
+    {
+        LOG(Logger::JOURNAL, "  \033[31m" << active_err->getShortName() << "\033[0m");
+    }
     if (same_exploit != report.size())
     {
         LOG(Logger::VERBOSE, "  \033[2mError was detected previously.\033[0m");
@@ -507,10 +504,10 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
         LOG(Logger::VERBOSE, shifted_error_trace);
     }
 
-    if ((config->usingSockets() || config->usingDatagrams()) && store)
+    if (config->usingSockets() || config->usingDatagrams())
     {
         ss_input_file << input_file_m << error_i;
-        LOG(Logger::VERBOSE, "  Dumping an exploit to file " << ss_input_file.str());
+        LOG(Logger::VERBOSE, "  Dumping input to file " << ss_input_file.str());
         if (input->dumpExploit(ss_input_file.str(), false) < 0)
         {
             if (same_exploit == report.size())
@@ -525,7 +522,7 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
                       config->getHost() << " --port=" << config->getPort() << 
                       " --replace=" << ss_input_file.str () << " --sockets=yes";
     }
-    else if (store)
+    else
     {
         int f_num = input->files.size();
         if ((config->getCheckArgv() != ""))
@@ -536,7 +533,7 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
         {
             ostringstream ss_m_input_file;
             ss_m_input_file << input_file_m << error_i << "_" << i;
-            LOG(Logger::VERBOSE, "  Dumping an exploit to file " << 
+            LOG(Logger::VERBOSE, "  Dumping input to file " << 
                                  ss_m_input_file.str() << ".");
             if (input->files.at(i)->dumpFile(ss_m_input_file.str()) < 0)
             {
@@ -547,6 +544,11 @@ int ExecutionManager::dumpError(Input *input, string error_trace, int error_type
                 return -1;
             }
         }
+    }
+    if ((active_err->getType() != CRASH) && (active_err->getType() != UNKNOWN))
+    {
+        ss_command << config->getValgrind() << "../lib/avalanche/valgrind" 
+                      " --tool=" << config->getPlugin() << " ";
     }
     for (vector<string>::iterator it = cur_argv.begin (); 
                                   it != cur_argv.end (); 
@@ -699,7 +701,16 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     }
   }
 
-  // Covgrind or Memcheck
+  string plugin_name;
+  if (addNoCoverage)
+  {
+    plugin_name = "--tool=covgrind";
+  }
+  else
+  {
+    plugin_name = string("--tool=") + config->getPlugin();
+  }
+  plugin_opts.insert(plugin_opts.begin(), plugin_name);
 
   Executor* plugin_exe;
   if (!config->getRemoteValgrind())
@@ -707,7 +718,7 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
 
     plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(),
                                      config->getValgrind(), new_prog_and_args, 
-                                     plugin_opts, addNoCoverage ? CV : kind);
+                                     plugin_opts);
   }
   else
   {
@@ -716,8 +727,9 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
     {
       plug_args.push_back(new_prog_and_args[i]);
     }
+    to_send.insert(to_send.begin(), 0);
     plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, 
-                                           kind, config->getResultDir());
+                                          config->getResultDir());
   }
   new_prog_and_args.clear();
   plugin_opts.clear();
@@ -738,27 +750,11 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   monitor->addTime(time(NULL), thread_index);
   FileBuffer* mc_output;
   bool has_crashed = (exitCode == -1);
-  if (!thread_num)
-  {
-    has_crashed = has_crashed && !killed;
-  }
-  else
-  {
-    has_crashed = has_crashed && !(((ParallelMonitor*) monitor)->getAlarmKilled(thread_index));
-  }
 
-  // Exploits and memcheck errors processing
-
-  bool isExploit = has_crashed;
-  bool isMemcheckError = !has_crashed && config->usingMemcheck() 
-    && !addNoCoverage;
-
-  // Exploit (if has crashed)
-
-  FileBuffer *plugin_log;
+  ExecutionLogBuffer *plugin_log;
   try
   {
-    plugin_log = new FileBuffer(cv_exec_file);
+    plugin_log = new ExecutionLogBuffer(cv_exec_file);
   }
   catch(const char *)
   {
@@ -774,109 +770,43 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   {
     pthread_mutex_lock(&add_exploits_mutex);
   }
-  int trace_i = -1;
-  bool info_available = false;
-  int signal_source = 0;
-  int error_type;
-  if (isExploit)
+  int res;
+  vector<Error*> error_list = plugin_log->getErrors(config->getPlugin());
+  for (vector<Error*>::iterator it = error_list.begin(); 
+                                it != error_list.end(); 
+                                it ++)
   {
-    info_available = plugin_log->filterCovgrindOutput(signal_source);
-    error_type = Error::getErrorType(plugin_log->buf);
-    if (info_available)
+    if ((res = dumpError(input, *it)) < 0)
     {
-      trace_i = dumpError(input, plugin_log->buf, error_type, true, signal_source);
-    }
-    else
-    {
-      trace_i = dumpError(input, "", error_type, true, true);
-    }
-    if (trace_i < 0)
-    {
-        if (enable_mutexes)
-        {
-            pthread_mutex_unlock(&add_exploits_mutex);
-        }
-        return -1;
-    }
-    exploits ++;
-  }
-  else if (isMemcheckError)
-  {
-  // Memory errors (if has not crashed and "--use-memcheck")
-
-    long errors = plugin_log->filterCount(" errors from ");
-
-    string error_type;
-    string call_stack;
-    string error_trace;
-    
-    if (errors > 0)
-    {
-      LOG(Logger::VERBOSE, ""); // new line before memory error
-
-      LOG_TIME(Logger::VERBOSE, errors << " memory error(s) detected.");
-
-      int position = 0;
-      int temp_trace_i = 0;
-
-      for (int i = 0; i < errors; i++)
+      if (enable_mutexes)
       {
-        error_type = plugin_log->getMemoryErrorType(position);
-        call_stack = plugin_log->getCallStack(position);
-
-        temp_trace_i = dumpError(input, error_type + "\n" + call_stack, 
-                                 Error::getErrorType(error_type), (i == 0), true);
-
-        if (temp_trace_i < 0)
-        {
-          if (enable_mutexes)
-          {
-            pthread_mutex_unlock(&add_exploits_mutex);
-          }
-          return -1;
-        }
-        if (temp_trace_i > trace_i)
-        {
-          trace_i = temp_trace_i;
-        }
+        pthread_mutex_unlock(&add_exploits_mutex);
       }
-      memchecks ++;
+      return -1;
+    }
+    if (it == error_list.end() - 1)
+    {
+      (*it)->incSubtypeNumber();
+    }
+    if (res != report.size())
+    {
+      delete *it;
     }
   }
-/* if (info_available)
-  { 
-    if (trace_i == -1)
-      {
-        ostringstream ss;
-        ss << config->getResultDir() << config->getPrefix() <<
-              "stacktrace_" << report.size() - 1  << ".log";
-        if (enable_mutexes)
-        {
-          pthread_mutex_unlock(&add_inputs_mutex);
-        }
-        if (stack_trace->dumpFile(ss.str()) < 0)
-        {
-          return -1;
-        }
-        LOG(Logger::JOURNAL, "  " << error_trace);
-        LOG(Logger::VERBOSE, "  Dumping stack trace to file " << ss.str());
-        }
-      else
-      {
-        LOG(Logger::JOURNAL, 
-                "  \033[2m" << "Bug was detected previously." << "\033[0m");
-        LOG(Logger::VERBOSE, 
-                "  Stack trace can be found in " << 
-                config->getResultDir() + config->getPrefix() <<
-                "stacktrace_" << trace_i << ".log");
-      }
-    }
-    else
+  if (has_crashed)
+  {
+    Error* new_error = plugin_log->getCrashError();
+    if (dumpError(input, new_error) < 0)
     {
-      LOG(Logger::JOURNAL, "  \033[2mNo stack trace is available.\033[0m");
-    }*/
-  // Return score
-
+      if (enable_mutexes)
+      {
+          pthread_mutex_unlock(&add_exploits_mutex);
+      }
+      return -1;
+    }
+    new_error->incSubtypeNumber();
+  }
+  
   if (enable_mutexes) 
   {
     pthread_mutex_unlock(&add_exploits_mutex);
@@ -1552,14 +1482,6 @@ void ExecutionManager::run()
       close(fd);
     }
     int runs = 0;
-    if (config->usingMemcheck())
-    {
-      kind = MC;
-    }
-    else
-    {
-      kind = CV;
-    }
 
     // Reading files into initial input
 
@@ -1672,7 +1594,7 @@ void ExecutionManager::run()
         {
           for (int j = 0; j < fi->files.size(); j ++)
           {
-            if (!strcmp(cur_argv[i].c_str(), fi->files.at(j)->getName().c_str()))
+            if (cur_argv[i] == fi->files.at(j)->getName())
             {
               to_send[plugin_opts.size() + i] = 1;
             }
@@ -1691,18 +1613,20 @@ void ExecutionManager::run()
         }
       }
       Executor * plugin_exe;
-
       if (config->getRemoteValgrind())
       {
+        plug_args.insert(plug_args.begin(), "--tool=tracegrind");
+        to_send.insert(to_send.begin(), 0);
         plugin_exe = new RemotePluginExecutor(plug_args, remote_fd, to_send, 
-                                               TG, config->getResultDir());
+                                              config->getResultDir());
       }
       else
       {
+        plugin_opts.insert(plugin_opts.begin(), "--tool=tracegrind");
         plugin_exe = new PluginExecutor(config->getDebug(), 
                                          config->getTraceChildren(), 
                                          config->getValgrind(), cur_argv, 
-                                         plugin_opts, TG);
+                                         plugin_opts);
       }
             
       plugin_opts.clear();
@@ -1915,8 +1839,6 @@ void ExecutionManager::talkToServer()
           int progArgsNum = config->getProgAndArg().size();
           writeToSocket(dist_fd, &progArgsNum, sizeof(int));
 
-          bool useMemcheck = config->usingMemcheck();
-          writeToSocket(dist_fd, &useMemcheck, sizeof(bool));
           bool leaks = config->checkForLeaks();
           writeToSocket(dist_fd, &leaks, sizeof(bool));
           bool traceChildren = config->getTraceChildren();
@@ -1944,6 +1866,14 @@ void ExecutionManager::talkToServer()
             writeToSocket(dist_fd, host.c_str(), length);
             unsigned int port = config->getPort();
             writeToSocket(dist_fd, &port, sizeof(int));
+          }
+          
+          {
+            string plugin_name = config->getPlugin();
+            int length = plugin_name.length();
+            LOG(Logger::REPORT, length);
+            writeToSocket(dist_fd, &length, sizeof(int));
+            writeToSocket(dist_fd, plugin_name.c_str(), length);
           }
 
           if (config->getInputFilterFile() != "")
@@ -2088,11 +2018,6 @@ void ExecutionManager::talkToServer()
     LOG(Logger::NETWORK_LOG, "Continuing work in local mode.");
     is_distributed = false;
   }
-}
-
-int ExecutionManager::getMemchecks()
-{
-  return memchecks;
 }
 
 ExecutionManager::~ExecutionManager()

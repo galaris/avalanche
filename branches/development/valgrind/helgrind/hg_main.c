@@ -40,6 +40,7 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcprint.h"
+#include "pub_tool_libcfile.h"
 #include "pub_tool_threadstate.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_hashtable.h"
@@ -47,6 +48,7 @@
 #include "pub_tool_machine.h"
 #include "pub_tool_options.h"
 #include "pub_tool_xarray.h"
+#include "pub_tool_mallocfree.h"
 #include "pub_tool_stacktrace.h"
 #include "pub_tool_wordfm.h"
 #include "pub_tool_debuginfo.h" // VG_(find_seginfo), VG_(seginfo_soname)
@@ -62,6 +64,54 @@
 
 #include "helgrind.h"
 
+#include <avalanche.h>
+
+#ifdef WITH_AVALANCHE
+
+VgHashTable basicBlocksTable;
+
+UInt alarm = 0;
+
+extern UShort port;
+extern Bool sockets;
+extern Bool datagrams;
+extern UChar ip1, ip2, ip3, ip4;
+extern Int cursocket;
+extern ULong curoffs;
+
+Bool replace = False;
+Bool isRead = False;
+Bool noCoverage = False;
+extern Bool isRecv;
+
+static Int socketsNum = 0;
+static Int socketsBoundary;
+static replaceData* replace_data;
+static Char* bbFileName = NULL;
+static Char* tempDir;
+static Char* replaceFileName;
+
+static
+Char* concatTempDir(Char* fileName)
+{
+  Char* result;
+  if (tempDir == NULL)
+  {
+    result = VG_(malloc)(fileName, VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, fileName);
+  }
+  else
+  {
+    Int length = VG_(strlen)(tempDir);
+    result = VG_(malloc)(fileName, length + VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, tempDir);
+    VG_(strcpy)(result + length, fileName);
+    result[length + VG_(strlen)(fileName)] = '\0';
+  }
+  return result;
+}
+
+#endif
 
 // FIXME: new_mem_w_tid ignores the supplied tid. (wtf?!)
 
@@ -1766,8 +1816,10 @@ void evh__pre_mem_read_asciiz ( CorePart part, ThreadId tid,
       VG_(printf)("evh__pre_mem_asciiz(ctid=%d, \"%s\", %p)\n", 
                   (Int)tid, s, (void*)a );
    // FIXME: think of a less ugly hack
-   len = VG_(strlen)( (Char*) a );
-   shadow_mem_cread_range( map_threads_lookup(tid), a, len+1 );
+   if (a != NULL) {
+      len = VG_(strlen)( (Char*) a );
+      shadow_mem_cread_range( map_threads_lookup(tid), a, len+1 );
+   }
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__pre_mem_read_asciiz-post");
 }
@@ -4090,6 +4142,13 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
       /* We don't currently support this case. */
       VG_(tool_panic)("host/guest word size mismatch");
    }
+   
+   if (!noCoverage)
+   {
+     bbNode* n = VG_(malloc)("bbNode", sizeof(bbNode)); 
+     n->key = vge->base[0]; 
+     VG_(HT_add_node)(basicBlocksTable, n);
+   }
 
    if (VKI_PAGE_SIZE < 4096 || VG_(log2)(VKI_PAGE_SIZE) == -1) {
       VG_(tool_panic)("implausible or too-small VKI_PAGE_SIZE");
@@ -4613,7 +4672,6 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
    return True;
 }
 
-
 /*----------------------------------------------------------------*/
 /*--- Setup                                                    ---*/
 /*----------------------------------------------------------------*/
@@ -4659,6 +4717,50 @@ static Bool hg_process_cmd_line_option ( Char* arg )
       }
       if (0) VG_(printf)("XXX sanity flags: 0x%lx\n", HG_(clo_sanity_flags));
    }
+#ifdef WITH_AVALANCHE
+   else if (VG_INT_CLO(arg, "--alarm", alarm)) { 
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--port", tmp_str)) {
+      port = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      return True;
+   }
+   else if (VG_BOOL_CLO(arg, "--sockets", sockets)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--datagrams", datagrams)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--no-coverage", noCoverage)) { 
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--filename", bbFileName)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--temp-dir", tempDir)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--replace",  replaceFileName)) { 
+      replace = True;
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--host", tmp_str)) {
+      Char* dot = VG_(strchr)(tmp_str, '.');
+      *dot = '\0';
+      ip1 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      tmp_str = dot + 1;
+      dot = VG_(strchr)(tmp_str, '.');
+      *dot = '\0';
+      ip2 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      tmp_str = dot + 1;
+      dot = VG_(strchr)(tmp_str, '.');
+      *dot = '\0';
+      ip3 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      tmp_str = dot + 1;
+      ip4 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      return True;
+   }
+#endif
 
    else 
       return VG_(replacement_malloc_process_cmd_line_option)(arg);
@@ -4696,10 +4798,70 @@ static void hg_print_debug_usage ( void )
 
 static void hg_post_clo_init ( void )
 {
+#ifdef WITH_AVALANCHE  
+   if (replace) {
+      Int i;
+      Char *replaceFile = concatTempDir(replaceFileName);
+      SysRes fd = VG_(open)(replaceFile, 
+                            VKI_O_RDWR, 
+                            VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      if (sr_isError(fd)) {
+         VG_(write)(2, "helgrind: cannot open replace_data",
+                    VG_(strlen)("helgrind: cannot open replace_data"));
+         VG_(exit)(1);
+      }
+      VG_(read)(sr_Res(fd), &socketsNum, 4);
+      if (socketsNum > 0) {
+         replace_data = (replaceData*) 
+                 VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
+         for (i = 0; i < socketsNum; i++) {
+           VG_(read)(sr_Res(fd), &(replace_data[i].length), sizeof(Int));
+           replace_data[i].data = 
+               (Char*) VG_(malloc)("replace_data", replace_data[i].length);
+           VG_(read)(sr_Res(fd), replace_data[i].data, replace_data[i].length);
+         }
+      } else {
+         replace_data = NULL;
+      }
+      VG_(close)(sr_Res(fd));
+      VG_(free)(replaceFile);
+   }
+
+   if (alarm != 0) {
+      VG_(alarm)(alarm);
+   }
+#endif
 }
 
 static void hg_fini ( Int exitcode )
 {
+#ifdef WITH_AVALANCHE
+   if (!noCoverage)
+   {
+      VG_(HT_ResetIter)(basicBlocksTable);
+      bbNode* n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
+      SysRes fd;
+      Char *bbFile;
+      if (bbFileName != NULL) {
+         bbFile = concatTempDir(bbFileName);
+      } else {
+         bbFile = concatTempDir("basic_blocks.log");
+      }
+      fd = VG_(open)(bbFile, 
+                     VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, 
+                     VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP |
+                        VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP);
+      VG_(free)(bbFile);
+      if (!sr_isError(fd)) {
+         while (n != NULL) {
+            UWord addr = n->key;
+            VG_(write)(sr_Res(fd), &addr, sizeof(addr));
+            n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
+         }
+         VG_(close)(sr_Res(fd));
+      }
+   }
+#endif
    if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
       VG_(message)(Vg_UserMsg, 
                    "For counts of detected and suppressed errors, "
@@ -4915,6 +5077,10 @@ static void hg_pre_clo_init ( void )
    tl_assert( sizeof(UWord) == sizeof(Addr) );
    hg_mallocmeta_table
       = VG_(HT_construct)( "hg_malloc_metadata_table" );
+      
+#ifdef WITH_AVALANCHE
+   basicBlocksTable = VG_(HT_construct)("basicBlocksTable");
+#endif
 
 }
 

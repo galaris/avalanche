@@ -80,6 +80,6 @@ typedef struct _sizeNode sizeNode;
 
 HWord hashCode(Char* str);
 
-#define _AVALANCHE
+#define WITH_AVALANCHE
 
 #endif

@@ -61,11 +61,14 @@ FileBuffer::FileBuffer(std::string file_name)
         LOG(Logger::ERROR, strerror(errno));
         throw "malloc";
     }
-    if (read(fd, buf, size) < 1)
+    if (size > 0)
     {
-        LOG(Logger::ERROR, "Cannot read from file " <<
-                          name << ": " << strerror(errno));
-        throw "read";
+        if (read(fd, buf, size) < 1)
+        {
+            LOG(Logger::ERROR, "Cannot read from file " <<
+                               name << ": " << strerror(errno));
+            throw "read";
+        }
     }
     buf[size] = '\0';
     close(fd);
@@ -280,178 +283,6 @@ int FileBuffer::applySTPSolution(char* buf,
         *brack = '[';
     }
     return 0;
-}
-
-bool FileBuffer::filterCovgrindOutput(int &signal_source)
-{
-    char* check_pid = buf;
-    int eqNum = 0;
-    for (;;)
-    {
-        if (*check_pid == '\0') return false;
-        if (*check_pid == '=') eqNum ++;
-        if (eqNum == 4) break;
-        check_pid ++;
-    }
-    int skipLength = check_pid - buf + 2;
-    char* bug_start = strstr(buf, "Process terminating");
-    if (bug_start == NULL) return false;
-    char* stack_start = strstr(bug_start, "at 0x");
-    if (stack_start == NULL) return false;
-    char* last_bug_line = stack_start;
-    char* last_bug_sym = strchr(last_bug_line, '\n');
-    if (last_bug_sym == NULL) return false;
-    last_bug_line = last_bug_sym + 1;
-    char* tmp,* prev_new_line = last_bug_sym;
-    while (((last_bug_sym = strchr(last_bug_line, '\n')) != NULL) && 
-            ((tmp = strstr(last_bug_line, "by 0x")) != NULL) && 
-            (tmp < last_bug_sym))
-    {
-        prev_new_line = last_bug_sym;
-        last_bug_line = last_bug_sym + 1;
-    }
-    last_bug_sym = prev_new_line;
-    if (last_bug_sym == NULL) return false;
-    if (last_bug_sym <= bug_start + 1) return false;
-    if (strstr(buf, "Terminated by kernel signal") != NULL)
-    {
-        signal_source = -1;
-    }
-    else if (strstr(buf, "Terminated by self-sent signal") != NULL)
-    {
-        signal_source = 1;
-    }
-    char* new_buf = (char*) malloc (last_bug_sym - bug_start);
-    int i = 0, j;
-    while (bug_start < last_bug_sym && bug_start != NULL)
-    {
-        if (*bug_start == '=')
-        {
-            bug_start += skipLength;
-            continue;
-        }
-        new_buf[i ++] = *bug_start;
-        bug_start ++;
-    }
-    free(buf);
-    buf = (char*) malloc(i + 1);
-    for (j = 0; j < i; j ++)
-    {
-        buf[j] = new_buf[j];
-    }
-    buf[j] = '\0';
-
-    size = i;
-    free(new_buf);
-    return true;
-}
-
-// "possibly lost: ", "ERROR SUMMARY: ", "definitely lost: "
-long FileBuffer::filterCount(const char * str)
-{
-    long number = -1;
-    char * find = NULL;
-    find = strstr(buf, str);
-
-    if (find != NULL)
-    {
-        number = strtol(find + strlen(str), NULL, 10);
-    }    
-    return number;
-}
-
-// Memcheck error call stack
-string FileBuffer::getMemoryErrorType(int &position)
-{
-  int end;
-
-  string error_type;
-    
-    string str_buf = buf;
-    int min_pos = INT_MAX;
-    string min_error_type;
-  string memory_errors [] =
-  {
-    " contains unaddressable byte(s)",
-    "Use of uninitialised value of size",
-    "Conditional jump or move depends on uninitialised value(s)",
-    "Syscall param",
-    " byte(s) found during client check request",
-    "Invalid ",
-    "Mismatched free() / delete / delete []",
-    "Jump to the invalid address stated on the next line",
-    "Source and destination overlap in",
-    "Illegal memory pool address",
-    " loss record ", 
-    ""
-  };
-
-  int i = 0;
-  while (!memory_errors[i].empty())
-  {
-    int found = string(buf).find(memory_errors[i], position);
-
-    if (found != string::npos) // if found
-    {
-      int j, k;
-      for (k = found; buf[k] != '='; k++);
-      for (j = found; buf[j] != '='; j--);
-            
-            if (k < min_pos)
-            {
-                min_pos = k;
-                min_error_type = str_buf.substr (j + 2, k - j - 3);
-            }
-        }
-    i ++;
-  }
-
-    position = min_pos;
-    return min_error_type;
-
-}
-
-// Memcheck error call stack
-
-string FileBuffer::getCallStack (int & position)
-{
-    int end;
-
-    string call_stack;
-
-    // Call stack parsing
-
-    int l;
-    if (position > strlen(buf))
-    {
-        return "";
-    } 
-
-    for (l = position; !(buf [l] == '=' && buf [l + 2] == '\n'); l++);
-
-    call_stack = string (buf).substr (position, l - position) + " ";
-
-    position = l;
-
-    // Deletion PID from Memcheck log
-
-    int begin = 0;
-    do
-    {
-        end = call_stack.find ("== ");
-        call_stack.replace (begin, end - begin + 2, "");
-        begin = call_stack.find ("==");
-    }
-    while (begin != string::npos);
-
-    call_stack.at(call_stack.size() - 1) = '\n';
-
-    return call_stack;
-}
-
-string FileBuffer::getBuf ()
-{
-    return string (buf);
 }
 
 bool operator == (const FileBuffer& arg1, const FileBuffer& arg2)

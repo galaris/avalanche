@@ -3,7 +3,7 @@ AUTOMAKE_OPTIONS = foreign 1.7 dist-bzip2
 
 include $(top_srcdir)/Makefile.all.am 
 
-TOOLS =		tracegrind covgrind memcheck
+TOOLS =		tracegrind covgrind memcheck helgrind
 
 EXP_TOOLS = 
 

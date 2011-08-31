@@ -204,7 +204,7 @@ void readTraceOnTheRun(int fd, string temp_dir)
 
 bool RemotePluginExecutor::checkFlag(const char *flg_name)
 {
-    for (int i = 1; i < argsnum; i ++)
+    for (int i = 0; i < argsnum; i ++)
     {
         if ((args[i][0] != '-') || (args[i][1] != '-'))
         {
@@ -221,7 +221,7 @@ bool RemotePluginExecutor::checkFlag(const char *flg_name)
 
 RemotePluginExecutor::RemotePluginExecutor(vector<string> &_args, 
                                            int _remote_fd, vector<char> &to_send,
-                                           Kind _kind, string _result_dir)
+                                           string _result_dir)
 {
     remote_fd = _remote_fd;
     result_dir = _result_dir;
@@ -232,7 +232,6 @@ RemotePluginExecutor::RemotePluginExecutor(vector<string> &_args,
     {
         args[i] = strdup(_args[i].c_str());
     }
-    kind = _kind;
 }
 
 int RemotePluginExecutor::run(int thread_index)
@@ -243,7 +242,6 @@ int RemotePluginExecutor::run(int thread_index)
         char util_c;
         char *file_name;
         int i, arg_length, file_length;
-        writeToSocket(remote_fd, &kind, sizeof(int));
         writeToSocket(remote_fd, &argsnum, sizeof(int));
         for (i = 0; i < argsnum; i ++)
         {
@@ -286,54 +284,44 @@ int RemotePluginExecutor::run(int thread_index)
         }
       //  readFromSocket(remote_fd, &res, sizeof(int));
 
-        switch (kind)
-        {
-            case TG: 
-               readTraceOnTheRun(remote_fd, temp_dir);
-               readFromSocket(remote_fd, &res, sizeof(int));
-               if (res == 1)
-               {
-                   LOG(Logger::ERROR, "Plugin-agent ended abnormally");
-                   return 1;
-               }
-               readFileFromSocket(remote_fd, temp_dir + string("offsets.log"));
-               if (checkFlag("--dump-prediction=yes"))
-               {
-                   readFileFromSocket(remote_fd, 
-                                      temp_dir + string("actual.log"));
-               }
-               if (checkFlag("--dump-file=calldump.log"))
-               {
-                   readFileFromSocket(remote_fd, 
-                                      result_dir + string("calldump.log"));
-               }
-               if (checkFlag("--sockets=yes --datagrams=yes"))
-               {
-                   readFileFromSocket(remote_fd, 
-                                      temp_dir + string("replace_data"));
-               }
-               if (checkFlag("--check-argv="))
-               {
-                   readFileFromSocket(remote_fd, 
-                                      temp_dir + string("argv.log"));
-               }
-               break;
-
-            case CV:     
-            case MC:
-               readFromSocket(remote_fd, &res, sizeof(int));
-               if (!checkFlag("--no-coverage=yes"))
-               {
-                   readFileFromSocket(remote_fd, 
-                                      temp_dir + string("basic_blocks.log"));
-               }
+        if (checkFlag("--tool=tracegrind"))
+        { 
+            readTraceOnTheRun(remote_fd, temp_dir);
+            readFromSocket(remote_fd, &res, sizeof(int));
+            if (res == 1)
+            {
+                LOG(Logger::ERROR, "Plugin-agent ended abnormally");
+                return 1;
+            }
+            readFileFromSocket(remote_fd, temp_dir + string("offsets.log"));
+            if (checkFlag("--dump-prediction=yes"))
+            {
+               readFileFromSocket(remote_fd, temp_dir + string("actual.log"));
+            }
+            if (checkFlag("--dump-file=calldump.log"))
+            {
                readFileFromSocket(remote_fd, 
-                                  temp_dir + string("execution.log"));
-               break;
-
-            default: 
-               throw "local"; 
-               break;
+                                      result_dir + string("calldump.log"));
+            }
+            if (checkFlag("--sockets=yes --datagrams=yes"))
+            {
+               readFileFromSocket(remote_fd, 
+                                      temp_dir + string("replace_data"));
+            }
+            if (checkFlag("--check-argv="))
+            {
+               readFileFromSocket(remote_fd, temp_dir + string("argv.log"));
+            }
+        }
+        else
+        {
+            readFromSocket(remote_fd, &res, sizeof(int));
+            if (!checkFlag("--no-coverage=yes"))
+            {
+                readFileFromSocket(remote_fd, 
+                                       temp_dir + string("basic_blocks.log"));
+            }
+            readFileFromSocket(remote_fd, temp_dir + string("execution.log"));
         }
     }
     catch(const char *msg)

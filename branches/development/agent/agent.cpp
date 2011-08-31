@@ -208,9 +208,10 @@ int main(int argc, char** argv)
     signal(SIGINT, int_handler);
     writeToSocket(fd, "a", 1);
 
-    int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm;
+    int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, pluginlength;
     int threads, argsnum, masklength, filtersNum, flength, received, net_fd;
     bool useMemcheck, leaks, traceChildren, checkDanger, verbose, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
+    string plugin_name;
   
     readFromSocket(fd, &file_num, sizeof(int));
     if (file_num == -1)
@@ -228,7 +229,6 @@ int main(int argc, char** argv)
     readFromSocket(fd, &tracegrindAlarm, sizeof(int));
     readFromSocket(fd, &threads, sizeof(int));
     readFromSocket(fd, &argsnum, sizeof(int));
-    readFromSocket(fd, &useMemcheck, sizeof(bool));
     readFromSocket(fd, &leaks, sizeof(bool));
     readFromSocket(fd, &traceChildren, sizeof(bool));
     readFromSocket(fd, &checkDanger, sizeof(bool));
@@ -304,10 +304,6 @@ int main(int argc, char** argv)
       sprintf(alrm, "--tracegrind-alarm=%d", tracegrindAlarm);
       avalanche_argv[av_argc++] = alrm;
     }
-    if (useMemcheck)
-    {
-      avalanche_argv[av_argc++] = "--use-memcheck";
-    }
     if (leaks)
     {
       avalanche_argv[av_argc++] = "--leaks";
@@ -362,7 +358,16 @@ int main(int argc, char** argv)
       sprintf(prt, "--port=%d", port);
       avalanche_argv[av_argc++] = strdup(prt);
     }
-
+    
+    {
+      char buf[128], plugin_name[128];
+      readFromSocket(fd, &pluginlength, sizeof(int));
+      readFromSocket(fd, buf, pluginlength);
+      buf[pluginlength] = '\0';
+      sprintf(plugin_name, "--tool=%s", buf);
+      avalanche_argv[av_argc++] = strdup(plugin_name);
+    }
+    
     readFromSocket(fd, &masklength, sizeof(int));
     if (masklength != 0)
     {
@@ -432,7 +437,7 @@ int main(int argc, char** argv)
       avalanche_argv[av_argc++] = arg;
     }
     avalanche_argv[av_argc] = NULL;
-
+    
     for (;;)
     {
       signal(SIGUSR1, sig_hndlr);

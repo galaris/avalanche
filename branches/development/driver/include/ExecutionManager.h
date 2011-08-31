@@ -43,6 +43,7 @@ class FileBuffer;
 class OptionConfig;
 class Input;
 struct FileOffsetSet;
+class Error;
 
 class Key
 {
@@ -104,7 +105,7 @@ public:
     int calculateScore(std::string filaNameModifier = "");
     int checkAndScore(Input* input, bool addNoCoverage, bool first_run, std::string fileNameModifier = "");
 
-    int dumpError(Input *input, std::string error_trace, int error_type, bool store, int signal_source);
+    int dumpError(Input *input, Error* error);
     
     bool updateArgv(Input* input);
 
@@ -116,8 +117,6 @@ public:
     
     int parseOffsetLog(std::vector<FileOffsetSet> &used_offsets);
     
-    int getMemchecks ();
-
     void addInput(Input* input, unsigned int depth, unsigned int score);
 
     OptionConfig* getConfig() { return config; }
@@ -131,8 +130,6 @@ private:
     std::vector <std::string> cur_argv;
     std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
-    int exploits;
-    int memchecks;
     int divergences;
 };
 

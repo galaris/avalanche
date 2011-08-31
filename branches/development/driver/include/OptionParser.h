@@ -38,6 +38,7 @@ public:
 
     OptionConfig *run() const;
     void reportDummyOptions(OptionConfig* config) const;
+    bool checkSupportedPlugins(std::string plugin_name) const;
 
 protected:
     void setProgName(const std::string &path);

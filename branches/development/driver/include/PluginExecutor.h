@@ -37,11 +37,10 @@ class PluginExecutor : public LocalExecutor
 {
 public:
     PluginExecutor(bool debug_full_enable,
-	           bool trace_children,
+                   bool trace_children,
                    const std::string &install_dir,
                    const std::vector<std::string> &cmd,
-                   const std::vector<std::string> &tg_args,
-                   Kind kind);
+                   const std::vector<std::string> &tg_args);
 
     int run(int thread_index = 0);
     ~PluginExecutor();
@@ -49,7 +48,6 @@ public:
 private:
     bool debug_full;
     bool trace_children;
-    Kind kind;
 };
 
 
