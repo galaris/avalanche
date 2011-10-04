@@ -61,6 +61,8 @@
 #define __NR_timerfd_create  322
 #elif defined(__powerpc__)
 #define __NR_timerfd_create  306
+#elif defined(__s390x__)
+#define __NR_timerfd_create  319
 #else
 #error Cannot detect your architecture!
 #endif
@@ -76,6 +78,9 @@
 #elif defined(__powerpc__)
 #define __NR_timerfd_settime 311
 #define __NR_timerfd_gettime 312
+#elif defined(__s390x__)
+#define __NR_timerfd_settime 320
+#define __NR_timerfd_gettime 321
 #else
 #error Cannot detect your architecture!
 #endif
@@ -263,10 +268,10 @@ int main(int ac, char **av)
     else
     {
       const double delta = (ttmr - tnow) * 1e-6;
-      if (1.9 < delta && delta < 2.1)
-        fprintf(stderr, "got timer ticks (%ld) after about 2s\n", ticks);
+      if (19 <= ticks && ticks <= 55 && 1.9 < delta && delta < 5.5)
+        fprintf(stderr, "got about 20 timer ticks after about 2s\n");
       else
-        fprintf(stderr, "got timer ticks (%ld) after %.1f s\n", ticks, delta);
+        fprintf(stderr, "got timer ticks (%ld) after %.2f s\n", ticks, delta);
     }
 
 

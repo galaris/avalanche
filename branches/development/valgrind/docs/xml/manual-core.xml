@@ -564,9 +564,9 @@ in most cases.  We group the available options by rough categories.</para>
 <sect2 id="manual-core.toolopts" xreflabel="Tool-selection Option">
 <title>Tool-selection Option</title>
 
-<para>The single most important option.</para>
+<para id="tool.opts.para">The single most important option.</para>
 
-<variablelist>
+<variablelist id="tool.opts.list">
 
   <varlistentry id="tool_name" xreflabel="--tool">
     <term>
@@ -663,7 +663,7 @@ in most cases.  We group the available options by rough categories.</para>
 
   <varlistentry id="opt.trace-children-skip" xreflabel="--trace-children-skip">
     <term>
-      <option><![CDATA[--trace-children-skip=patt1,patt2 ]]></option>
+      <option><![CDATA[--trace-children-skip=patt1,patt2,... ]]></option>
     </term>
     <listitem>
       <para>This option only has an effect when 
@@ -687,6 +687,20 @@ in most cases.  We group the available options by rough categories.</para>
     </listitem>
   </varlistentry>
 
+  <varlistentry id="opt.trace-children-skip-by-arg"
+                xreflabel="--trace-children-skip-by-arg">
+    <term>
+      <option><![CDATA[--trace-children-skip-by-arg=patt1,patt2,... ]]></option>
+    </term>
+    <listitem>
+      <para>This is the same as  
+        <option>--trace-children-skip</option>, with one difference:
+        the decision as to whether to trace into a child process is
+        made by examining the arguments to the child process, rather
+        than the name of its executable.</para>
+    </listitem>
+  </varlistentry>
+
   <varlistentry id="opt.child-silent-after-fork"
                 xreflabel="--child-silent-after-fork">
     <term>
@@ -702,6 +716,54 @@ in most cases.  We group the available options by rough categories.</para>
       strongly recommended if you are requesting XML output
       (<varname>--xml=yes</varname>), since otherwise the XML from child and
       parent may become mixed up, which usually makes it useless.
+      </para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.vgdb" xreflabel="--vgdb">
+    <term>
+      <option><![CDATA[--vgdb=<no|yes|full> [default: yes] ]]></option>
+    </term>
+    <listitem>
+      <para>Valgrind will provide "gdbserver" functionality when
+      <option>--vgdb=yes</option>
+      or <option>--vgdb=full</option> is specified.  This
+      allows an external GNU GDB debugger
+      to control and debug your program when it runs on Valgrind. See
+      <xref linkend="manual-core-adv.gdbserver"/> for a detailed
+      description.
+      </para>
+
+      <para> If the embedded gdbserver is enabled but no gdb is
+      currently being used, the <xref linkend="manual-core-adv.vgdb"/>
+      command line utility can send "monitor commands" to Valgrind
+      from a shell.  The Valgrind core provides a set of
+      <xref linkend="manual-core-adv.valgrind-monitor-commands"/>. A tool
+      can optionally provide tool specific monitor commands, which are
+      documented in the tool specific chapter.
+      </para>
+
+      <para><option>--vgdb=full</option> incurs
+      significant performance overheads.
+      </para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.vgdb-error" xreflabel="--vgdb-error">
+    <term>
+      <option><![CDATA[--vgdb-error=<number> [default: 999999999] ]]></option>
+    </term>
+    <listitem>
+      <para> Use this option when the Valgrind gdbserver is enabled with
+      <option>--vgdb=yes</option> or <option>--vgdb=full</option>.
+      Tools that report errors will wait
+      for "<computeroutput>number</computeroutput>" errors to be
+      reported before freezing the program and waiting for you to
+      connect with GDB.  It follows that a value of zero will cause
+      the gdbserver to be started before your program is executed.
+      This is typically used to insert GDB breakpoints before
+      execution, and also works with tools that do not report
+      errors, such as Massif.
       </para>
     </listitem>
   </varlistentry>
@@ -837,7 +899,7 @@ that can report errors, e.g. Memcheck, but not Cachegrind.</para>
 
       <para>This option is aimed at making life easier for tools that consume
       Valgrind's output as input, such as GUI front ends.  Currently this
-      option works with Memcheck, Helgrind and Ptrcheck.  The output format
+      option works with Memcheck, Helgrind and SGcheck.  The output format
       is specified in the file
       <computeroutput>docs/internals/xml-output-protocol4.txt</computeroutput>
       in the source tree for Valgrind 3.5.0 or later.</para>
@@ -1126,6 +1188,15 @@ that can report errors, e.g. Memcheck, but not Cachegrind.</para>
       debugger, quit from it, and the program will continue. Trying to
       continue from inside the debugger doesn't work.</para>
 
+      <para>
+      Note: if you use GDB, more powerful debugging support is
+      provided by the <option>--vgdb=</option> <varname>yes</varname>
+      or <varname>full</varname> value.  This activates Valgrind's
+      internal gdbserver, which provides more-or-less full GDB-style
+      control of the application: insertion of breakpoints, continuing 
+      from inside GDB, inferior function calls, and much more.
+      </para> 
+
       <para><varname>C Ret</varname> or <varname>c Ret</varname> causes
       Valgrind not to start a debugger, and not to ask again.</para>
     </listitem>
@@ -1305,8 +1376,7 @@ that can report errors, e.g. Memcheck, but not Cachegrind.</para>
 
       <para>On Linux, you may request a stack of size up to 2GB.
       Valgrind will stop with a diagnostic message if the stack cannot
-      be allocated.  On AIX5 the allowed stack size is restricted to
-      128MB.</para>
+      be allocated.</para>
 
       <para><option>--main-stacksize</option> only affects the stack
       size for the program's initial thread.  It has no bearing on the
@@ -1380,7 +1450,7 @@ need to use these.</para>
 
   <varlistentry id="opt.smc-check" xreflabel="--smc-check">
     <term>
-      <option><![CDATA[--smc-check=<none|stack|all> [default: stack] ]]></option>
+      <option><![CDATA[--smc-check=<none|stack|all|all-non-file> [default: stack] ]]></option>
     </term>
     <listitem>
       <para>This option controls Valgrind's detection of self-modifying
@@ -1389,24 +1459,41 @@ need to use these.</para>
       continue to execute the translations it made for the old code.  This
       will likely lead to incorrect behaviour and/or crashes.</para>
       
-      <para>Valgrind has three levels of self-modifying code detection:
+      <para>Valgrind has four levels of self-modifying code detection:
       no detection, detect self-modifying code on the stack (which is used by
-      GCC to implement nested functions), or detect self-modifying code
-      everywhere.  Note that the default option will catch the vast majority
+      GCC to implement nested functions), detect self-modifying code
+      everywhere, and detect self-modifying code everywhere except in
+      file-backed mappings.
+
+      Note that the default option will catch the vast majority
       of cases.  The main case it will not catch is programs such as JIT
       compilers that dynamically generate code <emphasis>and</emphasis>
       subsequently overwrite part or all of it.  Running with
-      <varname>all</varname> will slow Valgrind down noticeably.  Running with
+      <varname>all</varname> will slow Valgrind down noticeably.
+      Running with
       <varname>none</varname> will rarely speed things up, since very little
       code gets put on the stack for most programs.  The
-      <function>VALGRIND_DISCARD_TRANSLATIONS</function> client request is
-      an alternative to <option>--smc-check=all</option> that requires more
-      effort but is much faster.
+      <function>VALGRIND_DISCARD_TRANSLATIONS</function> client
+      request is an alternative to <option>--smc-check=all</option>
+      that requires more programmer effort but allows Valgrind to run
+      your program faster, by telling it precisely when translations
+      need to be re-made.
       <!-- commented out because it causes broken links in the man page
       ;  see <xref
       linkend="manual-core-adv.clientreq"/> for more details.
       -->
       </para>
+
+      <para><option>--smc-check=all-non-file</option> provides a
+      cheaper but more limited version
+      of <option>--smc-check=all</option>.  It adds checks to any
+      translations that do not originate from file-backed memory
+      mappings.  Typical applications that generate code, for example
+      JITs in web browsers, generate code into anonymous mmaped areas,
+      whereas the "fixed" code of the browser always lives in
+      file-backed mappings.  <option>--smc-check=all-non-file</option>
+      takes advantage of this observation, limiting the overhead of
+      checking to code which is likely to be JIT generated.</para>
 
       <para>Some architectures (including ppc32, ppc64 and ARM) require
       programs which create code at runtime to flush the instruction
@@ -1414,8 +1501,8 @@ need to use these.</para>
       observes and honours such instructions.  Hence, on ppc32/Linux,
       ppc64/Linux and ARM/Linux, Valgrind always provides complete, transparent
       support for self-modifying code.  It is only on platforms such as
-      x86/Linux, AMD64/Linux and x86/Darwin that you need to use this
-      option.</para>
+      x86/Linux, AMD64/Linux, x86/Darwin and AMD64/Darwin 
+      that you need to use this option.</para>
     </listitem>
   </varlistentry>
 
@@ -1456,6 +1543,50 @@ need to use these.</para>
 ==15522==    by 0x4006BC: main (varinfo1.c:56)
 ==15522==  Location 0x7fefffefc is 0 bytes inside local var "local"
 ==15522==  declared at varinfo1.c:46, in frame #1 of thread 1]]></programlisting>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.vgdb-poll" xreflabel="--vgdb-poll">
+    <term>
+      <option><![CDATA[--vgdb-poll=<number> [default: 5000] ]]></option>
+    </term>
+    <listitem>
+      <para> As part of its main loop, the Valgrind scheduler will
+      poll to check if some activity (such as an external command or
+      some input from a gdb) has to be handled by gdbserver.  This
+      activity poll will be done after having run the given number of
+      basic blocks (or slightly more than the given number of basic
+      blocks). This poll is quite cheap so the default value is set
+      relatively low. You might further decrease this value if vgdb
+      cannot use ptrace system call to interrupt Valgrind if all
+      threads are (most of the time) blocked in a system call.
+      </para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.vgdb-shadow-registers" xreflabel="--vgdb-shadow-registers">
+    <term>
+      <option><![CDATA[--vgdb-shadow-registers=no|yes [default: no] ]]></option>
+    </term>
+    <listitem>
+      <para> When activated, gdbserver will expose the Valgrind shadow registers
+      to GDB. With this, the value of the Valgrind shadow registers can be examined
+      or changed using GDB. Exposing shadow registers only works with GDB version
+      7.1 or later.
+      </para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.vgdb-prefix" xreflabel="--vgdb-prefix">
+    <term>
+      <option><![CDATA[--vgdb-prefix=<prefix> [default: /tmp/vgdb-pipe] ]]></option>
+    </term>
+    <listitem>
+      <para> To communicate with gdb/vgdb, the Valgrind gdbserver
+      creates 3 files (2 named FIFOs and a mmap shared memory
+      file). The prefix option controls the directory and prefix for
+      the creation of these files.
+      </para>
     </listitem>
   </varlistentry>
 
@@ -1515,6 +1646,15 @@ need to use these.</para>
           <para><option>enable-inner: </option> Enable some special
           magic needed when the program being run is itself
           Valgrind.</para>
+        </listitem>
+        <listitem>
+          <para><option>fuse-compatible: </option> Enable special
+            handling for certain system calls that may block in a FUSE
+            file-system.  This may be necessary when running Valgrind
+            on a multi-threaded program that uses one thread to manage
+            a FUSE file-system and another thread to access that
+            file-system.
+          </para>
         </listitem>
       </itemizedlist>
     </listitem>
@@ -1616,6 +1756,13 @@ need to use these.</para>
 Valgrind itself.  You shouldn't need to use them in the normal run of
 things.  If you wish to see the list, use the
 <option>--help-debug</option> option.</para>
+
+<para>If you wish to debug your program rather than debugging
+Valgrind itself, then you should use the options
+<option>--vgdb=yes</option> or <option>--vgdb=full</option>
+or <option>--db-attach=yes</option>.
+</para>
+
 <!-- end of xi:include in the manpage -->
 
 </sect2>
@@ -1676,7 +1823,6 @@ don't understand
 </sect2>
 
 </sect1>
-
 
 
 

@@ -65,7 +65,8 @@ static ULong cmalloc_bs_mallocd = 0;
 /* Record malloc'd blocks. */
 VgHashTable MC_(malloc_list) = NULL;
 
-/* Memory pools. */
+/* Memory pools: a hash table of MC_Mempools.  Search key is
+   MC_Mempool::pool. */
 VgHashTable MC_(mempool_list) = NULL;
    
 /* Records blocks after freeing. */
@@ -485,8 +486,48 @@ SizeT MC_(malloc_usable_size) ( ThreadId tid, void* p )
    return ( mc ? mc->szB : 0 );
 }
 
+/* This handles the in place resize of a block, as performed by the
+   VALGRIND_RESIZEINPLACE_BLOCK client request.  It is unrelated to,
+   and not used for, handling of the normal libc realloc()
+   function. */
+void MC_(handle_resizeInPlace)(ThreadId tid, Addr p,
+                               SizeT oldSizeB, SizeT newSizeB, SizeT rzB)
+{
+   MC_Chunk* mc = VG_(HT_lookup) ( MC_(malloc_list), (UWord)p );
+   if (!mc || mc->szB != oldSizeB || newSizeB == 0) {
+      /* Reject if: p is not found, or oldSizeB is wrong,
+         or new block would be empty. */
+      MC_(record_free_error) ( tid, p );
+      return;
+   }
 
-/* Memory pool stuff. */
+   if (oldSizeB == newSizeB)
+      return;
+
+   mc->szB = newSizeB;
+   if (newSizeB < oldSizeB) {
+      MC_(make_mem_noaccess)( p + newSizeB, oldSizeB - newSizeB + rzB );
+   } else {
+      ExeContext* ec  = VG_(record_ExeContext)(tid, 0/*first_ip_delta*/);
+      UInt        ecu = VG_(get_ECU_from_ExeContext)(ec);
+      MC_(make_mem_undefined_w_otag)( p + oldSizeB, newSizeB - oldSizeB,
+                                      ecu | MC_OKIND_HEAP );
+      if (rzB > 0)
+         MC_(make_mem_noaccess)( p + newSizeB, rzB );
+   }
+}
+
+
+/*------------------------------------------------------------*/
+/*--- Memory pool stuff.                                   ---*/
+/*------------------------------------------------------------*/
+
+/* Set to 1 for intensive sanity checking.  Is very expensive though
+   and should not be used in production scenarios.  See #255966. */
+#define MP_DETAILED_SANITY_CHECKS 0
+
+static void check_mempool_sane(MC_Mempool* mp); /*forward*/
+
 
 void MC_(create_mempool)(Addr pool, UInt rzB, Bool is_zeroed)
 {
@@ -509,6 +550,7 @@ void MC_(create_mempool)(Addr pool, UInt rzB, Bool is_zeroed)
    mp->rzB        = rzB;
    mp->is_zeroed  = is_zeroed;
    mp->chunks     = VG_(HT_construct)( "MC_(create_mempool)" );
+   check_mempool_sane(mp);
 
    /* Paranoia ... ensure this area is off-limits to the client, so
       the mp->data field isn't visible to the leak checker.  If memory
@@ -540,6 +582,7 @@ void MC_(destroy_mempool)(Addr pool)
       MC_(record_illegal_mempool_error) ( tid, pool );
       return;
    }
+   check_mempool_sane(mp);
 
    // Clean up the chunks, one by one
    VG_(HT_ResetIter)(mp->chunks);
@@ -654,10 +697,10 @@ void MC_(mempool_alloc)(ThreadId tid, Addr pool, Addr addr, SizeT szB)
    if (mp == NULL) {
       MC_(record_illegal_mempool_error) ( tid, pool );
    } else {
-      check_mempool_sane(mp);
+      if (MP_DETAILED_SANITY_CHECKS) check_mempool_sane(mp);
       MC_(new_block)(tid, addr, szB, /*ignored*/0, mp->is_zeroed,
                      MC_AllocCustom, mp->chunks);
-      check_mempool_sane(mp);
+      if (MP_DETAILED_SANITY_CHECKS) check_mempool_sane(mp);
    }
 }
 
@@ -678,7 +721,7 @@ void MC_(mempool_free)(Addr pool, Addr addr)
       VG_(get_and_pp_StackTrace) (tid, MEMPOOL_DEBUG_STACKTRACE_DEPTH);
    }
 
-   check_mempool_sane(mp);
+   if (MP_DETAILED_SANITY_CHECKS) check_mempool_sane(mp);
    mc = VG_(HT_remove)(mp->chunks, (UWord)addr);
    if (mc == NULL) {
       MC_(record_free_error)(tid, (Addr)addr);
@@ -692,7 +735,7 @@ void MC_(mempool_free)(Addr pool, Addr addr)
    }
 
    die_and_free_mem ( tid, mc, mp->rzB );
-   check_mempool_sane(mp);
+   if (MP_DETAILED_SANITY_CHECKS) check_mempool_sane(mp);
 }
 
 
@@ -751,7 +794,7 @@ void MC_(mempool_trim)(Addr pool, Addr addr, SizeT szB)
          if (VG_(HT_remove)(mp->chunks, (UWord)mc->data) == NULL) {
             MC_(record_free_error)(tid, (Addr)mc->data);
             VG_(free)(chunks);
-            check_mempool_sane(mp);
+            if (MP_DETAILED_SANITY_CHECKS) check_mempool_sane(mp);
             return;
          }
          die_and_free_mem ( tid, mc, mp->rzB );  
@@ -766,7 +809,7 @@ void MC_(mempool_trim)(Addr pool, Addr addr, SizeT szB)
          if (VG_(HT_remove)(mp->chunks, (UWord)mc->data) == NULL) {
             MC_(record_free_error)(tid, (Addr)mc->data);
             VG_(free)(chunks);
-            check_mempool_sane(mp);
+            if (MP_DETAILED_SANITY_CHECKS) check_mempool_sane(mp);
             return;
          }
 

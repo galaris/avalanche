@@ -42,6 +42,7 @@
 #include "pub_core_libcproc.h"    // VG_(geteuid), VG_(getegid)
 #include "pub_core_libcassert.h"  // VG_(exit), vg_assert
 #include "pub_core_mallocfree.h"  // VG_(malloc), VG_(free)
+#include "pub_core_libcsetjmp.h"  // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_xarray.h"
 #include "pub_core_clientstate.h"
@@ -55,7 +56,7 @@
  */
 #include <elf.h>
 #ifndef NT_PRXFPREG
-#define NT_PRXFPREG     0x46e62b7f      /* copied from gdb5.1/include/elf/common.h */
+#define NT_PRXFPREG    0x46e62b7f /* copied from gdb5.1/include/elf/common.h */
 #endif /* NT_PRXFPREG */
 
 #if	VG_WORDSIZE == 8
@@ -135,6 +136,17 @@ static void fill_phdr(ESZ(Phdr) *phdr, const NSegment *seg, UInt off, Bool write
    phdr->p_align = VKI_PAGE_SIZE;
 }
 
+#if defined(VGPV_arm_linux_android)
+/* Android's libc doesn't provide a definition for this.  Hence: */
+typedef
+   struct {
+      Elf32_Word n_namesz;
+      Elf32_Word n_descsz;
+      Elf32_Word n_type;
+   }
+   Elf32_Nhdr;
+#endif
+
 struct note {
    struct note *next;
    ESZ(Nhdr) note;
@@ -143,10 +155,13 @@ struct note {
 
 static UInt note_size(const struct note *n)
 {
-   return sizeof(ESZ(Nhdr)) + VG_ROUNDUP(VG_(strlen)(n->name)+1, 4) + VG_ROUNDUP(n->note.n_descsz, 4);
+   return sizeof(ESZ(Nhdr)) + VG_ROUNDUP(VG_(strlen)(n->name)+1, 4)
+                            + VG_ROUNDUP(n->note.n_descsz, 4);
 }
 
-static void add_note(struct note **list, const Char *name, UInt type, const void *data, UInt datasz)
+#if !defined(VGPV_arm_linux_android)
+static void add_note(struct note **list, const Char *name, UInt type,
+                     const void *data, UInt datasz)
 {
    Int namelen = VG_(strlen)(name)+1;
    Int notelen = sizeof(struct note) + 
@@ -166,13 +181,15 @@ static void add_note(struct note **list, const Char *name, UInt type, const void
    VG_(memcpy)(n->name, name, namelen);
    VG_(memcpy)(n->name+VG_ROUNDUP(namelen,4), data, datasz);
 }
+#endif /* !defined(VGPV_arm_linux_android) */
 
 static void write_note(Int fd, const struct note *n)
 {
    VG_(write)(fd, &n->note, note_size(n));
 }
 
-static void fill_prpsinfo(const ThreadState *tst, struct vki_elf_prpsinfo *prpsinfo)
+static void fill_prpsinfo(const ThreadState *tst,
+                          struct vki_elf_prpsinfo *prpsinfo)
 {
    static Char name[VKI_PATH_MAX];
 
@@ -233,9 +250,14 @@ static void fill_prstatus(const ThreadState *tst,
    prs->pr_pgrp = VG_(getpgrp)();
    prs->pr_sid = VG_(getpgrp)();
    
+#ifdef VGP_s390x_linux
+   /* prs->pr_reg has struct type. Need to take address. */
+   regs = (struct vki_user_regs_struct *)&(prs->pr_reg);
+#else
    regs = (struct vki_user_regs_struct *)prs->pr_reg;
 
    vg_assert(sizeof(*regs) == sizeof(prs->pr_reg));
+#endif
 
 #if defined(VGP_x86_linux)
    regs->eflags = LibVEX_GuestX86_get_eflags( &arch->vex );
@@ -343,6 +365,16 @@ static void fill_prstatus(const ThreadState *tst,
    regs->ARM_pc   = arch->vex.guest_R15T;
    regs->ARM_cpsr = LibVEX_GuestARM_get_cpsr( &((ThreadArchState*)arch)->vex );
 
+#elif defined(VGP_s390x_linux)
+#  define DO(n)  regs->gprs[n] = arch->vex.guest_r##n
+   DO(0);  DO(1);  DO(2);  DO(3);  DO(4);  DO(5);  DO(6);  DO(7);
+   DO(8);  DO(9);  DO(10); DO(11); DO(12); DO(13); DO(14); DO(15);
+#  undef DO
+#  define DO(n)  regs->acrs[n] = arch->vex.guest_a##n
+   DO(0);  DO(1);  DO(2);  DO(3);  DO(4);  DO(5);  DO(6);  DO(7);
+   DO(8);  DO(9);  DO(10); DO(11); DO(12); DO(13); DO(14); DO(15);
+#  undef DO
+   regs->orig_gpr2 = arch->vex.guest_r2;
 #else
 #  error Unknown ELF platform
 #endif
@@ -394,8 +426,9 @@ static void fill_fpu(const ThreadState *tst, vki_elf_fpregset_t *fpu)
 
 #elif defined(VGP_ppc32_linux)
    /* The guest state has the FPR fields declared as ULongs, so need
-      to fish out the values without converting them. */
-#  define DO(n)  (*fpu)[n] = *(double*)(&arch->vex.guest_FPR##n)
+      to fish out the values without converting them.
+      NOTE: The 32 FP registers map to the first 32 VSX registers.*/
+#  define DO(n)  (*fpu)[n] = *(double*)(&arch->vex.guest_VSR##n)
    DO(0);  DO(1);  DO(2);  DO(3);  DO(4);  DO(5);  DO(6);  DO(7);
    DO(8);  DO(9);  DO(10); DO(11); DO(12); DO(13); DO(14); DO(15);
    DO(16); DO(17); DO(18); DO(19); DO(20); DO(21); DO(22); DO(23);
@@ -404,8 +437,9 @@ static void fill_fpu(const ThreadState *tst, vki_elf_fpregset_t *fpu)
 
 #elif defined(VGP_ppc64_linux)
    /* The guest state has the FPR fields declared as ULongs, so need
-      to fish out the values without converting them. */
-#  define DO(n)  (*fpu)[n] = *(double*)(&arch->vex.guest_FPR##n)
+      to fish out the values without converting them.
+      NOTE: The 32 FP registers map to the first 32 VSX registers.*/
+#  define DO(n)  (*fpu)[n] = *(double*)(&arch->vex.guest_VSR##n)
    DO(0);  DO(1);  DO(2);  DO(3);  DO(4);  DO(5);  DO(6);  DO(7);
    DO(8);  DO(9);  DO(10); DO(11); DO(12); DO(13); DO(14); DO(15);
    DO(16); DO(17); DO(18); DO(19); DO(20); DO(21); DO(22); DO(23);
@@ -415,6 +449,11 @@ static void fill_fpu(const ThreadState *tst, vki_elf_fpregset_t *fpu)
 #elif defined(VGP_arm_linux)
    // umm ...
 
+#elif defined(VGP_s390x_linux)
+#  define DO(n)  fpu->fprs[n].ui = arch->vex.guest_f##n
+   DO(0);  DO(1);  DO(2);  DO(3);  DO(4);  DO(5);  DO(6);  DO(7);
+   DO(8);  DO(9);  DO(10); DO(11); DO(12); DO(13); DO(14); DO(15);
+# undef DO
 #else
 #  error Unknown ELF platform
 #endif
@@ -481,6 +520,7 @@ void make_elf_coredump(ThreadId tid, const vki_siginfo_t *si, UInt max_size)
    vg_assert(buf);
 
    for(;;) {
+      Int oflags = VKI_O_CREAT|VKI_O_WRONLY|VKI_O_EXCL|VKI_O_TRUNC;
       SysRes sres;
 
       if (seq == 0)
@@ -491,9 +531,11 @@ void make_elf_coredump(ThreadId tid, const vki_siginfo_t *si, UInt max_size)
 		      basename, coreext, VG_(getpid)(), seq);
       seq++;
 
-      sres = VG_(open)(buf, 			   
-                       VKI_O_CREAT|VKI_O_WRONLY|VKI_O_EXCL|VKI_O_TRUNC, 
-                       VKI_S_IRUSR|VKI_S_IWUSR);
+#     if defined(VKI_O_LARGEFILE)
+      oflags |= VKI_O_LARGEFILE;
+#     endif
+
+      sres = VG_(open)(buf, oflags, VKI_S_IRUSR|VKI_S_IWUSR);
       if (!sr_isError(sres)) {
          core_fd = sr_Res(sres);
 	 break;
@@ -529,25 +571,31 @@ void make_elf_coredump(ThreadId tid, const vki_siginfo_t *si, UInt max_size)
       if (VG_(threads)[i].status == VgTs_Empty)
 	 continue;
 
-#if defined(VGP_x86_linux)
+#     if defined(VGP_x86_linux)
       {
          vki_elf_fpxregset_t xfpu;
          fill_xfpu(&VG_(threads)[i], &xfpu);
          add_note(&notelist, "LINUX", NT_PRXFPREG, &xfpu, sizeof(xfpu));
       }
-#endif
+#     endif
 
       fill_fpu(&VG_(threads)[i], &fpu);
+#     if !defined(VGPV_arm_linux_android)
       add_note(&notelist, "CORE", NT_FPREGSET, &fpu, sizeof(fpu));
+#     endif
 
       fill_prstatus(&VG_(threads)[i], &prstatus, si);
+#     if !defined(VGPV_arm_linux_android)
       add_note(&notelist, "CORE", NT_PRSTATUS, &prstatus, sizeof(prstatus));
+#     endif
    }
 
    fill_prpsinfo(&VG_(threads)[tid], &prpsinfo);
+#  if !defined(VGPV_arm_linux_android)
    add_note(&notelist, "CORE", NT_PRPSINFO, &prpsinfo, sizeof(prpsinfo));
+#  endif
 
-   for(note = notelist, notesz = 0; note != NULL; note = note->next)
+   for (note = notelist, notesz = 0; note != NULL; note = note->next)
       notesz += note_size(note);
 
    off = sizeof(ehdr) + sizeof(*phdrs) * num_phdrs;
@@ -571,7 +619,8 @@ void make_elf_coredump(ThreadId tid, const vki_siginfo_t *si, UInt max_size)
       if (!may_dump(seg))
 	 continue;
 
-      fill_phdr(&phdrs[idx], seg, off, (seg->end - seg->start + off) < max_size);
+      fill_phdr(&phdrs[idx], seg, off,
+                (seg->end - seg->start + off) < max_size);
       
       off += phdrs[idx].p_filesz;
 
@@ -594,7 +643,8 @@ void make_elf_coredump(ThreadId tid, const vki_siginfo_t *si, UInt max_size)
 	 continue;
 
       if (phdrs[idx].p_filesz > 0) {
-	 vg_assert(VG_(lseek)(core_fd, phdrs[idx].p_offset, VKI_SEEK_SET) == phdrs[idx].p_offset);
+	 vg_assert(VG_(lseek)(core_fd, phdrs[idx].p_offset, VKI_SEEK_SET) 
+                   == phdrs[idx].p_offset);
 	 vg_assert(seg->end - seg->start >= phdrs[idx].p_filesz);
 
 	 (void)VG_(write)(core_fd, (void *)seg->start, phdrs[idx].p_filesz);

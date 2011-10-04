@@ -13,3 +13,5 @@ AC_CONFIG_FILES([Makefile AST/Makefile sat/Makefile sat/core/Makefile
                  sat/mtl/Makefile simplifier/Makefile bitvec/Makefile
                  c_interface/Makefile constantbv/Makefile parser/Makefile])
 AC_OUTPUT
+
+cp confdefs.h my_config.h

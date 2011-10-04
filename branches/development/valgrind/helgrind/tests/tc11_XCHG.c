@@ -9,8 +9,6 @@
    use the hardware bus lock (implicitly, since XCHG r,m on x86/amd64
    does not require an explicit LOCK prefix.). */
 
-#undef PLAT_ppc64_aix5
-#undef PLAT_ppc32_aix5
 #undef PLAT_x86_darwin
 #undef PLAT_amd64_darwin
 #undef PLAT_x86_linux
@@ -18,12 +16,9 @@
 #undef PLAT_ppc32_linux
 #undef PLAT_ppc64_linux
 #undef PLAT_arm_linux
+#undef PLAT_s390x_linux
 
-#if defined(_AIX) && defined(__64BIT__)
-#  define PLAT_ppc64_aix5 1
-#elif defined(_AIX) && !defined(__64BIT__)
-#  define PLAT_ppc32_aix5 1
-#elif defined(__APPLE__) && defined(__i386__)
+#if defined(__APPLE__) && defined(__i386__)
 #  define PLAT_x86_darwin 1
 #elif defined(__APPLE__) && defined(__x86_64__)
 #  define PLAT_amd64_darwin 1
@@ -37,6 +32,8 @@
 #  define PLAT_ppc64_linux 1
 #elif defined(__linux__) && defined(__arm__)
 #  define PLAT_arm_linux 1
+#elif defined(__linux__) && defined(__s390x__)
+#  define PLAT_s390x_linux 1
 #endif
 
 
@@ -57,8 +54,24 @@
         : "memory", "cc" \
      )
 
+#elif defined(PLAT_s390x_linux)
+#  define XCHG_M_R(_addr,_lval)                              \
+     do {                                                    \
+        __asm__ __volatile__(                                \
+           "0: l   0,%[global]\n\t"                          \
+           "   cs  0,%[local],%[global]\n\t"                 \
+           "   bne 0b\n\t"                                   \
+           "   lr  %[local],0\n\t"                           \
+           : /*out*/ [global]"+m"(_addr), [local]"+d"(_lval) \
+           : /*in*/                                          \
+           : "0", "memory", "cc"                             \
+        );                                                   \
+     } while (0)
+
+#  define XCHG_M_R_with_redundant_LOCK(_addr,_lval) \
+      XCHG_M_R(_addr,_lval)
+
 #elif defined(PLAT_ppc32_linux) || defined(PLAT_ppc64_linux) \
-      || defined(PLAT_ppc32_aix5) || defined(PLAT_ppc64_aix5) \
       || defined(PLAT_arm_linux)
 #  if defined(HAVE_BUILTIN_ATOMIC)
 #    define XCHG_M_R(_addr,_lval)                                           \

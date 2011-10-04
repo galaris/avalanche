@@ -38,7 +38,7 @@ class PluginExecutor : public LocalExecutor
 public:
     PluginExecutor(bool debug_full_enable,
                    bool trace_children,
-                   const std::string &install_dir,
+                   const std::string &valgrind_binary,
                    const std::vector<std::string> &cmd,
                    const std::vector<std::string> &tg_args);
 

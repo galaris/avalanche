@@ -2,7 +2,6 @@ bin_PROGRAMS = avalanche
 
 INCLUDES = -I../include
 
-CXXFLAGS += -pthread
 avalanche_CFLAGS = -Wno-deprecated
 
 CXXLD = $(CC)

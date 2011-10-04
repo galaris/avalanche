@@ -60,6 +60,7 @@ extern Addr VG_(trampoline_stuff_end);
 extern Addr VG_(x86_linux_SUBST_FOR_sigreturn);
 extern Addr VG_(x86_linux_SUBST_FOR_rt_sigreturn);
 extern Char* VG_(x86_linux_REDIR_FOR_index) ( const Char*, Int );
+extern UInt VG_(x86_linux_REDIR_FOR_strlen)( void* );
 #endif
 
 #if defined(VGP_amd64_linux)
@@ -83,11 +84,11 @@ extern UInt  VG_(ppc64_linux_REDIR_FOR_strlen)( void* );
 extern void* VG_(ppc64_linux_REDIR_FOR_strchr)( void*, Int );
 /* A label (sans dot) marking the ultra-magical return stub via which
    all redirected and wrapped functions are made to "return" on
-   ppc64-linux/ppc64-aix5/ppc32-aix5.  The one insn at this label is
-   never really translated.  Instead, m_translate generates IR to
-   restore the thread's LR and R2 registers from a small stack in the
-   ppc64 guest state structure, and then branch to LR.  Convoluted?
-   Confusing?  You betcha.  Could I think of anything simpler?  No. */
+   ppc64-linux.  The one insn at this label is never really
+   translated.  Instead, m_translate generates IR to restore the
+   thread's LR and R2 registers from a small stack in the ppc64 guest
+   state structure, and then branch to LR.  Convoluted?  Confusing?
+   You betcha.  Could I think of anything simpler?  No. */
 extern Addr VG_(ppctoc_magic_redirect_return_stub);
 #endif
 
@@ -95,28 +96,6 @@ extern Addr VG_(ppctoc_magic_redirect_return_stub);
 extern UInt  VG_(arm_linux_REDIR_FOR_strlen)( void* );
 //extern void* VG_(arm_linux_REDIR_FOR_index) ( void*, Int );
 extern void* VG_(arm_linux_REDIR_FOR_memcpy)( void*, void*, Int );
-#endif
-
-#if defined(VGP_ppc32_aix5)
-/* A label (sans dot) marking the client start point for ppc32_aix5.
-   This function is entered with r3 holding a pointer to the
-   AIX5PreloadPage struct set up by m_initimg.  It first tries to
-   __loadx the _core.so and _tool.so preloads mentioned in the struct;
-   then it cleans up the register state to be more what it really
-   should be at client startup, and finally it jumps to the client's
-   real entry point. */
-extern Addr VG_(ppc32_aix5_do_preloads_then_start_client);
-
-/* See comment for VG_(ppctoc_magic_redirect_return_stub) above. */
-extern Addr VG_(ppctoc_magic_redirect_return_stub);
-#endif
-
-#if defined(VGP_ppc64_aix5)
-/* See comment for VG_(ppctoc_magic_redirect_return_stub) above. */
-extern Addr VG_(ppctoc_magic_redirect_return_stub);
-
-/* See comment for ppc32_aix5 equivalent above. */
-extern Addr VG_(ppc64_aix5_do_preloads_then_start_client);
 #endif
 
 #if defined(VGP_x86_darwin)
@@ -138,6 +117,11 @@ extern char* VG_(amd64_darwin_REDIR_FOR_strcpy)( char *s1, char *s2 );
 extern SizeT VG_(amd64_darwin_REDIR_FOR_strlcat)( char *s1, const char *s2,
                                                   SizeT size );
 extern UInt VG_(amd64_darwin_REDIR_FOR_arc4random)( void );
+#endif
+
+#if defined(VGP_s390x_linux)
+extern Addr VG_(s390x_linux_SUBST_FOR_sigreturn);
+extern Addr VG_(s390x_linux_SUBST_FOR_rt_sigreturn);
 #endif
 
 #endif   // __PUB_CORE_TRAMPOLINE_H

@@ -19,6 +19,9 @@ endif
 if VGCONF_ARCHS_INCLUDE_ARM
 SUBDIRS += arm
 endif
+if VGCONF_ARCHS_INCLUDE_S390X
+SUBDIRS += s390x
+endif
 
 # OS-specific tests
 if VGCONF_OS_IS_LINUX
@@ -33,7 +36,7 @@ if VGCONF_PLATFORMS_INCLUDE_X86_LINUX
 SUBDIRS += x86-linux
 endif
 
-DIST_SUBDIRS = x86 amd64 ppc32 ppc64 arm linux darwin x86-linux .
+DIST_SUBDIRS = x86 amd64 ppc32 ppc64 arm s390x linux darwin x86-linux .
 
 dist_noinst_SCRIPTS = \
 	filter_cmdline0 \
@@ -211,6 +214,7 @@ AM_CXXFLAGS += $(AM_FLAG_M3264_PRI)
 
 # Extra stuff for C tests
 ansi_CFLAGS		= $(AM_CFLAGS) -ansi
+execve_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_NONNULL@
 floored_LDADD 		= -lm
 manythreads_LDADD	= -lpthread
 if VGCONF_OS_IS_DARWIN
@@ -232,30 +236,18 @@ pth_mutexspeed_LDADD	= -lpthread
 pth_once_LDADD		= -lpthread
 pth_rwlock_LDADD	= -lpthread
 pth_stackalign_LDADD	= -lpthread
-if VGCONF_OS_IS_AIX5
- res_search_LDADD       = -lpthread
-else
- res_search_LDADD       = -lresolv -lpthread
- resolv_LDADD           = -lresolv -lpthread
-endif
+res_search_LDADD        = -lresolv -lpthread
+resolv_LDADD            = -lresolv -lpthread
 semlimit_LDADD		= -lpthread
 thread_exits_LDADD	= -lpthread
 threaded_fork_LDADD	= -lpthread
 threadederrno_LDADD	= -lpthread
 tls_SOURCES		= tls.c tls2.c
 tls_DEPENDENCIES	= tls.so tls2.so
-if VGCONF_OS_IS_AIX5
- tls_LDFLAGS		= 
-else
- tls_LDFLAGS		= -Wl,-rpath,$(top_builddir)/none/tests
-endif
+tls_LDFLAGS		= -Wl,-rpath,$(top_builddir)/none/tests
 tls_LDADD		= tls.so tls2.so -lpthread
 tls_so_SOURCES		= tls_so.c
 tls_so_DEPENDENCIES	= tls2.so
-if VGCONF_OS_IS_AIX5
- tls_so_LDFLAGS		= -shared -fPIC
- tls_so_LDADD		= `pwd`/tls2.so
-else
 if VGCONF_OS_IS_DARWIN
  tls_so_LDFLAGS		= -dynamic -dynamiclib -all_load -fpic
  tls_so_LDADD		= `pwd`/tls2.so
@@ -263,13 +255,12 @@ else
  tls_so_LDFLAGS		= -Wl,-rpath,$(top_builddir)/none/tests -shared -fPIC
  tls_so_LDADD		= tls2.so
 endif
-endif
 tls_so_CFLAGS		= $(AM_CFLAGS) -fPIC
 tls2_so_SOURCES		= tls2_so.c
 if VGCONF_OS_IS_DARWIN
-tls2_so_LDFLAGS		= -dynamic -dynamiclib -all_load
+ tls2_so_LDFLAGS	= -dynamic -dynamiclib -all_load
 else
-tls2_so_LDFLAGS		= -shared
+ tls2_so_LDFLAGS	= -shared
 endif
 
 valgrind_cpp_test_SOURCES = valgrind_cpp_test.cpp

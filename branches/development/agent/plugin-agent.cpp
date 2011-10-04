@@ -381,21 +381,52 @@ static string findInPath(const string &name)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3)
+    bool opt_error = false;
+    int port = 0;
+    string host = string("");
+    temp_dir = string("./");
+    for (int i = 1; i < argc; i ++)
     {
-        cout << "usage: plugin-agent <host address> <port number>" << endl;
+        if (strstr(argv[i], "--port=") == argv[i])
+        {
+            port = atoi(argv[i] + strlen("--port="));
+            if ((port <= 0) || (port >= 0xFFFF))
+            {
+                opt_error = true;
+                break;
+            }
+        }
+        else if (strstr(argv[i], "--host=") == argv[i])
+        {
+            host = string(argv[i] + strlen("--host="));
+        }
+        else if (strstr(argv[i], "--temp-dir=") == argv[i])
+        {
+            temp_dir = string(argv[i] + strlen("--temp-dir="));
+        }
+    }
+    if (opt_error || (port == 0))
+    {
+        cout << "Usage: plugin-agent --port=<port> [--host=<host>] [--temp-dir=<dir>]\n";
         exit(EXIT_FAILURE);
     }
-    char dir_template[] = "/tmp/avalanche-XXXXXX";
-    char *c_tmp_dir = mkdtemp(dir_template);
-    if (c_tmp_dir == NULL)
+    if (temp_dir != "./")
     {
-        temp_dir = string("");
+        if (*(temp_dir.end() - 1) != '/')
+        {
+            temp_dir += string("/");
+        }
+        temp_dir += string("avalanche_temp/");
     }
-    else
+    if (mkdir(temp_dir.c_str(), S_IRWXU) == -1)
     {
-        temp_dir = string(c_tmp_dir) + string("/");
+        if (errno != EEXIST)
+        {
+            perror("mkdir failed");
+            temp_dir = string("");
+        }
     }
+    cout << temp_dir << endl;
     string prog_name = argv[0];
     size_t slash_pos = prog_name.find_last_of('/');
     if (slash_pos == string::npos) {
@@ -404,40 +435,69 @@ int main(int argc, char** argv)
     }
     string prog_dir = prog_name.substr(0, slash_pos + 1);
 
-    int port = atoi(argv[2]);
-    if (port == 0)
+    int socket_fd;
+    struct sockaddr_in st_socket_addr;
+    socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if(socket_fd == -1)
     {
-        printf("usage: plugin-agent <host address> <port number>\n");
+        perror("can not create socket");
         exit(EXIT_FAILURE);
     }
-    struct sockaddr_in stSockAddr;
-    memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
-    stSockAddr.sin_family = AF_INET;
-    stSockAddr.sin_port = htons(port);
-    int res = inet_pton(AF_INET, argv[1], &stSockAddr.sin_addr);
- 
-    if (res <= 0)
+    if (host != "")
     {
-        perror("wrong network address");
-        printf("usage: av-agent <host address> <port number>\n");
-        exit(EXIT_FAILURE);
+        memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
+
+        st_socket_addr.sin_family = AF_INET;
+        st_socket_addr.sin_port = htons(port);
+        int res = inet_pton(AF_INET, host.c_str(), &st_socket_addr.sin_addr);
+        if (res <= 0)
+        {
+            perror("invalid host address");
+            exit(EXIT_FAILURE);
+        }
+
+        if (connect(socket_fd, (const struct sockaddr*)&st_socket_addr, sizeof(struct sockaddr_in)) < 0)
+        {
+            perror("connect failed");
+            close(socket_fd);
+            exit(EXIT_FAILURE);
+        }
+        avalanche_fd = socket_fd;
+    }
+    else
+    {
+        int on = 1;
+        setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+        memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
+        st_socket_addr.sin_family = AF_INET;  
+        st_socket_addr.sin_port = htons(port);
+        st_socket_addr.sin_addr.s_addr = INADDR_ANY;
+
+        if(bind(socket_fd, (const struct sockaddr*)&st_socket_addr, sizeof(struct sockaddr_in)) < 0)
+        {
+            perror("bind failed");
+            close(socket_fd);
+            exit(EXIT_FAILURE);
+        }
+
+        if(listen(socket_fd, 10) < 0)
+        {
+            perror("listen failed");
+            close(socket_fd);
+            exit(EXIT_FAILURE);
+        }
+
+        avalanche_fd = accept(socket_fd, NULL, NULL);
+        if (avalanche_fd < 0)
+        {
+            perror("accept failed");
+            close(socket_fd);
+            exit(EXIT_FAILURE);
+        }
+        close(socket_fd);
     }
 
-    avalanche_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (avalanche_fd == -1)
-    {
-        perror("cannot create socket");
-        exit(EXIT_FAILURE);
-    }
-        
-    res = connect(avalanche_fd, (const struct sockaddr*)&stSockAddr, 
-                   sizeof(struct sockaddr_in));
-    if (res < 0)
-    {
-        perror("error connect failed");
-        close(avalanche_fd);
-        exit(EXIT_FAILURE);
-    }
     signal(SIGALRM, sigalarm_handler);
 
     try {
@@ -496,7 +556,7 @@ int main(int argc, char** argv)
              
     //system((string("rm ") + temp_dir + string("argv.log*")).c_str());
     //system((string("rm ") + temp_dir + string("basic_blocks*.log")).c_str());
-    if (temp_dir != "")
+    if ((temp_dir != "") && (temp_dir != "./"))
     {
         if (rmdir(temp_dir.c_str()) < 0)
         {

@@ -12,12 +12,14 @@ noinst_HEADERS = \
 	pub_tool_debuginfo.h 		\
 	pub_tool_errormgr.h 		\
 	pub_tool_execontext.h 		\
+	pub_tool_gdbserver.h 		\
 	pub_tool_hashtable.h 		\
 	pub_tool_libcbase.h 		\
 	pub_tool_libcassert.h 		\
 	pub_tool_libcfile.h 		\
 	pub_tool_libcprint.h 		\
 	pub_tool_libcproc.h 		\
+	pub_tool_libcsetjmp.h 		\
 	pub_tool_libcsignal.h 		\
 	pub_tool_machine.h 		\
 	pub_tool_mallocfree.h 		\
@@ -45,18 +47,17 @@ noinst_HEADERS = \
 	vki/vki-posixtypes-ppc64-linux.h \
 	vki/vki-posixtypes-x86-linux.h	 \
 	vki/vki-posixtypes-arm-linux.h	 \
+	vki/vki-posixtypes-s390x-linux.h \
 	vki/vki-amd64-linux.h		\
 	vki/vki-ppc32-linux.h		\
 	vki/vki-ppc64-linux.h		\
 	vki/vki-x86-linux.h		\
 	vki/vki-arm-linux.h		\
+	vki/vki-s390x-linux.h		\
 	vki/vki-scnums-amd64-linux.h	\
 	vki/vki-scnums-ppc32-linux.h	\
 	vki/vki-scnums-ppc64-linux.h	\
 	vki/vki-scnums-x86-linux.h	\
 	vki/vki-scnums-arm-linux.h	\
-	vki/vki-scnums-darwin.h		\
-	vki/vki-ppc32-aix5.h		\
-	vki/vki-ppc64-aix5.h		\
-	vki/vki-scnums-aix5.h
-
+	vki/vki-scnums-s390x-linux.h	\
+	vki/vki-scnums-darwin.h

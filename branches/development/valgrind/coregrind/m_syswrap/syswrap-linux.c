@@ -33,6 +33,7 @@
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"
+#include "pub_core_libcsetjmp.h"   // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_aspacemgr.h"
 #include "pub_core_debuginfo.h"    // VG_(di_notify_*)
@@ -90,6 +91,9 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
       VG_(printf)("thread tid %d started: stack = %p\n",
 		  tid, &tid);
 
+   /* Make sure error reporting is enabled in the new thread. */
+   tst->err_disablement_level = 0;
+
    VG_TRACK(pre_thread_first_insn, tid);
 
    tst->os_state.lwpid = VG_(gettid)();
@@ -128,10 +132,14 @@ static void run_a_thread_NORETURN ( Word tidW )
    ThreadId          tid = (ThreadId)tidW;
    VgSchedReturnCode src;
    Int               c;
+   ThreadState*      tst;
 
    VG_(debugLog)(1, "syswrap-linux", 
                     "run_a_thread_NORETURN(tid=%lld): pre-thread_wrapper\n",
                     (ULong)tidW);
+
+   tst = VG_(get_ThreadState)(tid);
+   vg_assert(tst);
 
    /* Run the thread all the way through. */
    src = thread_wrapper(tid);  
@@ -145,6 +153,27 @@ static void run_a_thread_NORETURN ( Word tidW )
 
    // Tell the tool this thread is exiting
    VG_TRACK( pre_thread_ll_exit, tid );
+
+   /* If the thread is exiting with errors disabled, complain loudly;
+      doing so is bad (does the user know this has happened?)  Also,
+      in all cases, be paranoid and clear the flag anyway so that the
+      thread slot is safe in this respect if later reallocated.  This
+      should be unnecessary since the flag should be cleared when the
+      slot is reallocated, in thread_wrapper(). */
+   if (tst->err_disablement_level > 0) {
+      VG_(umsg)(
+         "WARNING: exiting thread has error reporting disabled.\n"
+         "WARNING: possibly as a result of some mistake in the use\n"
+         "WARNING: of the VALGRIND_DISABLE_ERROR_REPORTING macros.\n"
+      );
+      VG_(debugLog)(
+         1, "syswrap-linux", 
+            "run_a_thread_NORETURN(tid=%lld): "
+            "WARNING: exiting thread has err_disablement_level = %u\n",
+            (ULong)tidW, tst->err_disablement_level
+      );
+   }
+   tst->err_disablement_level = 0;
 
    if (c == 1) {
 
@@ -160,15 +189,12 @@ static void run_a_thread_NORETURN ( Word tidW )
 
    } else {
 
-      ThreadState *tst;
-
       VG_(debugLog)(1, "syswrap-linux", 
                        "run_a_thread_NORETURN(tid=%lld): "
                           "not last one standing\n",
                           (ULong)tidW);
 
       /* OK, thread is dead, but others still exist.  Just exit. */
-      tst = VG_(get_ThreadState)(tid);
 
       /* This releases the run lock */
       VG_(exit_thread)(tid);
@@ -189,7 +215,9 @@ static void run_a_thread_NORETURN ( Word tidW )
          "movl	%3, %%ebx\n"    /* set %ebx = tst->os_state.exitcode */
          "int	$0x80\n"	/* exit(tst->os_state.exitcode) */
          : "=m" (tst->status)
-         : "n" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode));
+         : "n" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
+         : "eax", "ebx"
+      );
 #elif defined(VGP_amd64_linux)
       asm volatile (
          "movl	%1, %0\n"	/* set tst->status = VgTs_Empty */
@@ -197,7 +225,9 @@ static void run_a_thread_NORETURN ( Word tidW )
          "movq	%3, %%rdi\n"    /* set %rdi = tst->os_state.exitcode */
          "syscall\n"		/* exit(tst->os_state.exitcode) */
          : "=m" (tst->status)
-         : "n" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode));
+         : "n" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
+         : "rax", "rdi"
+      );
 #elif defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
       { UInt vgts_empty = (UInt)VgTs_Empty;
         asm volatile (
@@ -206,7 +236,9 @@ static void run_a_thread_NORETURN ( Word tidW )
           "lwz 3,%3\n\t"           /* set r3 = tst->os_state.exitcode */
           "sc\n\t"                 /* exit(tst->os_state.exitcode) */
           : "=m" (tst->status)
-          : "r" (vgts_empty), "n" (__NR_exit), "m" (tst->os_state.exitcode));
+          : "r" (vgts_empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
+          : "r0", "r3"
+        );
       }
 #elif defined(VGP_arm_linux)
       asm volatile (
@@ -215,7 +247,18 @@ static void run_a_thread_NORETURN ( Word tidW )
          "ldr  r0, %3\n"      /* set %r0 = tst->os_state.exitcode */
          "svc  0x00000000\n"  /* exit(tst->os_state.exitcode) */
          : "=m" (tst->status)
-         : "r" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode));
+         : "r" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
+         : "r0", "r7"
+      );
+#elif defined(VGP_s390x_linux)
+      asm volatile (
+         "st   %1, %0\n"        /* set tst->status = VgTs_Empty */
+         "lg   2, %3\n"         /* set r2 = tst->os_state.exitcode */
+         "svc %2\n"             /* exit(tst->os_state.exitcode) */
+         : "=m" (tst->status)
+         : "d" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
+         : "2"
+      );
 #else
 # error Unknown platform
 #endif
@@ -298,6 +341,11 @@ void VG_(main_thread_wrapper_NORETURN)(ThreadId tid)
    sp -= 112;
    sp &= ~((Addr)0xF);
    *(UWord *)sp = 0;
+#elif defined(VGP_s390x_linux)
+   /* make a stack frame */
+   sp -= 160;
+   sp &= ~((Addr)0xF);
+   *(UWord *)sp = 0;
 #endif
 
    /* If we can't even allocate the first thread's stack, we're hosed.
@@ -352,6 +400,10 @@ SysRes ML_(do_fork_clone) ( ThreadId tid, UInt flags,
    res = VG_(do_syscall5)( __NR_clone, flags, 
                            (UWord)NULL, (UWord)parent_tidptr, 
                            (UWord)child_tidptr, (UWord)NULL );
+#elif defined(VGP_s390x_linux)
+   /* Note that s390 has the stack first and then the flags */
+   res = VG_(do_syscall4)( __NR_clone, (UWord) NULL, flags,
+                          (UWord)parent_tidptr, (UWord)child_tidptr);
 #else
 # error Unknown platform
 #endif
@@ -1262,6 +1314,43 @@ PRE(sys_fallocate)
       SET_STATUS_Failure( VKI_EBADF );
 }
 
+PRE(sys_prlimit64)
+{
+   PRINT("sys_prlimit64 ( %ld, %ld, %#lx, %#lx )", ARG1,ARG2,ARG3,ARG4);
+   PRE_REG_READ4(long, "prlimit64",
+                 vki_pid_t, pid, unsigned int, resource,
+                 const struct rlimit64 *, new_rlim,
+                 struct rlimit64 *, old_rlim);
+   if (ARG3)
+      PRE_MEM_READ( "rlimit64(new_rlim)", ARG3, sizeof(struct vki_rlimit64) );
+   if (ARG4)
+      PRE_MEM_WRITE( "rlimit64(old_rlim)", ARG4, sizeof(struct vki_rlimit64) );
+}
+
+POST(sys_prlimit64)
+{
+   if (ARG4) {
+      POST_MEM_WRITE( ARG4, sizeof(struct vki_rlimit64) );
+
+      switch (ARG2) {
+      case VKI_RLIMIT_NOFILE:
+         ((struct vki_rlimit64 *)ARG4)->rlim_cur = VG_(fd_soft_limit);
+         ((struct vki_rlimit64 *)ARG4)->rlim_max = VG_(fd_hard_limit);
+         break;
+
+      case VKI_RLIMIT_DATA:
+         ((struct vki_rlimit64 *)ARG4)->rlim_cur = VG_(client_rlimit_data).rlim_cur;
+         ((struct vki_rlimit64 *)ARG4)->rlim_max = VG_(client_rlimit_data).rlim_max;
+         break;
+
+      case VKI_RLIMIT_STACK:
+         ((struct vki_rlimit64 *)ARG4)->rlim_cur = VG_(client_rlimit_stack).rlim_cur;
+         ((struct vki_rlimit64 *)ARG4)->rlim_max = VG_(client_rlimit_stack).rlim_max;
+         break;
+      }
+   }
+}
+
 /* ---------------------------------------------------------------------
    tid-related wrappers
    ------------------------------------------------------------------ */
@@ -1601,7 +1690,7 @@ PRE(sys_mbind)
                  unsigned long, maxnode, unsigned, flags);
    if (ARG1 != 0)
       PRE_MEM_READ( "mbind(nodemask)", ARG4,
-                    VG_ROUNDUP( ARG5, sizeof(UWord) ) / sizeof(UWord) );
+                    VG_ROUNDUP( ARG5-1, sizeof(UWord) * 8 ) / 8 );
 }
 
 PRE(sys_set_mempolicy)
@@ -1611,7 +1700,7 @@ PRE(sys_set_mempolicy)
                  int, policy, unsigned long *, nodemask,
                  unsigned long, maxnode);
    PRE_MEM_READ( "set_mempolicy(nodemask)", ARG2,
-                 VG_ROUNDUP( ARG3, sizeof(UWord) ) / sizeof(UWord) );
+                 VG_ROUNDUP( ARG3-1, sizeof(UWord) * 8 ) / 8 );
 }
 
 PRE(sys_get_mempolicy)
@@ -1625,14 +1714,14 @@ PRE(sys_get_mempolicy)
       PRE_MEM_WRITE( "get_mempolicy(policy)", ARG1, sizeof(Int) );
    if (ARG2 != 0)
       PRE_MEM_WRITE( "get_mempolicy(nodemask)", ARG2,
-                     VG_ROUNDUP( ARG3, sizeof(UWord) * 8 ) / sizeof(UWord) );
+                     VG_ROUNDUP( ARG3-1, sizeof(UWord) * 8 ) / 8 );
 }
 POST(sys_get_mempolicy)
 {
    if (ARG1 != 0)
       POST_MEM_WRITE( ARG1, sizeof(Int) );
    if (ARG2 != 0)
-      POST_MEM_WRITE( ARG2, VG_ROUNDUP( ARG3, sizeof(UWord) * 8 ) / sizeof(UWord) );
+      POST_MEM_WRITE( ARG2, VG_ROUNDUP( ARG3-1, sizeof(UWord) * 8 ) / 8 );
 }
 
 /* ---------------------------------------------------------------------
@@ -2605,22 +2694,26 @@ PRE(sys_stime)
    PRE_MEM_READ( "stime(t)", ARG1, sizeof(vki_time_t) );
 }
 
-PRE(sys_perf_counter_open)
+PRE(sys_perf_event_open)
 {
-   PRINT("sys_perf_counter_open ( %#lx, %ld, %ld, %ld, %ld )",
+   struct vki_perf_event_attr *attr;
+   PRINT("sys_perf_event_open ( %#lx, %ld, %ld, %ld, %ld )",
          ARG1,ARG2,ARG3,ARG4,ARG5);
-   PRE_REG_READ5(long, "perf_counter_open",
-                 struct vki_perf_counter_attr *, attr,
+   PRE_REG_READ5(long, "perf_event_open",
+                 struct vki_perf_event_attr *, attr,
                  vki_pid_t, pid, int, cpu, int, group_fd,
                  unsigned long, flags);
-   PRE_MEM_READ( "perf_counter_open(attr)",
-                 ARG1, sizeof(struct vki_perf_counter_attr) );
+   attr = (struct vki_perf_event_attr *)ARG1;
+   PRE_MEM_READ( "perf_event_open(attr->size)",
+                 (Addr)&attr->size, sizeof(attr->size) );
+   PRE_MEM_READ( "perf_event_open(attr)",
+                 (Addr)attr, attr->size );
 }
 
-POST(sys_perf_counter_open)
+POST(sys_perf_event_open)
 {
    vg_assert(SUCCESS);
-   if (!ML_(fd_allowed)(RES, "perf_counter_open", tid, True)) {
+   if (!ML_(fd_allowed)(RES, "perf_event_open", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
    } else {
@@ -2745,7 +2838,7 @@ POST(sys_sigpending)
 // This wrapper is only suitable for 32-bit architectures.
 // (XXX: so how is it that PRE(sys_sigpending) above doesn't need
 // conditional compilation like this?)
-#if defined(VGP_x86_linux) || defined(VGP_ppc32_linux)
+#if defined(VGP_x86_linux) || defined(VGP_ppc32_linux) || defined(VGP_arm_linux)
 PRE(sys_sigprocmask)
 {
    vki_old_sigset_t* set;
@@ -2788,6 +2881,68 @@ POST(sys_sigprocmask)
    vg_assert(SUCCESS);
    if (RES == 0 && ARG3 != 0)
       POST_MEM_WRITE( ARG3, sizeof(vki_old_sigset_t));
+}
+
+/* Convert from non-RT to RT sigset_t's */
+static 
+void convert_sigset_to_rt(const vki_old_sigset_t *oldset, vki_sigset_t *set)
+{
+   VG_(sigemptyset)(set);
+   set->sig[0] = *oldset;
+}
+PRE(sys_sigaction)
+{
+   vki_sigaction_toK_t   new, *newp;
+   vki_sigaction_fromK_t old, *oldp;
+
+   PRINT("sys_sigaction ( %ld, %#lx, %#lx )", ARG1,ARG2,ARG3);
+   PRE_REG_READ3(int, "sigaction",
+                 int, signum, const struct old_sigaction *, act,
+                 struct old_sigaction *, oldact);
+
+   newp = oldp = NULL;
+
+   if (ARG2 != 0) {
+      struct vki_old_sigaction *sa = (struct vki_old_sigaction *)ARG2;
+      PRE_MEM_READ( "sigaction(act->sa_handler)", (Addr)&sa->ksa_handler, sizeof(sa->ksa_handler));
+      PRE_MEM_READ( "sigaction(act->sa_mask)", (Addr)&sa->sa_mask, sizeof(sa->sa_mask));
+      PRE_MEM_READ( "sigaction(act->sa_flags)", (Addr)&sa->sa_flags, sizeof(sa->sa_flags));
+      if (ML_(safe_to_deref)(sa,sizeof(sa)) 
+          && (sa->sa_flags & VKI_SA_RESTORER))
+         PRE_MEM_READ( "sigaction(act->sa_restorer)", (Addr)&sa->sa_restorer, sizeof(sa->sa_restorer));
+   }
+
+   if (ARG3 != 0) {
+      PRE_MEM_WRITE( "sigaction(oldact)", ARG3, sizeof(struct vki_old_sigaction));
+      oldp = &old;
+   }
+
+   if (ARG2 != 0) {
+      struct vki_old_sigaction *oldnew = (struct vki_old_sigaction *)ARG2;
+
+      new.ksa_handler = oldnew->ksa_handler;
+      new.sa_flags = oldnew->sa_flags;
+      new.sa_restorer = oldnew->sa_restorer;
+      convert_sigset_to_rt(&oldnew->sa_mask, &new.sa_mask);
+      newp = &new;
+   }
+
+   SET_STATUS_from_SysRes( VG_(do_sys_sigaction)(ARG1, newp, oldp) );
+
+   if (ARG3 != 0 && SUCCESS && RES == 0) {
+      struct vki_old_sigaction *oldold = (struct vki_old_sigaction *)ARG3;
+
+      oldold->ksa_handler = oldp->ksa_handler;
+      oldold->sa_flags = oldp->sa_flags;
+      oldold->sa_restorer = oldp->sa_restorer;
+      oldold->sa_mask = oldp->sa_mask.sig[0];
+   }
+}
+POST(sys_sigaction)
+{
+   vg_assert(SUCCESS);
+   if (RES == 0 && ARG3 != 0)
+      POST_MEM_WRITE( ARG3, sizeof(struct vki_old_sigaction));
 }
 #endif
 
@@ -3186,6 +3341,7 @@ PRE(sys_utimensat)
 
 PRE(sys_newfstatat)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_newfstatat ( %ld, %#lx(%s), %#lx )", ARG1,ARG2,(char*)ARG2,ARG3);
    PRE_REG_READ3(long, "fstatat",
                  int, dfd, char *, file_name, struct stat *, buf);
@@ -3631,7 +3787,7 @@ POST(sys_lookup_dcookie)
 }
 #endif
 
-#if defined(VGP_amd64_linux)
+#if defined(VGP_amd64_linux) || defined(VGP_s390x_linux)
 PRE(sys_lookup_dcookie)
 {
    *flags |= SfMayBlock;
@@ -3664,6 +3820,7 @@ PRE(sys_fcntl)
    case VKI_F_GETOWN:
    case VKI_F_GETSIG:
    case VKI_F_GETLEASE:
+   case VKI_F_GETPIPE_SZ:
       PRINT("sys_fcntl ( %ld, %ld )", ARG1,ARG2);
       PRE_REG_READ2(long, "fcntl", unsigned int, fd, unsigned int, cmd);
       break;
@@ -3677,6 +3834,7 @@ PRE(sys_fcntl)
    case VKI_F_NOTIFY:
    case VKI_F_SETOWN:
    case VKI_F_SETSIG:
+   case VKI_F_SETPIPE_SZ:
       PRINT("sys_fcntl[ARG3=='arg'] ( %ld, %ld, %ld )", ARG1,ARG2,ARG3);
       PRE_REG_READ3(long, "fcntl",
                     unsigned int, fd, unsigned int, cmd, unsigned long, arg);
@@ -3816,9 +3974,6 @@ POST(sys_fcntl64)
 PRE(sys_ioctl)
 {
    *flags |= SfMayBlock;
-   PRINT("sys_ioctl ( %ld, 0x%lx, %#lx )",ARG1,ARG2,ARG3);
-   PRE_REG_READ3(long, "ioctl",
-                 unsigned int, fd, unsigned int, request, unsigned long, arg);
 
    // We first handle the ones that don't use ARG3 (even as a
    // scalar/non-pointer argument).
@@ -3926,6 +4081,9 @@ PRE(sys_ioctl)
       break;
    case VKI_FIONREAD:                /* identical to SIOCINQ */
       PRE_MEM_WRITE( "ioctl(FIONREAD)",  ARG3, sizeof(int) );
+      break;
+   case VKI_FIOQSIZE:
+      PRE_MEM_WRITE( "ioctl(FIOQSIZE)",  ARG3, sizeof(vki_loff_t) );
       break;
 
    case VKI_TIOCSERGETLSR:
@@ -4396,11 +4554,19 @@ PRE(sys_ioctl)
       PRE_MEM_WRITE( "ioctl(FBIOGET_VSCREENINFO)", ARG3,
                      sizeof(struct vki_fb_var_screeninfo));
       break;
+   case VKI_FBIOPUT_VSCREENINFO:
+      PRE_MEM_READ( "ioctl(FBIOPUT_VSCREENINFO)", ARG3,
+                    sizeof(struct vki_fb_var_screeninfo));
+      break;
    case VKI_FBIOGET_FSCREENINFO: /* 0x4602 */
       PRE_MEM_WRITE( "ioctl(FBIOGET_FSCREENINFO)", ARG3,
                      sizeof(struct vki_fb_fix_screeninfo));
       break;
+   case VKI_FBIOPAN_DISPLAY:
+      PRE_MEM_READ( "ioctl(FBIOPAN_DISPLAY)", ARG3,
+                    sizeof(struct vki_fb_var_screeninfo));
 
+      break;
    case VKI_PPCLAIM:
    case VKI_PPEXCL:
    case VKI_PPYIELD:
@@ -4742,14 +4908,14 @@ PRE(sys_ioctl)
             PRE_MEM_WRITE( "ioctl(USBDEVFS_BULK).data", (Addr)vkub->data, vkub->len);
          else
             PRE_MEM_READ( "ioctl(USBDEVFS_BULK).data", (Addr)vkub->data, vkub->len);
-         break;
       }
+      break;
    case VKI_USBDEVFS_GETDRIVER:
       if ( ARG3 ) {
          struct vki_usbdevfs_getdriver *vkugd = (struct vki_usbdevfs_getdriver *) ARG3;
          PRE_MEM_WRITE( "ioctl(USBDEVFS_GETDRIVER)", (Addr)&vkugd->driver, sizeof(vkugd->driver));
-         break;
       }
+      break;
    case VKI_USBDEVFS_SUBMITURB:
       if ( ARG3 ) {
          struct vki_usbdevfs_urb *vkuu = (struct vki_usbdevfs_urb *)ARG3;
@@ -4793,20 +4959,20 @@ PRE(sys_ioctl)
                PRE_MEM_READ( "ioctl(USBDEVFS_SUBMITURB).buffer", (Addr)vkuu->buffer, vkuu->buffer_length);
             PRE_MEM_WRITE( "ioctl(USBDEVFS_SUBMITURB).actual_length", (Addr)&vkuu->actual_length, sizeof(vkuu->actual_length));
          }
-         break;
       }
+      break;
    case VKI_USBDEVFS_DISCARDURB:
       break;
    case VKI_USBDEVFS_REAPURB:
       if ( ARG3 ) {
          PRE_MEM_WRITE( "ioctl(USBDEVFS_REAPURB)", ARG3, sizeof(struct vki_usbdevfs_urb **));
-         break;
       }
+      break;
    case VKI_USBDEVFS_REAPURBNDELAY:
       if ( ARG3 ) {
          PRE_MEM_WRITE( "ioctl(USBDEVFS_REAPURBNDELAY)", ARG3, sizeof(struct vki_usbdevfs_urb **));
-         break;
       }
+      break;
    case VKI_USBDEVFS_CONNECTINFO:
       PRE_MEM_WRITE( "ioctl(USBDEVFS_CONNECTINFO)", ARG3, sizeof(struct vki_usbdevfs_connectinfo));
       break;
@@ -4824,6 +4990,8 @@ PRE(sys_ioctl)
                PRE_MEM_WRITE("ioctl(USBDEVFS_IOCTL).dataRead", (Addr)vkui->data, size2);
          }
       }
+      break;
+   case VKI_USBDEVFS_RESET:
       break;
 
       /* I2C (/dev/i2c-*) ioctls */
@@ -5019,6 +5187,9 @@ POST(sys_ioctl)
       break;
    case VKI_FIONREAD:                /* identical to SIOCINQ */
       POST_MEM_WRITE( ARG3, sizeof(int) );
+      break;
+   case VKI_FIOQSIZE:
+      POST_MEM_WRITE( ARG3, sizeof(vki_loff_t) );
       break;
 
    case VKI_TIOCSERGETLSR:
@@ -5584,21 +5755,21 @@ POST(sys_ioctl)
          struct vki_usbdevfs_ctrltransfer *vkuc = (struct vki_usbdevfs_ctrltransfer *)ARG3;
          if (vkuc->bRequestType & 0x80)
             POST_MEM_WRITE((Addr)vkuc->data, RES);
-         break;
       }
+      break;
    case VKI_USBDEVFS_BULK:
       if ( ARG3 ) {
          struct vki_usbdevfs_bulktransfer *vkub = (struct vki_usbdevfs_bulktransfer *)ARG3;
          if (vkub->ep & 0x80)
             POST_MEM_WRITE((Addr)vkub->data, RES);
-         break;
       }
+      break;
    case VKI_USBDEVFS_GETDRIVER:
       if ( ARG3 ) {
          struct vki_usbdevfs_getdriver *vkugd = (struct vki_usbdevfs_getdriver *)ARG3;
          POST_MEM_WRITE((Addr)&vkugd->driver, sizeof(vkugd->driver));
-         break;
       }
+      break;
    case VKI_USBDEVFS_REAPURB:
    case VKI_USBDEVFS_REAPURBNDELAY:
       if ( ARG3 ) {
@@ -5628,8 +5799,8 @@ POST(sys_ioctl)
                POST_MEM_WRITE((Addr)(*vkuu)->buffer, (*vkuu)->actual_length);
             POST_MEM_WRITE((Addr)&(*vkuu)->actual_length, sizeof((*vkuu)->actual_length));
          }
-         break;
       }
+      break;
    case VKI_USBDEVFS_CONNECTINFO:
       POST_MEM_WRITE(ARG3, sizeof(struct vki_usbdevfs_connectinfo));
       break;
