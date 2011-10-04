@@ -3926,7 +3926,6 @@ static void tg_pre_clo_init(void)
   VG_(track_new_mem_mmap)(tg_track_mem_mmap);
 
   VG_(needs_core_errors) ();
-  VG_(needs_var_info) ();
 
   VG_(needs_command_line_options)(tg_process_cmd_line_option,
                                   tg_print_usage,

@@ -43,7 +43,7 @@ static Logger *logger = Logger::getLogger();
 
 PluginExecutor::PluginExecutor(bool debug_full_enabled,
                                bool trace_children,
-                               const string &install_dir,
+                               const string &valgrind_binary,
                                const vector<string> &cmd,
                                const vector<string> &tg_args) : 
                                             debug_full(debug_full_enabled),
@@ -53,7 +53,7 @@ PluginExecutor::PluginExecutor(bool debug_full_enabled,
         LOG(Logger :: ERROR, "No program name");
         return;
     }
-    prog = strdup((install_dir + "../lib/avalanche/valgrind").c_str());
+    prog = strdup(valgrind_binary.c_str());
 
     // last NULL element is needed by execvp()
     argsnum = cmd.size() + tg_args.size() + 4;

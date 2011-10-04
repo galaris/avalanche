@@ -85,6 +85,8 @@ typedef
    typedef VexGuestPPC64State VexGuestArchState;
 #elif defined(VGA_arm)
    typedef VexGuestARMState   VexGuestArchState;
+#elif defined(VGA_s390x)
+   typedef VexGuestS390XState VexGuestArchState;
 #else
 #  error Unknown architecture
 #endif
@@ -137,20 +139,6 @@ typedef
       /* exit details */
       Word exitcode; // in the case of exitgroup, set by someone else
       Int  fatalsig; // fatal signal
-
-#     if defined(VGO_aix5)
-      /* AIX specific fields to make thread cancellation sort-of work */
-      /* What is this thread's current cancellation state a la
-         POSIX (deferred vs async, enable vs disabled) ? */
-      Bool cancel_async;   // current cancel mode (async vs deferred)
-      Bool cancel_disabled; // cancellation disabled?
-      /* What's happened so far? */
-      enum { Canc_NoRequest=0, // no cancellation requested
-             Canc_Requested=1, // requested but not actioned
-             Canc_Actioned=2 } // requested and actioned
-           cancel_progress;
-      /* Initial state is False, False, Canc_Normal. */
-#     endif
 
 #     if defined(VGO_darwin)
       // Mach trap POST handler as chosen by PRE
@@ -352,9 +340,17 @@ typedef struct {
    /* OS-specific thread state */
    ThreadOSstate os_state;
 
+   /* Error disablement level.  A counter which allows selectively
+      disabling error reporting in threads.  When zero, reporting is
+      enabled.  When nonzero, it is disabled.  This is controlled by
+      the client request 'VG_USERREQ__CHANGE_ERR_DISABLEMENT'.  New
+      threads are always created with this as zero (errors
+      enabled). */
+   UInt err_disablement_level;
+
    /* Per-thread jmp_buf to resume scheduler after a signal */
-   Bool    sched_jmpbuf_valid;
-   jmp_buf sched_jmpbuf;
+   Bool               sched_jmpbuf_valid;
+   VG_MINIMAL_JMP_BUF(sched_jmpbuf);
 }
 ThreadState;
 

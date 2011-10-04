@@ -286,6 +286,8 @@ HChar* showPPCCondCode ( PPCCondCode cond )
       return (cond.test == Pct_TRUE) ? "cr7.gt=1" : "cr7.gt=0";
    case Pcf_7LT:
       return (cond.test == Pct_TRUE) ? "cr7.lt=1" : "cr7.lt=0";
+   case Pcf_NONE:
+      return "no-flag";
    default: vpanic("ppPPCCondCode");
    }
 }
@@ -296,6 +298,11 @@ PPCCondCode mk_PPCCondCode ( PPCCondTest test, PPCCondFlag flag )
    PPCCondCode cc;
    cc.flag = flag;
    cc.test = test;
+   if (test == Pct_ALWAYS) { 
+      vassert(flag == Pcf_NONE);
+   } else {
+      vassert(flag != Pcf_NONE);
+   }
    return cc;
 }
 
@@ -798,10 +805,11 @@ PPCInstr* PPCInstr_MulL ( Bool syned, Bool hi, Bool sz32,
    if (!hi) vassert(!syned);
    return i;
 }
-PPCInstr* PPCInstr_Div ( Bool syned, Bool sz32,
+PPCInstr* PPCInstr_Div ( Bool extended, Bool syned, Bool sz32,
                          HReg dst, HReg srcL, HReg srcR ) {
    PPCInstr* i      = LibVEX_Alloc(sizeof(PPCInstr));
    i->tag           = Pin_Div;
+   i->Pin.Div.extended = extended;
    i->Pin.Div.syned = syned;
    i->Pin.Div.sz32  = sz32;
    i->Pin.Div.dst   = dst;
@@ -962,15 +970,65 @@ PPCInstr* PPCInstr_FpRSP ( HReg dst, HReg src ) {
    i->Pin.FpRSP.src = src;
    return i;
 }
-PPCInstr* PPCInstr_FpCftI ( Bool fromI, Bool int32, 
-                            HReg dst, HReg src ) {
+
+/*
+Valid combo | fromI | int32 | syned | flt64 |
+--------------------------------------------
+            |  n       n       n       n    |
+--------------------------------------------
+ F64->I64U  |  n       n       n       y    |
+--------------------------------------------
+            |  n       n       y       n    |
+--------------------------------------------
+ F64->I64S  |  n       n       y       y    |
+--------------------------------------------
+            |  n       y       n       n    |
+--------------------------------------------
+ F64->I32U  |  n       y       n       y    |
+--------------------------------------------
+            |  n       y       y       n    |
+--------------------------------------------
+ F64->I32S  |  n       y       y       y    |
+--------------------------------------------
+ I64U->F32  |  y       n       n       n    |
+--------------------------------------------
+ I64U->F64  |  y       n       n       y    |
+--------------------------------------------
+            |  y       n       y       n    |
+--------------------------------------------
+ I64S->F64  |  y       n       y       y    |
+--------------------------------------------
+            |  y       y       n       n    |
+--------------------------------------------
+            |  y       y       n       y    |
+--------------------------------------------
+            |  y       y       y       n    |
+--------------------------------------------
+            |  y       y       y       y    |
+--------------------------------------------
+*/
+PPCInstr* PPCInstr_FpCftI ( Bool fromI, Bool int32, Bool syned,
+                            Bool flt64, HReg dst, HReg src ) {
+   Bool tmp = fromI | int32 | syned | flt64;
+   vassert(tmp == True || tmp == False); // iow, no high bits set
+   UShort conversion = 0;
+   conversion = (fromI << 3) | (int32 << 2) | (syned << 1) | flt64;
+   switch (conversion) {
+      // Supported conversion operations
+      case 1: case 3: case 5: case 7:
+      case 8: case 9: case 11:
+         break;
+      default:
+         vpanic("PPCInstr_FpCftI(ppc_host)");
+   }
    PPCInstr* i         = LibVEX_Alloc(sizeof(PPCInstr));
    i->tag              = Pin_FpCftI;
    i->Pin.FpCftI.fromI = fromI;
    i->Pin.FpCftI.int32 = int32;
+   i->Pin.FpCftI.syned = syned;
+   i->Pin.FpCftI.flt64 = flt64;
    i->Pin.FpCftI.dst   = dst;
    i->Pin.FpCftI.src   = src;
-   vassert(!(int32 && fromI)); /* no such insn ("fcfiw"). */
    return i;
 }
 PPCInstr* PPCInstr_FpCMov ( PPCCondCode cond, HReg dst, HReg src ) {
@@ -1065,7 +1123,7 @@ PPCInstr* PPCInstr_AvBin32x4 ( PPCAvOp op, HReg dst,
    i->Pin.AvBin32x4.srcR = srcR;
    return i;
 }
-PPCInstr* PPCInstr_AvBin32Fx4 ( PPCAvOp op, HReg dst,
+PPCInstr* PPCInstr_AvBin32Fx4 ( PPCAvFpOp op, HReg dst,
                                 HReg srcL, HReg srcR ) {
    PPCInstr* i            = LibVEX_Alloc(sizeof(PPCInstr));
    i->tag                 = Pin_AvBin32Fx4;
@@ -1075,7 +1133,7 @@ PPCInstr* PPCInstr_AvBin32Fx4 ( PPCAvOp op, HReg dst,
    i->Pin.AvBin32Fx4.srcR = srcR;
    return i;
 }
-PPCInstr* PPCInstr_AvUn32Fx4 ( PPCAvOp op, HReg dst, HReg src ) {
+PPCInstr* PPCInstr_AvUn32Fx4 ( PPCAvFpOp op, HReg dst, HReg src ) {
    PPCInstr* i          = LibVEX_Alloc(sizeof(PPCInstr));
    i->tag               = Pin_AvUn32Fx4;
    i->Pin.AvUn32Fx4.op  = op;
@@ -1246,8 +1304,9 @@ void ppPPCInstr ( PPCInstr* i, Bool mode64 )
       ppHRegPPC(i->Pin.MulL.srcR);
       return;
    case Pin_Div:
-      vex_printf("div%c%s ",
+      vex_printf("div%c%s%s ",
                  i->Pin.Div.sz32 ? 'w' : 'd',
+                 i->Pin.Div.extended ? "e" : "",
                  i->Pin.Div.syned ? "" : "u");
       ppHRegPPC(i->Pin.Div.dst);
       vex_printf(",");
@@ -1433,15 +1492,34 @@ void ppPPCInstr ( PPCInstr* i, Bool mode64 )
       ppHRegPPC(i->Pin.FpRSP.src);
       return;
    case Pin_FpCftI: {
-      HChar* str = "fc???";
+      HChar* str = "fc?????";
+      /* Note that "fcfids" is missing from below. That instruction would
+       * satisfy the predicate:
+       *    (i->Pin.FpCftI.fromI == True && i->Pin.FpCftI.int32 == False)
+       * which would go into a final "else" clause to make this if-else
+       * block balanced.  But we're able to implement fcfids by leveraging
+       * the fcfid implementation, so it wasn't necessary to include it here.
+       */
       if (i->Pin.FpCftI.fromI == False && i->Pin.FpCftI.int32 == False)
-         str = "fctid";
-      else
-      if (i->Pin.FpCftI.fromI == False && i->Pin.FpCftI.int32 == True)
-         str = "fctiw";
-      else
-      if (i->Pin.FpCftI.fromI == True && i->Pin.FpCftI.int32 == False)
-         str = "fcfid";
+         if (i->Pin.FpCftI.syned == True)
+            str = "fctid";
+         else
+            str = "fctidu";
+      else if (i->Pin.FpCftI.fromI == False && i->Pin.FpCftI.int32 == True)
+         if (i->Pin.FpCftI.syned == True)
+            str = "fctiw";
+         else
+            str = "fctiwu";
+      else if (i->Pin.FpCftI.fromI == True && i->Pin.FpCftI.int32 == False) {
+         if (i->Pin.FpCftI.syned == True) {
+            str = "fcfid";
+         } else {
+            if (i->Pin.FpCftI.flt64 == True)
+               str = "fcfidu";
+            else
+               str = "fcfidus";
+         }
+      }
       vex_printf("%s ", str);
       ppHRegPPC(i->Pin.FpCftI.dst);
       vex_printf(",");
@@ -2590,7 +2668,8 @@ static UChar* mkFormVA ( UChar* p, UInt opc1, UInt r1, UInt r2,
    code and back.
 */
 Int emit_PPCInstr ( UChar* buf, Int nbuf, PPCInstr* i, 
-                    Bool mode64, void* dispatch )
+                    Bool mode64,
+                    void* dispatch_unassisted, void* dispatch_assisted )
 {
    UChar* p = &buf[0];
    UChar* ptmp = p;
@@ -2923,7 +3002,23 @@ Int emit_PPCInstr ( UChar* buf, Int nbuf, PPCInstr* i,
       if (!mode64)
          vassert(sz32);
 
-      if (sz32) {
+      if (i->Pin.Div.extended) {
+         if (sz32) {
+            if (syned)
+               // divwe r_dst,r_srcL,r_srcR
+               p = mkFormXO(p, 31, r_dst, r_srcL, r_srcR, 0, 427, 0);
+            else
+               // divweu r_dst,r_srcL,r_srcR
+               p = mkFormXO(p, 31, r_dst, r_srcL, r_srcR, 0, 395, 0);
+         } else {
+            if (syned)
+               // divde r_dst,r_srcL,r_srcR
+               p = mkFormXO(p, 31, r_dst, r_srcL, r_srcR, 0, 425, 0);
+            else
+               // divdeu r_dst,r_srcL,r_srcR
+               p = mkFormXO(p, 31, r_dst, r_srcL, r_srcR, 0, 393, 0);
+         }
+      } else if (sz32) {
          if (syned)  // divw r_dst,r_srcL,r_srcR
             p = mkFormXO(p, 31, r_dst, r_srcL, r_srcR, 0, 491, 0);
          else        // divwu r_dst,r_srcL,r_srcR
@@ -2979,7 +3074,8 @@ Int emit_PPCInstr ( UChar* buf, Int nbuf, PPCInstr* i,
       UInt r_dst;
       ULong imm_dst;
 
-      vassert(dispatch == NULL);
+      vassert(dispatch_unassisted == NULL);
+      vassert(dispatch_assisted == NULL);
       
       /* First off, if this is conditional, create a conditional
          jump over the rest of it. */
@@ -3144,6 +3240,7 @@ Int emit_PPCInstr ( UChar* buf, Int nbuf, PPCInstr* i,
          // Just load 1 to dst => li dst,1
          p = mkFormD(p, 14, r_dst, 0, 1);
       } else {
+         vassert(cond.flag != Pcf_NONE);
          rot_imm = 1 + cond.flag;
          r_tmp = 0;  // Not set in getAllocable, so no need to declare.
 
@@ -3375,19 +3472,41 @@ Int emit_PPCInstr ( UChar* buf, Int nbuf, PPCInstr* i,
       UInt fr_dst = fregNo(i->Pin.FpCftI.dst);
       UInt fr_src = fregNo(i->Pin.FpCftI.src);
       if (i->Pin.FpCftI.fromI == False && i->Pin.FpCftI.int32 == True) {
-         // fctiw (conv f64 to i32), PPC32 p404
-         p = mkFormX(p, 63, fr_dst, 0, fr_src, 14, 0);
-         goto done;
+         if (i->Pin.FpCftI.syned == True) {
+            // fctiw (conv f64 to i32), PPC32 p404
+            p = mkFormX(p, 63, fr_dst, 0, fr_src, 14, 0);
+            goto done;
+         } else {
+            // fctiwu (conv f64 to u32)
+            p = mkFormX(p, 63, fr_dst, 0, fr_src, 142, 0);
+            goto done;
+         }
       }
       if (i->Pin.FpCftI.fromI == False && i->Pin.FpCftI.int32 == False) {
-         // fctid (conv f64 to i64), PPC64 p437
-         p = mkFormX(p, 63, fr_dst, 0, fr_src, 814, 0);
-         goto done;
+         if (i->Pin.FpCftI.syned == True) {
+            // fctid (conv f64 to i64), PPC64 p437
+            p = mkFormX(p, 63, fr_dst, 0, fr_src, 814, 0);
+            goto done;
+         } else {
+            // fctidu (conv f64 to u64)
+            p = mkFormX(p, 63, fr_dst, 0, fr_src, 942, 0);
+            goto done;
+         }
       }
       if (i->Pin.FpCftI.fromI == True && i->Pin.FpCftI.int32 == False) {
-         // fcfid (conv i64 to f64), PPC64 p434
-         p = mkFormX(p, 63, fr_dst, 0, fr_src, 846, 0);
-         goto done;
+         if (i->Pin.FpCftI.syned == True) {
+            // fcfid (conv i64 to f64), PPC64 p434
+            p = mkFormX(p, 63, fr_dst, 0, fr_src, 846, 0);
+            goto done;
+         } else if (i->Pin.FpCftI.flt64 == True) {
+            // fcfidu (conv u64 to f64)
+            p = mkFormX(p, 63, fr_dst, 0, fr_src, 974, 0);
+            goto done;
+         } else {
+            // fcfidus (conv u64 to f32)
+            p = mkFormX(p, 59, fr_dst, 0, fr_src, 974, 0);
+            goto done;
+         }
       }
       goto bad;
    }

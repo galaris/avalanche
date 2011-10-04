@@ -121,6 +121,7 @@ OptionConfig *OptionParser::run() const
     size_t progArgc = 0;
     if (sl != string::npos) {
         config->setValgrind(progName.substr(0, sl + 1));
+        config->setValgrindPath(string("../lib/avalanche/valgrind"));
     }
     else {
         config->setValgrind("");
@@ -152,6 +153,16 @@ OptionConfig *OptionParser::run() const
                 return NULL;
             }
             config->setDistHost(host);
+        }
+        else if (args[i].find("--remote-host=") != string::npos) {
+            string host = args[i].substr(strlen("--remote-host="));
+            struct in_addr p;
+            if (inet_pton(AF_INET, host.c_str(), &p) == 0) {
+                delete config;
+                LOG(Logger::ERROR, "invalid '--remote-host=' parameter");
+                return NULL;
+            }
+            config->setRemoteHost(host);
         }
         else if (args[i].find("--report-log=") != string::npos) {
             string log = args[i].substr(strlen("--report-log="));
@@ -228,6 +239,9 @@ OptionConfig *OptionParser::run() const
             }
             config->setDistPort(atoi(port.c_str()));
         }
+        else if (args[i].find("--valgrind-path=") != string::npos) {
+            config->setValgrindPath(args[i].substr(strlen("--valgrind-path=")));
+        }
         else if (args[i].find("--remote-port=") != string::npos) {
             string port = args[i].substr(strlen("--remote-port="));
             if (isNumber(port) == -1 || isNumber(port) > 65535) {
@@ -256,6 +270,16 @@ OptionConfig *OptionParser::run() const
             if (args[i].substr(strlen("--cleanup=")) == "no") {
                 config->disableCleanUp();
             }
+        }
+        else if (args[i].find("--remote-valgrind=") != string::npos) {
+            string remote_vg_role = args[i].substr(strlen("--remote-valgrind="));
+            if ((remote_vg_role != "host") && (remote_vg_role != "client"))
+            {
+                LOG(Logger::ERROR, "Only 'host' and 'client' options"
+                                    " are available for --remote-valgrind");
+                return NULL;
+            }
+            config->setRemoteValgrind(remote_vg_role);
         }
         else if (args[i].find("--result-dir=") != string::npos) {
             string result_dir = args[i];
@@ -299,9 +323,6 @@ OptionConfig *OptionParser::run() const
         }
         else if (args[i] == "--distributed") {
             config->setDistributed();
-        }
-        else if (args[i] == "--remote-valgrind") {
-            config->setRemoteValgrind();
         }
         else if (args[i] == "--agent") {
             config->setAgent();

@@ -47,7 +47,6 @@ public:
                     sizeOfLong(sizeof(long)),
                     datagrams(false),
                     distributed(false), 
-                    remoteValgrind(false),
                     agent(false), 
                     suppressSubcalls(false),
                     dumpCalls(false),
@@ -63,13 +62,16 @@ public:
                     host(std::string("")),
                     prefix(std::string("")),
                     distHost(std::string("127.0.0.1")),
+                    remoteHost(std::string("127.0.0.1")),
+                    remoteValgrind(std::string("")),
                     port(65536),
                     distPort(65536),
                     remotePort(65536),
                     STPThreads(0),
                     checkArgv(std::string("")),
                     resultDir(std::string("")),
-                    agentDir(std::string(""))
+                    agentDir(std::string("")),
+                    valgrindPath(std::string(""))
     {}
 
     OptionConfig(const OptionConfig *opt_config)
@@ -97,6 +99,7 @@ public:
         port            = opt_config->port;
         distHost        = opt_config->distHost;
         distPort        = opt_config->distPort;
+        remoteHost      = opt_config->remoteHost;
         remotePort      = opt_config->remotePort;
         remoteValgrind  = opt_config->remoteValgrind;
         leaks           = opt_config->leaks;
@@ -115,6 +118,7 @@ public:
         cleanUp         = opt_config->cleanUp;
         resultDir       = opt_config->resultDir;
         agentDir        = opt_config->agentDir;
+        valgrindPath    = opt_config->valgrindPath;
     }
 
     bool empty() const
@@ -140,6 +144,12 @@ public:
 
     const std::string getReportLog() const
     { return reportLog; }
+    
+    std::string getRemoteHost()
+    { return remoteHost; }
+
+    void setRemoteHost(std::string& host)
+    { remoteHost = host; }
 
     void setReportLog(std::string reportLog)
     { this->reportLog = reportLog; }
@@ -161,6 +171,12 @@ public:
 
     void setPlugin(std::string plugin)
     { this->plugin = plugin; }
+
+    const std::string getValgrindPath() const
+    { return valgrindPath; }
+
+    void setValgrindPath(std::string valgrindPath)
+    { this->valgrindPath = valgrindPath; }
 
     void setDebug()
     { debug = true; }
@@ -239,12 +255,6 @@ public:
     
     bool getDistributed() const
     { return distributed; }
-
-    void setRemoteValgrind()
-    { remoteValgrind = true; }
-    
-    bool getRemoteValgrind() const
-    { return remoteValgrind; }
 
     void setAgent()
     { agent = true; }
@@ -378,6 +388,13 @@ public:
     void setPrefix(std::string& prefix)
     { this->prefix = prefix; }
 
+    void setRemoteValgrind(std::string& type)
+    { remoteValgrind = type; }
+    
+    std::string getRemoteValgrind() const
+    { return remoteValgrind; }
+
+
 private:
     /* Enable DEBUG logging level.
        Disabled by default (false). */
@@ -437,8 +454,10 @@ private:
     bool                     distributed;
 
     /* Set avalanche to run in split mode.
-       Not set by default (false). */
-    bool                     remoteValgrind;
+       Not set by default ("").
+       Use 'host' if remote plugin is a server;
+       use 'client' if main avalanche is a server;*/
+    std::string              remoteValgrind;
 
     /* Set avalanche to agent mode.
          Causes avalanche to request a knew input when all existing
@@ -514,6 +533,10 @@ private:
        Set to 127.0.0.1 by default. */
     std::string              distHost;
 
+    /* plugin-agent IPv4.
+       Set to 127.0.0.1 by default. */
+    std::string              remoteHost;
+
     /* Port number for network connection for --sockets/datagrams.
        Set to 65536 by default. */
     unsigned int             port;
@@ -554,6 +577,8 @@ private:
     /* Pointer size synchronization for split mode.
        Set automatically. */
     int                      sizeOfLong;
+
+    std::string              valgrindPath;
 };
 
 

@@ -51,6 +51,8 @@
 #include <cstring>
 #include <stack>
 
+#include "av_config.h" //for TMPDIR
+
 #define N 5
 
 using namespace std;
@@ -130,22 +132,33 @@ static int connectTo(string host, unsigned int port)
 
 int args_length;
 
-static string temp_dir = string("");
+#ifdef TMPDIR
+static string temp_dir = string(TMPDIR);
+#else
+static string temp_dir = string("/tmp");
+#endif
+
+static bool init_temp = false;
 
 string ExecutionManager::getTempDir()
 {
-  if (temp_dir == "")
+  if ((temp_dir.size() != 0) && !init_temp)
   {
-    char dir_template [] = "/tmp/avalanche-XXXXXX";
-    char *c_temp_dir = mkdtemp(dir_template);
-    if (c_temp_dir == NULL)
+    if (*(temp_dir.end() - 1) != '/')
+    {
+      temp_dir = temp_dir + string("/");
+    }
+    int res = mkdir((temp_dir + "avalanche_temp").c_str(), S_IRWXU);
+    if ((res == -1) && (errno != EEXIST))
     {
       LOG(Logger::ERROR, "Cannot create temp directory : " << strerror(errno));
+      temp_dir = "";
     }
     else
     {
-      temp_dir = string(c_temp_dir) + string("/");
+      temp_dir = temp_dir + string("avalanche_temp/");
     }
+    init_temp = true;
   }
   return temp_dir;
 }
@@ -179,44 +192,49 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
         write(dist_fd, "m", 1);
         read(dist_fd, &agents, sizeof(int));
     }
-    if (opt_config->getRemoteValgrind())
+    if (opt_config->getRemoteValgrind() != "")
     {
-        logger->setNetworkLog();
-        struct sockaddr_in st_socket_addr;
-        int listen_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if(listen_fd == -1)
+        if (opt_config->getRemoteValgrind() == "host")
         {
-            LOG(Logger::ERROR, "Cannot create socket: " << strerror(errno));
-            throw "socket";
+            remote_fd = connectTo(opt_config->getRemoteHost(), opt_config->getRemotePort());
         }
-        int on = 1;
-        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-        memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
-        st_socket_addr.sin_family = AF_INET;  
-        st_socket_addr.sin_port = htons(config->getRemotePort());
-        st_socket_addr.sin_addr.s_addr = INADDR_ANY;
+        else
+        {
+            struct sockaddr_in st_socket_addr;
+            int res, socket_fd;
+            bool on;
+            socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+            setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 
-        int bind_res = bind(listen_fd, (const struct sockaddr*)&st_socket_addr,
-                            sizeof(struct sockaddr_in));
-        if(bind_res == -1)
-        {
-            close(listen_fd);
-            LOG(Logger::ERROR, strerror(errno));
-            throw "bind";
+            memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
+            st_socket_addr.sin_family = AF_INET;
+            st_socket_addr.sin_port = htons(config->getRemotePort());
+            st_socket_addr.sin_addr.s_addr = INADDR_ANY;
+
+            if(bind(socket_fd, (const struct sockaddr*)&st_socket_addr, sizeof(struct sockaddr_in)) < 0)
+            {
+                perror("bind failed");
+                close(socket_fd);
+                exit(EXIT_FAILURE);
+            }
+
+            if(listen(socket_fd, 10) < 0)
+            {
+                perror("listen failed");
+                close(socket_fd);
+                exit(EXIT_FAILURE);
+            }
+
+            remote_fd = accept(socket_fd, NULL, NULL);
+            if (remote_fd < 0)
+            {
+                perror("accept failed");
+                close(socket_fd);
+                exit(EXIT_FAILURE);
+            }
+            close(socket_fd);
         }
-        int listen_res = listen(listen_fd, 10);
-        if(listen_res == -1)
-        {
-            close(listen_fd);
-            LOG(Logger::ERROR, strerror(errno));
-            throw "listen";
-        }
-        LOG_TIME(Logger::NETWORK_LOG, "Accepting connection from plugin-agent.");
-        time_t connection_st_time = time(NULL);
-        remote_fd = accept(listen_fd, NULL, NULL);
-        LOG_TIME(Logger::NETWORK_LOG, "Accepted.");
-        monitor->setNetworkOverhead(time(NULL) - connection_st_time);
-        close(listen_fd);
+
         char buf[32];
         read(remote_fd, buf, strlen("avalanche"));
         buf[strlen("avalanche")] = '\0';
@@ -225,9 +243,9 @@ ExecutionManager::ExecutionManager(OptionConfig *opt_config)
             LOG(Logger::ERROR, "Invalid authentication message from plugin-agent");
             throw "authentication";
         }
-        int size_of_long;
-        read(remote_fd, &size_of_long, sizeof(int));
-        config->setSizeOfLong(size_of_long);
+        int size;
+        read(remote_fd, &size, sizeof(int));
+        config->setSizeOfLong(size);
     }
 }
 
@@ -236,7 +254,7 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
   ostringstream tg_invert_depth;
   if (temp_dir != "") 
   {
-    if (config->getRemoteValgrind())
+    if (config->getRemoteValgrind() != "")
     {
       plugin_opts.push_back(string("--host-temp-dir=") + temp_dir);
     }
@@ -330,7 +348,7 @@ void ExecutionManager::getTracegrindOptions(vector <string> &plugin_opts)
 void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string fileNameModifier, bool addNoCoverage)
 {
   string cur_temp_dir = temp_dir;
-  if (config->getRemoteValgrind())
+  if (config->getRemoteValgrind() != "")
   {
     cur_temp_dir = string("");
   }
@@ -368,7 +386,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
     plugin_opts.push_back(cv_alarm.str());
   }
 
-  if (!config->getRemoteValgrind())
+  if (config->getRemoteValgrind() == "")
   {
     string cv_exec_file = cur_temp_dir + string("execution") + fileNameModifier + string(".log");
     plugin_opts.push_back(string("--log-file=") + cv_exec_file);
@@ -517,8 +535,7 @@ int ExecutionManager::dumpError(Input *input, Error *error)
             return -1;
         }
 
-        ss_command << " " << config->getValgrind() << 
-                      "../lib/avalanche/valgrind --tool=covgrind --host=" <<
+        ss_command << " " << config->getValgrind() + config->getValgrindPath() <<  " --tool=covgrind --host=" <<
                       config->getHost() << " --port=" << config->getPort() << 
                       " --replace=" << ss_input_file.str () << " --sockets=yes";
     }
@@ -547,8 +564,7 @@ int ExecutionManager::dumpError(Input *input, Error *error)
     }
     if ((active_err->getType() != CRASH) && (active_err->getType() != UNKNOWN))
     {
-        ss_command << config->getValgrind() << "../lib/avalanche/valgrind" 
-                      " --tool=" << config->getPlugin() << " ";
+        ss_command << config->getValgrind() + config->getValgrindPath() << " --tool=" << config->getPlugin() << " ";
     }
     for (vector<string>::iterator it = cur_argv.begin (); 
                                   it != cur_argv.end (); 
@@ -713,11 +729,11 @@ int ExecutionManager::checkAndScore(Input* input, bool addNoCoverage, bool first
   plugin_opts.insert(plugin_opts.begin(), plugin_name);
 
   Executor* plugin_exe;
-  if (!config->getRemoteValgrind())
+  if (config->getRemoteValgrind() == "")
   {
 
     plugin_exe = new PluginExecutor(config->getDebug(), config->getTraceChildren(),
-                                     config->getValgrind(), new_prog_and_args, 
+                                     config->getValgrind() + config->getValgrindPath(), new_prog_and_args, 
                                      plugin_opts);
   }
   else
@@ -1062,7 +1078,7 @@ int ExecutionManager::processQuery(Input* first_input, bool* actual, unsigned lo
                                   !actual[st_depth + cur_depth - 1];
             next->prediction_size = st_depth + cur_depth;
             next->parent = first_input;
-            if ((thread_index > 0) && (config->getRemoteValgrind()))
+            if ((thread_index > 0) && (config->getRemoteValgrind() != ""))
             {
                 pthread_mutex_lock(&add_remote_mutex);
                 remote_inputs.push(make_pair(next, first_depth + cur_depth + 1));
@@ -1216,7 +1232,7 @@ int ExecutionManager::processTraceParallel(Input * first_input,
     }
     int thread_counter;
     job_wrapper external_data[depth];
-    if (config->getRemoteValgrind())
+    if (config->getRemoteValgrind() != "")
     {
         job_wrapper remote_external_data;
         remote_external_data.work_func = launch_cv;
@@ -1272,7 +1288,7 @@ int ExecutionManager::processTraceParallel(Input * first_input,
     {
         threads[i].waitForThread();
     }
-    if (config->getRemoteValgrind())
+    if (config->getRemoteValgrind() != "")
     {
         pthread_mutex_lock(&add_remote_mutex);
         launch_cv_stop = true;
@@ -1571,7 +1587,7 @@ void ExecutionManager::run()
   
       getTracegrindOptions(plugin_opts);
 
-      if (!config->getRemoteValgrind())
+      if (config->getRemoteValgrind() == "")
       {
         plugin_opts.push_back(string("--log-file=") + 
                               temp_dir + string("execution.log"));
@@ -1613,7 +1629,7 @@ void ExecutionManager::run()
         }
       }
       Executor * plugin_exe;
-      if (config->getRemoteValgrind())
+      if (config->getRemoteValgrind() != "")
       {
         plug_args.insert(plug_args.begin(), "--tool=tracegrind");
         to_send.insert(to_send.begin(), 0);
@@ -1625,7 +1641,7 @@ void ExecutionManager::run()
         plugin_opts.insert(plugin_opts.begin(), "--tool=tracegrind");
         plugin_exe = new PluginExecutor(config->getDebug(), 
                                          config->getTraceChildren(), 
-                                         config->getValgrind(), cur_argv, 
+                                         config->getValgrind() + config->getValgrindPath(), cur_argv, 
                                          plugin_opts);
       }
             
@@ -1871,7 +1887,6 @@ void ExecutionManager::talkToServer()
           {
             string plugin_name = config->getPlugin();
             int length = plugin_name.length();
-            LOG(Logger::REPORT, length);
             writeToSocket(dist_fd, &length, sizeof(int));
             writeToSocket(dist_fd, plugin_name.c_str(), length);
           }
@@ -2031,7 +2046,7 @@ ExecutionManager::~ExecutionManager()
         close(dist_fd);
     }
     
-    if (config->getRemoteValgrind())
+    if (config->getRemoteValgrind() != "")
     {
         kind = UNID;
         write(remote_fd, &kind, sizeof(int));

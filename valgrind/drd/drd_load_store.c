@@ -1,8 +1,8 @@
-/* -*- mode: C; c-basic-offset: 3; -*- */
+/* -*- mode: C; c-basic-offset: 3; indent-tabs-mode: nil; -*- */
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
+  Copyright (C) 2006-2011 Bart Van Assche <bvanassche@acm.org>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -48,6 +48,8 @@
 #define STACK_POINTER_OFFSET OFFSET_ppc64_GPR1
 #elif defined(VGA_arm)
 #define STACK_POINTER_OFFSET OFFSET_arm_R13
+#elif defined(VGA_s390x)
+#define STACK_POINTER_OFFSET OFFSET_s390x_r15
 #else
 #error Unknown architecture.
 #endif
