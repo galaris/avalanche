@@ -63,4 +63,10 @@ to Android SDK documentation.
 /path/to/android-sdk/platforms-tools/adb push Inst /
 
 # To run (on the device)
-/data/local/Inst/bin/valgrind [the usual args etc]
+/data/local/Inst/bin/avalanche ...
+
+
+If you plan to run Avalanche in split-mode, check out
+instructions in README.arm. If you use Android emulator or connect
+real device and use adb, you will need to use 'adb forward'
+command and run in split-mode with server on target device.
