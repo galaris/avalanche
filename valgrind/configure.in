@@ -1983,52 +1983,12 @@ AC_CONFIG_FILES([
    memcheck/tests/ppc32/Makefile
    memcheck/tests/ppc64/Makefile
    memcheck/perf/Makefile
-   cachegrind/Makefile
-   cachegrind/tests/Makefile
-   cachegrind/tests/x86/Makefile
-   cachegrind/cg_annotate
-   cachegrind/cg_diff
-   callgrind/Makefile
-   callgrind/callgrind_annotate
-   callgrind/callgrind_control
-   callgrind/tests/Makefile
    helgrind/Makefile
    helgrind/tests/Makefile
    covgrind/Makefile
    covgrind/tests/Makefile
    tracegrind/Makefile
    tracegrind/tests/Makefile
-   massif/Makefile
-   massif/tests/Makefile
-   massif/perf/Makefile
-   massif/ms_print
-   lackey/Makefile
-   lackey/tests/Makefile
-   none/Makefile
-   none/tests/Makefile
-   none/tests/amd64/Makefile
-   none/tests/ppc32/Makefile
-   none/tests/ppc64/Makefile
-   none/tests/x86/Makefile
-   none/tests/arm/Makefile
-   none/tests/s390x/Makefile
-   none/tests/linux/Makefile
-   none/tests/darwin/Makefile
-   none/tests/x86-linux/Makefile
-   exp-sgcheck/Makefile
-   exp-sgcheck/tests/Makefile
-   drd/Makefile
-   drd/scripts/download-and-build-splash2
-   drd/tests/Makefile
-   exp-bbv/Makefile
-   exp-bbv/tests/Makefile
-   exp-bbv/tests/x86/Makefile
-   exp-bbv/tests/x86-linux/Makefile
-   exp-bbv/tests/amd64-linux/Makefile
-   exp-bbv/tests/ppc32-linux/Makefile
-   exp-bbv/tests/arm-linux/Makefile
-   exp-dhat/Makefile
-   exp-dhat/tests/Makefile
 ])
 AC_CONFIG_FILES([coregrind/link_tool_exe_linux],
                 [chmod +x coregrind/link_tool_exe_linux])
