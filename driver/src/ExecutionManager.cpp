@@ -97,7 +97,7 @@ static int connectTo(string host, unsigned int port)
 {
   struct sockaddr_in st_socket_addr;
   int res, socket_fd;
- 
+
   memset(&st_socket_addr, 0, sizeof(struct sockaddr_in));
  
   st_socket_addr.sin_family = AF_INET;
@@ -138,6 +138,8 @@ static string temp_dir = string(TMPDIR);
 static string temp_dir = string("/tmp");
 #endif
 
+#define TMP_DIR_TEMPLATE_SIZE 6
+
 static bool init_temp = false;
 
 string ExecutionManager::getTempDir()
@@ -148,15 +150,20 @@ string ExecutionManager::getTempDir()
     {
       temp_dir = temp_dir + string("/");
     }
-    int res = mkdir((temp_dir + "avalanche_temp").c_str(), S_IRWXU);
+    temp_dir = temp_dir + string("avalanche-");
+    srand(time(NULL));
+    for (int i = 0; i < TMP_DIR_TEMPLATE_SIZE; i ++)
+    {
+        ostringstream ss;
+        ss << (char)('a' + rand() % ('z' - 'a'));
+        temp_dir = temp_dir + ss.str();
+    }
+    temp_dir += '/';
+    int res = mkdir(temp_dir.c_str(), S_IRWXU);
     if ((res == -1) && (errno != EEXIST))
     {
       LOG(Logger::ERROR, "Cannot create temp directory : " << strerror(errno));
       temp_dir = "";
-    }
-    else
-    {
-      temp_dir = temp_dir + string("avalanche_temp/");
     }
     init_temp = true;
   }
@@ -407,7 +414,7 @@ void ExecutionManager::getCovgrindOptions(vector <string> &plugin_opts, string f
 static
 string replaceNumber(string src, const char *pattern)
 {
-    unsigned int position = 0, initial_position = 0;
+    size_t position = 0, initial_position = 0;
     while (true)
     {
         position = src.find(pattern, initial_position);

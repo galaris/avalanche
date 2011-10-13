@@ -416,7 +416,17 @@ int main(int argc, char** argv)
         {
             temp_dir += string("/");
         }
-        temp_dir += string("avalanche_temp/");
+#define TMP_DIR_TEMPLATE_SIZE 6
+        temp_dir += string("avalanche-");
+        srand(time(NULL));
+        for (int i = 0; i < TMP_DIR_TEMPLATE_SIZE; i ++)
+        {
+            ostringstream ss;
+            ss << (char)('a' + rand() % ('z' - 'a'));
+            temp_dir += ss.str();
+        }
+        temp_dir += '/';
+#undef TMP_DIR_TEMPLATE_SIZE
     }
     if (mkdir(temp_dir.c_str(), S_IRWXU) == -1)
     {

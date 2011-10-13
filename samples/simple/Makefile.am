@@ -2,6 +2,10 @@ noinst_PROGRAMS = entry divclient multiple_client multiple_client2 writeserver s
 
 CFLAGS += -O0 -g
 
+if !BIONIC
+  data_race_CFLAGS = -pthread
+endif
+
 entry_SOURCES = entry.c
 dist_SOURCES = dist.c
 dist3_SOURCES = dist3.c
