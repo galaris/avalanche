@@ -206,8 +206,7 @@ bool RemotePluginExecutor::checkFlag(const char *flg_name)
 {
     for (int i = 0; i < argsnum; i ++)
     {
-        if((strstr(flg_name, args[i]) != NULL) ||
-           (strstr(args[i], flg_name) != NULL))
+        if(strstr(args[i], flg_name) == args[i])
         {
             return true;
         }
@@ -271,7 +270,7 @@ int RemotePluginExecutor::run(int thread_index)
         {
             writeFileToSocket(remote_fd, temp_dir + string("prediction.log"));
         }
-        if (checkFlag("--replace=yes --replace=replace_data"))
+        if (checkFlag("--replace=yes") || checkFlag("--replace=replace_data"))
         {
             writeFileToSocket(remote_fd, temp_dir + string("replace_data"));
         }
@@ -300,7 +299,7 @@ int RemotePluginExecutor::run(int thread_index)
                readFileFromSocket(remote_fd, 
                                       result_dir + string("calldump.log"));
             }
-            if (checkFlag("--sockets=yes --datagrams=yes"))
+            if (checkFlag("--sockets=yes") || checkFlag("--datagrams=yes"))
             {
                readFileFromSocket(remote_fd, 
                                       temp_dir + string("replace_data"));
