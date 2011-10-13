@@ -4,6 +4,10 @@ INCLUDES = -I../include
 
 avalanche_CFLAGS = -Wno-deprecated
 
+if !BIONIC
+  LDFLAGS += -pthread
+endif
+
 CXXLD = $(CC)
 LIBS = -static-libgcc -Wl,-Bstatic,-lstdc++,-Bdynamic
 

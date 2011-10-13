@@ -18,4 +18,23 @@ AC_ARG_WITH(tmpdir,
                  tmpdir="/tmp")
 AC_DEFINE_UNQUOTED(TMPDIR, "$tmpdir", [Temporary files directory])
 
+
+#----------------------------------------------------------------------------
+# Check is bionic
+#----------------------------------------------------------------------------
+# This variable will collect the suppression files to be used.
+AC_SUBST(DEFAULT_SUPP)
+
+AC_CHECK_HEADER([features.h])
+
+# not really a version check
+AC_EGREP_CPP([BIONIC_LIBC], [
+#if defined(__ANDROID__)
+  BIONIC_LIBC
+#endif
+],
+GLIBC_VERSION="bionic")
+
+AM_CONDITIONAL(BIONIC, test "$GLIBC_VERSION" = bionic)
+
 AC_OUTPUT
