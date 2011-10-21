@@ -12,6 +12,31 @@ AC_CONFIG_HEADER(config.h)
 AC_CONFIG_FILES([Makefile AST/Makefile sat/Makefile sat/core/Makefile
                  sat/mtl/Makefile simplifier/Makefile bitvec/Makefile
                  c_interface/Makefile constantbv/Makefile parser/Makefile])
-AC_OUTPUT
+#----------------------------------------------------------------------------
+# Check is bionic
+#----------------------------------------------------------------------------
+# This variable will collect the suppression files to be used.
+AC_SUBST(DEFAULT_SUPP)
 
-cp confdefs.h my_config.h
+AC_CHECK_HEADER([features.h])
+
+# not really a version check
+AC_EGREP_CPP([BIONIC_LIBC], [
+#if defined(__ANDROID__)
+  BIONIC_LIBC
+#endif
+],
+GLIBC_VERSION="bionic")
+
+AM_CONDITIONAL(BIONIC, test "$GLIBC_VERSION" = bionic)
+
+case "${GLIBC_VERSION}" in
+     bionic)
+	AC_DEFINE([BIONIC_LIBC], 1, [Define to 1 if you're using Bionic])
+	;;
+	
+esac
+
+AC_SUBST(GLIBC_VERSION)
+
+AC_OUTPUT
