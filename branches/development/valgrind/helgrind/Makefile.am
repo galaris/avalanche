@@ -99,7 +99,8 @@ vgpreload_helgrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_CFLAGS       = \
 vgpreload_helgrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_DEPENDENCIES = \
 	$(LIBREPLACEMALLOC_@VGCONF_PLATFORM_PRI_CAPS@)
 vgpreload_helgrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_LDFLAGS      = \
-	-shared -static -Wl,-z,interpose,-z,initfirst 
+	$(PRELOAD_LDFLAGS_@VGCONF_PLATFORM_PRI_CAPS@) \
+	$(LIBREPLACEMALLOC_LDFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
 
 if VGCONF_HAVE_PLATFORM_SEC
 vgpreload_helgrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_SOURCES      = \
