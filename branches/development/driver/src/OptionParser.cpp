@@ -23,16 +23,15 @@
    limitations under the License.
 */
 
-#include "OptionParser.h"
-#include "OptionConfig.h"
-
-#include "Logger.h"
-
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <arpa/inet.h>
+
+#include "OptionParser.h"
+#include "OptionConfig.h"
+#include "Logger.h"
 
 using namespace std;
 

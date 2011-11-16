@@ -23,14 +23,14 @@
    limitations under the License.
 */
 
+#include <cerrno>
+#include <cstring>
+#include <cstdlib>
+
 #include "Logger.h"
 #include "STP_Executor.h"
 #include "TmpFile.h"
 #include "Monitor.h"
-
-#include <cerrno>
-#include <cstring>
-#include <cstdlib>
 
 using namespace std;
 

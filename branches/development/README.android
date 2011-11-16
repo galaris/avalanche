@@ -9,6 +9,9 @@ and kernel image compatible with qemu emulating cortex-a8 CPU.
 android-ndk-r6 native development kit is used to build Avalanche. 
 I can be installed from (http://developer.android.com/sdk/ndk/index.html).
 
+Please, use revision 6 -- we have reports of Avalanche version of valgrind
+not working with newer versions and we are unable to remove the error.
+
 We also use tools provided by Android SDK
 (http://developer.android.com/sdk/index.html) to move files to
 Android device or interact with emulator.

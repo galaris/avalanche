@@ -21,16 +21,16 @@
    limitations under the License. 
 */
 
-#include "Logger.h"
-#include "RemotePluginExecutor.h"
-#include "FileBuffer.h"
-#include "ExecutionManager.h"
-
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
 #include <unistd.h>
 #include <fcntl.h>
+
+#include "Logger.h"
+#include "RemotePluginExecutor.h"
+#include "FileBuffer.h"
+#include "ExecutionManager.h"
 
 using namespace std;
 
@@ -243,7 +243,6 @@ int RemotePluginExecutor::run(int thread_index)
             arg_length = strlen(args[i]);
             writeToSocket(remote_fd, &arg_length, sizeof(int));
             writeToSocket(remote_fd, args[i], arg_length);
-            LOG(Logger::REPORT, args[i]);
             util_c = files_to_send[i] ? '1' : '\0';
             writeToSocket(remote_fd, &util_c, 1);
             if (util_c)

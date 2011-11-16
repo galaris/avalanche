@@ -23,10 +23,6 @@
    limitations under the License.
 */
 
-#include "Logger.h"
-#include "TmpFile.h"
-#include "ExecutionManager.h"
-
 #include <stdlib.h>
 
 #include <unistd.h>
@@ -35,6 +31,10 @@
 #include <cstring>
 #include <fstream>
 #include <set>
+
+#include "Logger.h"
+#include "TmpFile.h"
+#include "ExecutionManager.h"
 
 using namespace std;
 

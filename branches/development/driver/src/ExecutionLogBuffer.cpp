@@ -21,10 +21,11 @@
    limitations under the License.
 */
 
-#include "ExecutionLogBuffer.h"
 #include <iostream>
 #include <string.h>
 #include <stdlib.h>
+
+#include "ExecutionLogBuffer.h"
 
 using namespace std;
 

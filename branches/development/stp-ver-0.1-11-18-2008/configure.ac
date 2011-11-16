@@ -2,10 +2,22 @@ AC_INIT(stp, 0.1)
 AM_INIT_AUTOMAKE
 AC_PROG_CXX
 AC_PROG_RANLIB
-AC_PROG_LEX
-AC_PROG_YACC
 AC_CONFIG_MACRO_DIR([m4])
 AC_CHECK_PROG(PERL, perl, perl)
+AC_CHECK_PROGS(YACC,yacc bison byacc,[no],[path = $PATH])
+[if test "$YACC" = "no"]
+[then]
+    [echo "You will need to install yacc to build STP"]
+    [exit 1]
+[fi]
+AC_PROG_YACC
+AC_CHECK_PROGS(LEX,lex flex ,[no],[path = $PATH])
+[if test "$LEX" = "no"]
+[then]
+    [echo "You will need to install lex to build STP"]
+    [exit 1]
+[fi]
+AC_PROG_LEX
 AC_LANG(C++)
 AC_CHECK_HEADERS([ext/hash_map ext/hash_set hash_map hash_set])
 AC_CONFIG_HEADER(config.h)

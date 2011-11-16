@@ -21,9 +21,6 @@
    limitations under the License.
 */
 
-#include "FileBuffer.h"
-#include "Logger.h"
-
 #include <string>
 #include <vector>
 #include <sys/types.h>
@@ -33,6 +30,9 @@
 #include <fcntl.h>
 #include <iostream>
 #include <cerrno>
+
+#include "FileBuffer.h"
+#include "Logger.h"
 
 using namespace std;
 
@@ -83,7 +83,10 @@ FileBuffer::FileBuffer(const FileBuffer& other)
         LOG(Logger::ERROR, strerror(errno));
         throw "malloc";
     }
-    strncpy(buf, other.buf, size);
+    for (int i = 0; i < size; i ++)
+    {
+        buf[i] = other.buf[i];
+    }
     buf[size] = '\0';
 }
 
@@ -96,7 +99,10 @@ FileBuffer::FileBuffer(char* _buf) // it is not file_name!
         LOG(Logger::ERROR, strerror(errno));
         throw "malloc";
     }
-    strncpy(buf, _buf, size);
+    for (int i = 0; i < size; i ++)
+    {
+        buf[i] = _buf[i];
+    }
     buf[size] = '\0';
 }
 
@@ -202,6 +208,7 @@ int FileBuffer::cutQueryAndDump(std::string file_name, bool do_invert)
         }
     }
     size = old_size;
+    return 0;
 }
 
 static 

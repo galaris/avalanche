@@ -21,9 +21,10 @@
    limitations under the License.
 */
 
-#include "Thread.h"
 #include <signal.h>
 #include <iostream>
+
+#include "Thread.h"
 
 using namespace std;
 
