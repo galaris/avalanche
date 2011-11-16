@@ -63,8 +63,9 @@ bool check_argv;
 string temp_dir;
 bool killed = false;
 
-static bool parseArg(char *arg)
+static bool parseArg(char **p_arg)
 {
+    char *arg = *p_arg;
     if (!strcmp(arg, "--no-coverage=yes"))
     {
         no_coverage = true;
@@ -108,12 +109,12 @@ static bool parseArg(char *arg)
     }
     else if (strstr(arg, "argv.log"))
     {
-        char *dir_pos = strchr(arg, '=');
-        if (dir_pos == NULL)
-        {
-            return false;
-        }
-        strncpy(dir_pos + 1, temp_dir.c_str(), temp_dir.length());
+        free(arg);
+        string new_arg = string("--file=") + temp_dir + string("argv.log");
+        int len = new_arg.length();
+        *p_arg = (char*) malloc(len + 1);
+        strncpy(*p_arg, new_arg.c_str(), len);
+        (*p_arg)[len] = '\0';
     }
     return true;
 }
@@ -172,7 +173,7 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
     args[1] = (char *) malloc(length + 1);
     readFromSocket(avalanche_fd, args[1], length);
     args[1][length] = '\0';
-    parseArg(args[1]);
+    parseArg(&(args[1]));
     readFromSocket(avalanche_fd, &util_c, 1);
 
     ostringstream ss;
@@ -194,7 +195,7 @@ static int readAndExec(const string &prog_dir, int argc, char** argv)
         args[i] = (char *) malloc(length + 1);
         readFromSocket(avalanche_fd, args[i], length);
         args[i][length] = '\0';
-        parseArg(args[i]);
+        parseArg(&(args[i]));
         readFromSocket(avalanche_fd, &util_c, 1);
         if (util_c)
         {
@@ -436,7 +437,6 @@ int main(int argc, char** argv)
             temp_dir = string("");
         }
     }
-    cout << temp_dir << endl;
     string prog_name = argv[0];
     size_t slash_pos = prog_name.find_last_of('/');
     if (slash_pos == string::npos) {

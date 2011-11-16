@@ -72,6 +72,11 @@ void recvInput(bool initial)
       char* filename = new char[namelength + 1];
       readFromSocket(fd, filename, namelength);
       filename[namelength] = '\0';
+      if (strstr(filename, "argv.log") != NULL)
+      {
+        delete []filename;
+        filename = strdup("argv.log");
+      }
       file_name.push_back(filename);
     }
     readFromSocket(fd, &length, sizeof(int));
@@ -502,6 +507,7 @@ int main(int argc, char** argv)
     delete [](file_name.at(i));
   }
   file_name.clear();
+  unlink("argv.log");
   return 0;
 }
 

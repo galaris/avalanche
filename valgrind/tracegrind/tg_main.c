@@ -1737,6 +1737,26 @@ void translate3(IRExpr* arg, HWord value, UShort taintedness)
   }
 }
 
+//TODO: Do this properly.
+//      Don't want additional params in printSizedBool
+static
+void printSizedBool_DangerOnly(UShort size, Bool value)
+{
+  Char s[256];
+  Int l = 0;
+  Int v = (value) ? 1 : 0;
+  switch (size)
+  {
+    case 1:  l = VG_(sprintf)(s, "0bin%d", v);                  break;
+    case 8:  l = VG_(sprintf)(s, "0hex0%d", v);                 break;
+    case 16: l = VG_(sprintf)(s, "0hex000%d", v);               break;
+    case 32: l = VG_(sprintf)(s, "0hex0000000%d", v);           break;
+    case 64: l = VG_(sprintf)(s, "0hex000000000000000%d", v);   break;
+    default: return;
+  }
+  my_write(fddanger, s, l);
+}
+
 static
 void printSizedBool(UShort size, Bool value)
 {
@@ -2331,7 +2351,7 @@ void instrumentWrTmpLongBinop_Internal(UInt oprt, UInt ltmp,
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
-				  printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
+				  printSizedBool_DangerOnly(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
                                   if (fdfuncFilter >= 0)
                                   {
@@ -2355,7 +2375,7 @@ void instrumentWrTmpLongBinop_Internal(UInt oprt, UInt ltmp,
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
-				  printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
+				  printSizedBool_DangerOnly(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
                                   if (fdfuncFilter >= 0)
                                   {
@@ -2407,7 +2427,7 @@ void instrumentWrTmpDivisionBinop(IRStmt* clone, HWord value2, ULong value1)
       l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", 
                           curblock, arg2->Iex.RdTmp.tmp, curvisited);
       my_write(fddanger, s, l);
-      printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
+      printSizedBool_DangerOnly(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
       l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
       if (fdfuncFilter >= 0)
       {
@@ -2781,7 +2801,7 @@ void instrumentWrTmpBinop(IRStmt* clone, HWord value1, HWord value2)
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
-				  printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
+				  printSizedBool_DangerOnly(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
                                   if (fdfuncFilter >= 0)
                                   {
@@ -2805,7 +2825,7 @@ void instrumentWrTmpBinop(IRStmt* clone, HWord value1, HWord value2)
 				{
 				  l = VG_(sprintf)(s, "ASSERT(t_%lx_%u_%u=", curblock, arg2->Iex.RdTmp.tmp, curvisited);
 				  my_write(fddanger, s, l);
-				  printSizedBool(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
+				  printSizedBool_DangerOnly(curNode->tempSize[arg2->Iex.RdTmp.tmp], False);
 				  l = VG_(sprintf)(s, ");\nQUERY(FALSE);\n");
                                   if (fdfuncFilter >= 0)
                                   {
