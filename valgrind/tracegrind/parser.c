@@ -39,9 +39,15 @@
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_hashtable.h"
 #include "pub_tool_xarray.h"
+#include "pub_tool_oset.h"
 
 extern VgHashTable funcNames;
-XArray** inputFilter;
+XArray* inputFilter;
+
+/* This has a pair {index, offsets} for each file */
+extern XArray *usedOffsets;
+/* This has a pair {index, filename} for each file */
+extern XArray *inputFiles;
 
 Bool isStandardFunction (Char* objName)
 {
@@ -190,6 +196,45 @@ Bool cmpNames (Char* fnName, Char* checkName)
   return False;
 }
 
+Bool storeUsedOffsets(Char* fileName)
+{
+  SysRes openRes = 
+    VG_(open)(fileName, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT,
+              VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP | 
+              VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP);
+  if (sr_isError(openRes))
+  {
+    return False;
+  }
+  Int fd = sr_Res(openRes);
+
+  Int previousOffset = -1, i, j;
+  Word value;
+  for (j = 0; j < VG_(sizeXA) (usedOffsets); j ++)
+  {
+    OSet *offsetSet = *((OSet **) VG_(indexXA) (usedOffsets, j));
+    Char *fileName = * ((Char **) VG_(indexXA) (inputFiles, j));
+    VG_(OSetWord_ResetIter) (offsetSet);
+    VG_(write) (fd, fileName, VG_(strlen) (fileName));
+    while(VG_(OSetWord_Next) (offsetSet, &value)) 
+    {
+      for (i = previousOffset; i < value - 1; i ++) 
+      {
+        VG_(write) (fd, "\0", 1);
+      }
+      VG_(write) (fd, "\1", 1);
+      previousOffset = value;
+    }
+    VG_(OSetWord_Destroy) (offsetSet);
+    VG_(free) (fileName);
+    VG_(write) (fd, "\n", 1);
+  }
+  VG_(close) (fd);
+  VG_(deleteXA) (inputFiles);
+  VG_(deleteXA) (usedOffsets);
+  return True;
+}
+
 Bool cutTemplates(Char* fnName)
 {
   Int a_bracketBalance = 0, i, j = 0, initialI = 0, length = VG_(strlen) (fnName);
@@ -285,7 +330,7 @@ Bool leaveFnName (Char* fnName)
 
 Bool parseArgvMask(Char* str, Int* argFilterUnits)
 {
-  Int i, curOffset = 0;
+  Int curOffset = 0;
   Char curStr[16];
   Char** endPtr = VG_(malloc) ("endPtr", sizeof (Char*));
   *endPtr = curStr;
@@ -334,7 +379,6 @@ Bool parseMask(Char* filename)
   Char* str = buf;
   Char** endptr = &str;
   XArray* curfilter = VG_(newXA)(VG_(malloc), "chunk", VG_(free), sizeof(offsetPair));
-  Int i = 0;
   for (;;)
   {
     while (VG_(isspace)(*str))
@@ -419,6 +463,10 @@ Bool parseMask(Char* filename)
 
 Bool checkInputOffset(Int curfilenum, ULong offs)
 {
+  if (inputFilter == NULL)
+  {
+    return True;
+  }
   if (curfilenum >= VG_(sizeXA)(inputFilter))
   {
     return False;
@@ -439,17 +487,17 @@ Bool checkInputOffset(Int curfilenum, ULong offs)
 void printInputOffsets()
 {
   Int i = 0;
-  VG_(printf)("VG_(sizeXA)(inputFilter)=%d\n", VG_(sizeXA)(inputFilter));
+  VG_(printf)("VG_(sizeXA)(inputFilter)=%d\n", (Int) VG_(sizeXA)(inputFilter));
   for (; i < VG_(sizeXA)(inputFilter); i++)
   {
     XArray** curfilter = (XArray**) VG_(indexXA)(inputFilter, i);
-    VG_(printf)("VG_(sizeXA)(curfilter)=%d\n", VG_(sizeXA)(*curfilter));
+    VG_(printf)("VG_(sizeXA)(curfilter)=%d\n", (Int) VG_(sizeXA)(*curfilter));
     Int j = 0;
     for (; j < VG_(sizeXA)(*curfilter); j++)
     {
       offsetPair* elem = (offsetPair*) VG_(indexXA)(*curfilter, j);
-      VG_(printf)("p1=%x ", elem->first);
-      VG_(printf)("p2=%x ", elem->last);
+      VG_(printf)("p1=%llx ", elem->first);
+      VG_(printf)("p2=%llx ", elem->last);
     }
     VG_(printf)("\n");
   }

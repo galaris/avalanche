@@ -38,6 +38,8 @@
 #include "pub_tool_libcfile.h"
 #include "pub_tool_vki.h"
 
+#define CHUNK_SIZE 1024
+
 void my_write(Int fd, Char* buf, Int size);
 
 void dump(Int fd);

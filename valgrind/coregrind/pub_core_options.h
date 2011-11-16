@@ -54,6 +54,27 @@ extern Bool  VG_(clo_error_limit);
    default: 0 (no, return the application's exit code in the normal
    way. */
 extern Int   VG_(clo_error_exitcode);
+
+typedef 
+   enum { 
+      Vg_VgdbNo,   // Do not activate gdbserver.
+      Vg_VgdbYes,  // Activate gdbserver (default).
+      Vg_VgdbFull, // ACtivate gdbserver in full mode, allowing
+                   // a precise handling of watchpoints and single stepping
+                   // at any moment.
+   } 
+   VgVgdb;
+/* if != Vg_VgdbNo, allows valgrind to serve vgdb/gdb. */
+extern VgVgdb VG_(clo_vgdb);
+/* if > 0, checks every VG_(clo_vgdb_poll) BBS if vgdb wants to be served. */
+extern Int VG_(clo_vgdb_poll);
+/* prefix for the named pipes (FIFOs) used by vgdb/gdb to communicate with valgrind */
+extern Char* VG_(clo_vgdb_prefix);
+/* if True, gdbserver in valgrind will expose a target description containing
+   shadow registers */
+extern Bool  VG_(clo_vgdb_shadow_registers);
+#define VG_CLO_VGDB_PREFIX_DEFAULT "/tmp/vgdb-pipe"
+
 /* Enquire about whether to attach to a debugger at errors?   default: NO */
 extern Bool  VG_(clo_db_attach);
 /* The debugger command?  default: whatever gdb ./configure found */
@@ -70,6 +91,10 @@ extern Bool  VG_(clo_trace_children);
 /* String containing comma-separated patterns for executable names
    that should not be traced into even when --trace-children=yes */
 extern HChar* VG_(clo_trace_children_skip);
+/* The same as VG_(clo_trace_children), except that these patterns are
+   tested against the arguments for child processes, rather than the
+   executable name. */
+extern HChar* VG_(clo_trace_children_skip_by_arg);
 /* After a fork, the child's output can become confusingly
    intermingled with the parent's output.  This is especially
    problematic when VG_(clo_xml) is True.  Setting
@@ -203,7 +228,9 @@ typedef
       Vg_SmcNone,  // never generate self-checking translations
       Vg_SmcStack, // generate s-c-t's for code found in stacks
                    // (this is the default)
-      Vg_SmcAll    // make all translations self-checking.
+      Vg_SmcAll,   // make all translations self-checking.
+      Vg_SmcAllNonFile // make all translations derived from
+                   // non-file-backed memory self checking
    } 
    VgSmc;
 
@@ -220,9 +247,13 @@ extern HChar* VG_(clo_kernel_variant);
 extern Bool VG_(clo_dsymutil);
 
 /* Should we trace into this child executable (across execve etc) ?
-   This involves considering --trace-children=, --trace-children-skip=
-   and the name of the executable. */
-extern Bool VG_(should_we_trace_this_child) ( HChar* child_exe_name );
+   This involves considering --trace-children=,
+   --trace-children-skip=, --trace-children-skip-by-arg=, and the name
+   of the executable.  'child_argv' must not include the name of the
+   executable itself; iow child_argv[0] must be the first arg, if any,
+   for the child. */
+extern Bool VG_(should_we_trace_this_child) ( HChar* child_exe_name,
+                                              HChar** child_argv );
 
 #endif   // __PUB_CORE_OPTIONS_H
 

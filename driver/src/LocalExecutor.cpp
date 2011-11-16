@@ -24,9 +24,6 @@
 */
 
 
-#include "Logger.h"
-#include "LocalExecutor.h"
-
 #include <cerrno>
 #include <cstring>
 #include <string>
@@ -38,6 +35,9 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#include "Logger.h"
+#include "LocalExecutor.h"
+#include "FileBuffer.h"
 
 using namespace std;
 
@@ -59,7 +59,7 @@ int LocalExecutor::exec(bool setlimit)
         args_log.append(" ");
         args_log.append(args[i]);
     }
-    LOG(logger, "Executing command: " << prog << ", with args: " << args_log);
+    LOG(Logger::DEBUG, "Executing command: " << prog << ", with args: " << args_log);
     
     do_redirect(STDOUT_FILENO, file_out); file_out = -1;
     do_redirect(STDERR_FILENO, file_err); file_err = -1;
@@ -83,6 +83,22 @@ int LocalExecutor::wait()
 
     if (ret_proc == (pid_t)(-1)) return -1;
 
+    try
+    {
+        string f_name = file_err_name;
+        FileBuffer error_f(f_name);
+        char *err_start;
+        if ((err_start = strstr(error_f.buf, "valgrind:")) != NULL)
+        {
+            LOG(Logger::ERROR, err_start);
+            return 1;
+        }
+    }
+    catch (...)
+    {
+        return 1;
+    }
+
     if (WIFEXITED(status))
     {
         return 0;
@@ -93,26 +109,38 @@ int LocalExecutor::wait()
     }
 }
 
-void LocalExecutor::redirect_stdout(char *filename)
+int LocalExecutor::redirect_stdout(char *file_name)
 {
-    file_out = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    file_out = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, 
+                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (file_out == -1)
-        LOG(logger, "Cannot open " << filename << strerror(errno));
+    {
+        LOG(Logger::JOURNAL, "Cannot open " << file_name << strerror(errno));
+        return -1;
+    }
+    return 0;
 }
 
-void LocalExecutor::redirect_stderr(char *filename)
+int LocalExecutor::redirect_stderr(char *file_name)
 {
-    file_err = open(filename, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    file_err_name = strdup(file_name);
+    file_err = open(file_name, O_CREAT | O_TRUNC | O_WRONLY, 
+                    S_IRUSR | S_IROTH | S_IRGRP | S_IWUSR | S_IWOTH | S_IWGRP);
     if (file_err == -1)
-        LOG(logger, "Cannot open " << filename << strerror(errno));
+    {
+        LOG(Logger::JOURNAL, "Cannot open " << file_name << strerror(errno));
+        return -1;
+    }
+    return 0;
 }
 
-void LocalExecutor::do_redirect(int file_to_redirect, int new_file)
+int LocalExecutor::do_redirect(int file_to_redirect, int new_file)
 {
-    if (new_file == -1) return;
+    if (new_file == -1) return -1;
 
     dup2(new_file, file_to_redirect);
     close(new_file);
+    return 0;
 }
 
 LocalExecutor::~LocalExecutor()
@@ -125,6 +153,13 @@ LocalExecutor::~LocalExecutor()
     {
       close(file_err);
     }
-    if (prog != NULL) free(prog);
+    if (prog != NULL)
+    {
+        free(prog);
+    }
+    if (file_err_name != NULL)
+    {
+        free(file_err_name);
+    }
 }
 

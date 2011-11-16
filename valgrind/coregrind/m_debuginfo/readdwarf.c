@@ -860,7 +860,7 @@ void read_dwarf2_lineblock ( struct _DebugInfo* di,
             data += bytes_read;
             state_machine_regs.column = adv;
             if (di->ddump_line)
-               VG_(printf)("  DWARF2-line: set_column\n");
+               VG_(printf)("  Set column to %d\n", (Int)adv);
             break;
 
          case DW_LNS_negate_stmt:
@@ -990,7 +990,7 @@ void read_unitinfo_dwarf2( /*OUT*/UnitInfo* ui,
    UInt   acode, abcode;
    ULong  atoffs, blklen;
    Int    level;
-   UShort ver;
+   /* UShort ver; */
 
    UChar addr_size;
    UChar* p = unitblock_img;
@@ -1007,7 +1007,7 @@ void read_unitinfo_dwarf2( /*OUT*/UnitInfo* ui,
    p += ui->dw64 ? 12 : 4;
 
    /* version should be 2, 3 or 4 */
-   ver = *((UShort*)p);
+   /* ver = *((UShort*)p); */
    p += 2;
 
    /* get offset in abbrev */
@@ -1079,6 +1079,9 @@ void read_unitinfo_dwarf2( /*OUT*/UnitInfo* ui,
          /* TJH 27 Apr 10: in DWARF 4 lineptr (and loclistptr,macptr,
             rangelistptr classes) use FORM_sec_offset which is 64 bits
             in 64 bit DWARF and 32 bits in 32 bit DWARF. */
+         /* JRS 20 Apr 11: LLVM-2.9 encodes DW_AT_stmt_list using
+            FORM_addr rather than the FORM_data4 that GCC uses.  Hence
+            handle FORM_addr too. */
          switch( form ) {
             /* Those cases extract the data properly */
             case 0x05: /* FORM_data2 */     cval = *((UShort*)p); p +=2; break;
@@ -1101,13 +1104,16 @@ void read_unitinfo_dwarf2( /*OUT*/UnitInfo* ui,
                                             } else {
                                                cval = *((UInt*)p); p += 4;
                                             }; break;
+
+            case 0x07: /* FORM_data8 */     if (ui->dw64) cval = *((ULong*)p);
+                                            p += 8; break;
+                                            /* perhaps should assign
+                                               unconditionally to cval? */
+
             /* TODO : Following ones just skip data - implement if you need */
             case 0x01: /* FORM_addr */      p += addr_size; break;
             case 0x03: /* FORM_block2 */    p += *((UShort*)p) + 2; break;
             case 0x04: /* FORM_block4 */    p += *((UInt*)p) + 4; break;
-            case 0x07: /* FORM_data8 */     if (ui->dw64) cval = *((ULong*)p);
-                                            p += 8; break;
-                       /* perhaps should assign unconditionally to cval? */
             case 0x09: /* FORM_block */     p += read_leb128U( &p ); break;
             case 0x0a: /* FORM_block1 */    p += *p + 1; break;
             case 0x0c: /* FORM_flag */      p++; break;
@@ -1832,6 +1838,10 @@ void ML_(read_debuginfo_dwarf1) (
 #  define FP_REG         6
 #  define SP_REG         7
 #  define RA_REG_DEFAULT 16
+#elif defined(VGP_s390x_linux)
+#  define FP_REG         11    // sometimes s390 has a frame pointer in r11
+#  define SP_REG         15    // stack is always r15
+#  define RA_REG_DEFAULT 14    // the return address is in r14
 #else
 #  error "Unknown platform"
 #endif
@@ -2139,7 +2149,7 @@ static Bool summarise_context( /*OUT*/DiCfSI* si,
    else
    if (ctxs->cfa_is_regoff && ctxs->cfa_reg == SP_REG) {
       si->cfa_off = ctxs->cfa_off;
-#     if defined(VGA_x86) || defined(VGA_amd64)
+#     if defined(VGA_x86) || defined(VGA_amd64) || defined(VGA_s390x)
       si->cfa_how = CFIC_IA_SPREL;
 #     elif defined(VGA_arm)
       si->cfa_how = CFIC_ARM_R13REL;
@@ -2150,7 +2160,7 @@ static Bool summarise_context( /*OUT*/DiCfSI* si,
    else
    if (ctxs->cfa_is_regoff && ctxs->cfa_reg == FP_REG) {
       si->cfa_off = ctxs->cfa_off;
-#     if defined(VGA_x86) || defined(VGA_amd64)
+#     if defined(VGA_x86) || defined(VGA_amd64) || defined(VGA_s390x)
       si->cfa_how = CFIC_IA_BPREL;
 #     elif defined(VGA_arm)
       si->cfa_how = CFIC_ARM_R12REL;
@@ -2303,6 +2313,55 @@ static Bool summarise_context( /*OUT*/DiCfSI* si,
    return True;
 
 
+#  elif defined(VGA_s390x)
+
+   SUMMARISE_HOW(si->ra_how, si->ra_off,
+                             ctxs->reg[ctx->ra_reg] );
+   SUMMARISE_HOW(si->fp_how, si->fp_off,
+                             ctxs->reg[FP_REG] );
+   SUMMARISE_HOW(si->sp_how, si->sp_off,
+                             ctxs->reg[SP_REG] );
+
+   /* change some defaults to consumable values */
+   if (si->sp_how == CFIR_UNKNOWN)
+      si->sp_how = CFIR_SAME;
+
+   if (si->fp_how == CFIR_UNKNOWN)
+      si->fp_how = CFIR_SAME;
+
+   if (si->cfa_how == CFIR_UNKNOWN) {
+      si->cfa_how = CFIC_IA_SPREL;
+      si->cfa_off = 160;
+   }
+   if (si->ra_how == CFIR_UNKNOWN) {
+      if (!debuginfo->cfsi_exprs)
+         debuginfo->cfsi_exprs = VG_(newXA)( ML_(dinfo_zalloc),
+                                             "di.ccCt.2a",
+                                             ML_(dinfo_free),
+                                             sizeof(CfiExpr) );
+      si->ra_how = CFIR_EXPR;
+      si->ra_off = ML_(CfiExpr_CfiReg)( debuginfo->cfsi_exprs,
+                                        Creg_S390_R14);
+   }
+
+   /* knock out some obviously stupid cases */
+   if (si->ra_how == CFIR_SAME)
+      { why = 3; goto failed; }
+
+   /* bogus looking range?  Note, we require that the difference is
+      representable in 32 bits. */
+   if (loc_start >= ctx->loc)
+      { why = 4; goto failed; }
+   if (ctx->loc - loc_start > 10000000 /* let's say */)
+      { why = 5; goto failed; }
+
+   si->base = loc_start + ctx->initloc;
+   si->len  = (UInt)(ctx->loc - loc_start);
+
+   return True;
+
+
+
 #  elif defined(VGA_ppc32) || defined(VGA_ppc64)
 #  else
 #    error "Unknown arch"
@@ -2331,7 +2390,7 @@ static Int copy_convert_CfiExpr_tree ( XArray*        dstxa,
                                        Int            srcix )
 {
    CfiExpr* src;
-   Int      cpL, cpR, cpA, dwreg;
+   Int      cpL, cpR, cpA;
    XArray*  srcxa = srcuc->exprs;
    vg_assert(srcxa);
    vg_assert(dstxa);
@@ -2359,8 +2418,9 @@ static Int copy_convert_CfiExpr_tree ( XArray*        dstxa,
          /* should not see these in input (are created only by this
             conversion step!) */
          VG_(core_panic)("copy_convert_CfiExpr_tree: CfiReg in input");
-      case Cex_DwReg:
+      case Cex_DwReg: {
          /* This is the only place where the conversion can fail. */
+         Int dwreg __attribute__((unused));
          dwreg = src->Cex.DwReg.reg;
 #        if defined(VGA_x86) || defined(VGA_amd64)
          if (dwreg == SP_REG)
@@ -2376,12 +2436,20 @@ static Int copy_convert_CfiExpr_tree ( XArray*        dstxa,
             return ML_(CfiExpr_CfiReg)( dstxa, Creg_ARM_R12 );
          if (dwreg == srcuc->ra_reg)
            return ML_(CfiExpr_CfiReg)( dstxa, Creg_ARM_R15 ); /* correct? */
+#        elif defined(VGA_s390x)
+         if (dwreg == SP_REG)
+            return ML_(CfiExpr_CfiReg)( dstxa, Creg_IA_SP );
+         if (dwreg == FP_REG)
+            return ML_(CfiExpr_CfiReg)( dstxa, Creg_IA_BP );
+         if (dwreg == srcuc->ra_reg)
+            return ML_(CfiExpr_CfiReg)( dstxa, Creg_IA_IP ); /* correct? */
 #        elif defined(VGA_ppc32) || defined(VGA_ppc64)
 #        else
 #           error "Unknown arch"
 #        endif
          /* else we must fail - can't represent the reg */
          return -1;
+      }
       default:
          VG_(core_panic)("copy_convert_CfiExpr_tree: default");
    }
@@ -2831,6 +2899,22 @@ static Int dwarfexpr_to_dag ( UnwindContext* ctx,
             op = Cop_And; opname = "and"; goto binop;
          case DW_OP_mul:
             op = Cop_Mul; opname = "mul"; goto binop;
+         case DW_OP_shl:
+            op = Cop_Shl; opname = "shl"; goto binop;
+         case DW_OP_shr:
+            op = Cop_Shr; opname = "shr"; goto binop;
+         case DW_OP_eq:
+            op = Cop_Eq; opname = "eq"; goto binop;
+         case DW_OP_ge:
+            op = Cop_Ge; opname = "ge"; goto binop;
+         case DW_OP_gt:
+            op = Cop_Gt; opname = "gt"; goto binop;
+         case DW_OP_le:
+            op = Cop_Le; opname = "le"; goto binop;
+         case DW_OP_lt:
+            op = Cop_Lt; opname = "lt"; goto binop;
+         case DW_OP_ne:
+            op = Cop_Ne; opname = "ne"; goto binop;
          binop:
             POP( ix );
             POP( ix2 );
@@ -3640,36 +3724,48 @@ static void init_CIE ( CIE* cie )
 static CIE the_CIEs[N_CIEs];
 
 
+/* Read, summarise and store CFA unwind info from .eh_frame and
+   .debug_frame sections.  is_ehframe tells us which kind we are
+   dealing with -- they are slightly different. */
 void ML_(read_callframe_info_dwarf3)
-        ( /*OUT*/struct _DebugInfo* di, UChar* frame_image, SizeT frame_size,
-          Bool for_eh )
+        ( /*OUT*/struct _DebugInfo* di,
+          UChar* frame_image, SizeT frame_size, Addr frame_avma,
+          Bool is_ehframe )
 {
    Int    nbytes;
    HChar* how = NULL;
    Int    n_CIEs = 0;
    UChar* data = frame_image;
-   UWord  ehframe_cfsis = 0;
-   Addr   frame_avma = for_eh ? di->ehframe_avma : 0;
+   UWord  cfsi_used_orig;
+
+   /* If we're dealing with a .debug_frame, assume zero frame_avma. */
+   if (!is_ehframe)
+      vg_assert(frame_avma == 0);
 
 #  if defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
    /* These targets don't use CFI-based stack unwinding.  */
    return;
 #  endif
 
-   /* If we are reading .debug_frame after .eh_frame has been read, only
-      add FDEs which weren't covered in .eh_frame.  To be able to quickly
-      search the FDEs, the records must be sorted.  */
-   if ( ! for_eh && di->ehframe_size && di->cfsi_used ) {
+   /* If we read more than one .debug_frame or .eh_frame for this
+      DebugInfo*, the second and subsequent reads should only add FDEs
+      for address ranges not already covered by the FDEs already
+      present.  To be able to quickly check which address ranges are
+      already present, any existing records (DiCFSIs) must be sorted,
+      so we can binary-search them in the code below.  We also record
+      di->cfsi_used so that we know where the boundary is between
+      existing and new records. */
+   if (di->cfsi_used > 0) {
       ML_(canonicaliseCFI) ( di );
-      ehframe_cfsis = di->cfsi_used;
    }
+   cfsi_used_orig = di->cfsi_used;
 
    if (di->trace_cfi) {
       VG_(printf)("\n-----------------------------------------------\n");
       VG_(printf)("CFI info: szB %ld, _avma %#lx, _image %p\n",
                   frame_size, frame_avma, frame_image );
       VG_(printf)("CFI info: name %s\n",
-                  di->filename );
+                  di->fsm.filename );
    }
 
    /* Loop over CIEs/FDEs */
@@ -3757,7 +3853,7 @@ void ML_(read_callframe_info_dwarf3)
 
       /* If cie_pointer is zero for .eh_frame or all ones for .debug_frame,
          we've got a CIE; else it's an FDE. */
-      if (cie_pointer == (for_eh ? 0ULL
+      if (cie_pointer == (is_ehframe ? 0ULL
                           : dw64 ? 0xFFFFFFFFFFFFFFFFULL : 0xFFFFFFFFULL)) {
 
          Int    this_CIE;
@@ -3972,7 +4068,7 @@ void ML_(read_callframe_info_dwarf3)
             cie_pointer bytes back from here. */
 
          /* re sizeof(UInt) / sizeof(ULong), matches XXX above. */
-         if (for_eh)
+         if (is_ehframe)
             look_for = (data - (dw64 ? sizeof(ULong) : sizeof(UInt)) 
                              - frame_image) 
                        - cie_pointer;
@@ -4062,11 +4158,14 @@ void ML_(read_callframe_info_dwarf3)
 
 	 data += fde_ilen;
 
-         if (ehframe_cfsis) {
+         /* If this object's DebugInfo* had some DiCFSIs from a
+            previous .eh_frame or .debug_frame read, we must check
+            that we're not adding a duplicate. */
+         if (cfsi_used_orig > 0) {
             Addr a_mid_lo, a_mid_hi;
             Word mid, size, 
                  lo = 0, 
-                 hi = ehframe_cfsis-1;
+                 hi = cfsi_used_orig-1;
             while (True) {
                /* current unsearched space is from lo to hi, inclusive. */
                if (lo > hi) break; /* not found */

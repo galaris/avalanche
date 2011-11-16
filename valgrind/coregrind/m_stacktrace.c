@@ -30,6 +30,7 @@
 
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
+#include "pub_core_libcsetjmp.h"    // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_debuginfo.h"     // XXX: circular dependency
 #include "pub_core_aspacemgr.h"     // For VG_(is_addressable)()
@@ -385,8 +386,7 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
 
 /* -----------------------ppc32/64 ---------------------- */
 
-#if defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux) \
-    || defined(VGP_ppc32_aix5) || defined(VGP_ppc64_aix5)
+#if defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
 
 UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
                                /*OUT*/Addr* ips, UInt max_n_ips,
@@ -411,9 +411,9 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
    Addr ip = (Addr)startRegs->r_pc;
    Addr sp = (Addr)startRegs->r_sp;
    Addr fp = sp;
-#  if defined(VGP_ppc32_linux) || defined(VGP_ppc32_aix5)
+#  if defined(VGP_ppc32_linux)
    Addr lr = startRegs->misc.PPC32.r_lr;
-#  elif defined(VGP_ppc64_linux) || defined(VGP_ppc64_aix5)
+#  elif defined(VGP_ppc64_linux)
    Addr lr = startRegs->misc.PPC64.r_lr;
 #  endif
    Addr fp_min = sp;
@@ -449,11 +449,8 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
    /* fp is %r1.  ip is %cia.  Note, ppc uses r1 as both the stack and
       frame pointers. */
 
-#  if defined(VGP_ppc64_linux) || defined(VGP_ppc64_aix5)
+#  if defined(VGP_ppc64_linux)
    redir_stack_size = VEX_GUEST_PPC64_REDIR_STACK_SIZE;
-   redirs_used      = 0;
-#  elif defined(VGP_ppc32_aix5)
-   redir_stack_size = VEX_GUEST_PPC32_REDIR_STACK_SIZE;
    redirs_used      = 0;
 #  endif
 
@@ -505,7 +502,7 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
 
       while (True) {
 
-        /* On ppc64-linux (ppc64-elf, really), and on AIX, the lr save
+        /* On ppc64-linux (ppc64-elf, really), the lr save
            slot is 2 words back from sp, whereas on ppc32-elf(?) it's
            only one word back. */
 #        if defined(VG_PLAT_USES_PPCTOC)
@@ -529,15 +526,15 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
 
 #           if defined(VG_PLAT_USES_PPCTOC)
             /* Nasty hack to do with function replacement/wrapping on
-               ppc64-linux/ppc64-aix/ppc32-aix.  If LR points to our
-               magic return stub, then we are in a wrapped or
-               intercepted function, in which LR has been messed with.
-               The original LR will have been pushed onto the thread's
-               hidden REDIR stack one down from the top (top element
-               is the saved R2) and so we should restore the value
-               from there instead.  Since nested redirections can and
-               do happen, we keep track of the number of nested LRs
-               used by the unwinding so far with 'redirs_used'. */
+               ppc64-linux.  If LR points to our magic return stub,
+               then we are in a wrapped or intercepted function, in
+               which LR has been messed with.  The original LR will
+               have been pushed onto the thread's hidden REDIR stack
+               one down from the top (top element is the saved R2) and
+               so we should restore the value from there instead.
+               Since nested redirections can and do happen, we keep
+               track of the number of nested LRs used by the unwinding
+               so far with 'redirs_used'. */
             if (ip == (Addr)&VG_(ppctoc_magic_redirect_return_stub)
                 && VG_(is_valid_tid)(tid_if_known)) {
                Word hsp = VG_(threads)[tid_if_known]
@@ -668,6 +665,85 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
    return n_found;
 }
 
+#endif
+
+/* ------------------------ s390x ------------------------- */
+#if defined(VGP_s390x_linux)
+UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
+                               /*OUT*/Addr* ips, UInt max_n_ips,
+                               /*OUT*/Addr* sps, /*OUT*/Addr* fps,
+                               UnwindStartRegs* startRegs,
+                               Addr fp_max_orig )
+{
+   Bool  debug = False;
+   Int   i;
+   Addr  fp_max;
+   UInt  n_found = 0;
+
+   vg_assert(sizeof(Addr) == sizeof(UWord));
+   vg_assert(sizeof(Addr) == sizeof(void*));
+
+   D3UnwindRegs uregs;
+   uregs.ia = startRegs->r_pc;
+   uregs.sp = startRegs->r_sp;
+   Addr fp_min = uregs.sp;
+   uregs.fp = startRegs->misc.S390X.r_fp;
+   uregs.lr = startRegs->misc.S390X.r_lr;
+
+   fp_max = VG_PGROUNDUP(fp_max_orig);
+   if (fp_max >= sizeof(Addr))
+      fp_max -= sizeof(Addr);
+
+   if (debug)
+      VG_(printf)("max_n_ips=%d fp_min=0x%lx fp_max_orig=0x%lx, "
+                  "fp_max=0x%lx IA=0x%lx SP=0x%lx FP=0x%lx\n",
+                  max_n_ips, fp_min, fp_max_orig, fp_max,
+                  uregs.ia, uregs.sp,uregs.fp);
+
+   /* The first frame is pretty obvious */
+   ips[0] = uregs.ia;
+   if (sps) sps[0] = uregs.sp;
+   if (fps) fps[0] = uregs.fp;
+   i = 1;
+
+   /* for everything else we have to rely on the eh_frame. gcc defaults to
+      not create a backchain and all the other  tools (like gdb) also have
+      to use the CFI. */
+   while (True) {
+      if (i >= max_n_ips)
+         break;
+
+      if (VG_(use_CF_info)( &uregs, fp_min, fp_max )) {
+         if (sps) sps[i] = uregs.sp;
+         if (fps) fps[i] = uregs.fp;
+         ips[i++] = uregs.ia - 1;
+         uregs.ia = uregs.ia - 1;
+         continue;
+      }
+      /* A problem on the first frame? Lets assume it was a bad jump.
+         We will use the link register and the current stack and frame
+         pointers and see if we can use the CFI in the next round. */
+      if (i == 1) {
+         if (sps) {
+            sps[i] = sps[0];
+            uregs.sp = sps[0];
+         }
+         if (fps) {
+            fps[i] = fps[0];
+            uregs.fp = fps[0];
+         }
+         uregs.ia = uregs.lr - 1;
+         ips[i++] = uregs.lr - 1;
+         continue;
+      }
+
+      /* No luck.  We have to give up. */
+      break;
+   }
+
+   n_found = i;
+   return n_found;
+}
 #endif
 
 /*------------------------------------------------------------*/

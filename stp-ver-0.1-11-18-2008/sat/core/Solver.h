@@ -78,10 +78,6 @@ static inline uint64_t memUsed(void) {
 static inline uint64_t memUsed() { return 0; }
 #endif
 
-#if defined(__linux__)
-#include <fpu_control.h>
-#endif
-
 //=================================================================================================
 // Solver -- the main class:
 

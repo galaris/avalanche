@@ -38,6 +38,7 @@
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"
+#include "pub_core_libcsetjmp.h"    // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_aspacemgr.h"
 #include "pub_core_libcbase.h"
@@ -52,9 +53,19 @@
 #include "pub_core_transtab.h"      // VG_(discard_translations)
 
 
+/* This uses the hack of dumping the vex guest state along with both
+   shadows in the frame, and restoring it afterwards from there,
+   rather than pulling it out of the ucontext.  That means that signal
+   handlers which modify the ucontext and then return, expecting their
+   modifications to take effect, will have those modifications
+   ignored.  This could be fixed properly with an hour or so more
+   effort. */
+
+
 struct vg_sig_private {
    UInt magicPI;
    UInt sigNo_private;
+   VexGuestARMState vex;
    VexGuestARMState vex_shadow1;
    VexGuestARMState vex_shadow2;
 };
@@ -179,6 +190,7 @@ static void build_sigframe(ThreadState *tst,
 
    priv->magicPI = 0x31415927;
    priv->sigNo_private = sigNo;
+   priv->vex         = tst->arch.vex;
    priv->vex_shadow1 = tst->arch.vex_shadow1;
    priv->vex_shadow2 = tst->arch.vex_shadow2;
 
@@ -315,6 +327,9 @@ void VG_(sigframe_destroy)( ThreadId tid, Bool isRT )
    REST(pc,R15T);
 #  undef REST
 
+   /* Uh, the next line makes all the REST() above pointless. */
+   tst->arch.vex         = priv->vex;
+
    tst->arch.vex_shadow1 = priv->vex_shadow1;
    tst->arch.vex_shadow2 = priv->vex_shadow2;
 
@@ -324,7 +339,7 @@ void VG_(sigframe_destroy)( ThreadId tid, Bool isRT )
    if (VG_(clo_trace_signals))
       VG_(message)(Vg_DebugMsg,
                    "vg_pop_signal_frame (thread %d): "
-                   "isRT=%d valid magic; PC=%#x",
+                   "isRT=%d valid magic; PC=%#x\n",
                    tid, has_siginfo, tst->arch.vex.guest_R15T);
 
    /* tell the tools */

@@ -28,15 +28,13 @@
 
 #include <string>
 
-class STP_Output;
-
-
 class STP_Executor : public LocalExecutor
 {
 public:
     STP_Executor(bool debug_full_enable, const std::string &install_dir);
+    ~STP_Executor();
     
-    STP_Output *run(const char *file_name, int thread_index = 0);
+    std::string run(const char *file_name, int thread_index = 0);
 
 private:
     bool debug_full;

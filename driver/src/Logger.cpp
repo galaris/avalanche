@@ -21,52 +21,110 @@
    limitations under the License.
 */
 
-#include "Logger.h"
-
 #include <string>
 #include <iostream>
+
+#include "Logger.h"
+#include "stdio.h"
 
 using namespace std;
 
 
 static Logger *logger = NULL;
 
-
-Logger *Logger::getLogger()
+Logger * Logger :: getLogger ()
 {
-    if (logger == NULL) logger = new Logger;
-    return logger;
+  if (logger == NULL) 
+    logger = new Logger;
+
+  return logger;
 }
 
-void Logger::write(Level level, const string &msg,
-                   const char *file, size_t line) const
+void Logger :: setVerbose ()
+{ 
+  verbose = true; 
+}
+
+void Logger :: setDebug ()
 {
-    switch (level) {
-    case LEV_ALWAYS:
-        cout << msg << endl;
-        break;
-    case LEV_NET:
-        if (enable_verbose) {
-            cout << "NETWORK: "<< msg << endl;
-        }
-        break;
-    case LEV_INFO:
-        if (enable_verbose) {
-            cout << "INFO: "<< msg << endl;
-        }
-        break;
-    case LEV_DEBUG:
-        if (enable_verbose) {
-            cout << "DEBUG: " << /*file << ":" << line << "]: " << */msg << endl;
-        }
-        break;
-    case LEV_ERROR:
-        if (enable_verbose) {
-            cout << "ERROR: [" << file << ":" << line << "]: " << msg << endl;
-        }
-        break;
-    default:
-        cout << "Unknown logging level, log message: " << msg << endl;
+  debug = true;
+}
+
+void Logger :: setProgramOutput ()
+{
+  programOutput = true;
+}
+
+void Logger :: setNetworkLog ()
+{
+  networkLog = true;
+}
+  
+void Logger::write(Level level, const string & msg, const char * file, size_t line) const
+{
+  string message = msg;
+
+  // Clear colors
+
+  if (!isatty (fileno (stdout))) // if not a terminal
+  {
+    int i = 0, j;
+
+    while (1)
+    {
+      if ((i = message.find ("\033", i)) != -1)
+      {
+        for (j = i; message [j] != 'm'; j++);
+        message.replace (i, j - i + 1, "");
+      }
+      else break;
     }
-}
+  }
 
+  switch (level) 
+  {
+  // Always
+
+  case ERROR:
+    cout << "Error: " << message << endl;
+    break;
+
+  case REPORT:
+  case JOURNAL:
+    cout << message << endl; 
+    break;
+
+  // Optional
+
+  case DEBUG:
+    if (debug)
+    {
+      cout << message << endl;
+    }
+    break;
+
+  case VERBOSE:
+    if (verbose || debug) 
+    {
+      cout << message << endl;
+    }
+    break;
+
+  case PROGRAM_OUTPUT:
+    if (programOutput) 
+    {
+      cout << "Program output: " << message << endl;
+    }
+    break;
+
+  case NETWORK_LOG:
+    if (networkLog) 
+    {
+      cout << "Network log: " << message << endl;
+    }
+    break;
+  
+  default:
+    cout << "Unknown logging level, log message: " << message << endl;
+  }
+}

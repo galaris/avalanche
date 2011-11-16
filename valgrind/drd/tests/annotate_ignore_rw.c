@@ -22,9 +22,9 @@ static void* thread_func(void* arg)
 
 int main(int argc, char** argv)
 {
+  const struct timespec delay = { 0, 100 * 1000 * 1000 };
   int optchar;
   int ign_rw = 1;
-  int tmp;
   pthread_t tid;
 
   while ((optchar = getopt(argc, argv, "r")) != EOF)
@@ -40,6 +40,9 @@ int main(int argc, char** argv)
   }
 
   pthread_create(&tid, 0, thread_func, 0);
+
+  nanosleep(&delay, 0);
+
   if (ign_rw)
     ANNOTATE_IGNORE_READS_AND_WRITES_BEGIN();
   /* Read s_b and modify s_a. */
@@ -54,7 +57,7 @@ int main(int argc, char** argv)
   sleep(1);
 
   /* Read s_c. */
-  tmp = s_c;
+  fprintf(stderr, "%s", "x" + s_c);
 
   pthread_join(tid, 0);
 

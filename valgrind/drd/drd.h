@@ -1,4 +1,4 @@
-/* -*- mode: C; c-basic-offset: 3; -*- */
+/* -*- mode: C; c-basic-offset: 3; indent-tabs-mode: nil; -*- */
 
 /*
   ----------------------------------------------------------------
@@ -14,7 +14,7 @@
   This file is part of DRD, a Valgrind tool for verification of
   multithreaded programs.
 
-  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
+  Copyright (C) 2006-2011 Bart Van Assche <bvanassche@acm.org>.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -66,13 +66,15 @@
 
 
 /** Obtain the thread ID assigned by Valgrind's core. */
-#define DRD_GET_VALGRIND_THREADID                                             \
-   VALGRIND_DO_CLIENT_REQUEST_EXPR(0, VG_USERREQ__DRD_GET_VALGRIND_THREAD_ID, \
+#define DRD_GET_VALGRIND_THREADID                                          \
+    (unsigned)VALGRIND_DO_CLIENT_REQUEST_EXPR(0,                           \
+                                   VG_USERREQ__DRD_GET_VALGRIND_THREAD_ID, \
                                    0, 0, 0, 0, 0)
 
 /** Obtain the thread ID assigned by DRD. */
-#define DRD_GET_DRD_THREADID                                              \
-   VALGRIND_DO_CLIENT_REQUEST_EXPR(0, VG_USERREQ__DRD_GET_DRD_THREAD_ID,  \
+#define DRD_GET_DRD_THREADID                                            \
+    (unsigned)VALGRIND_DO_CLIENT_REQUEST_EXPR(0,                        \
+                                   VG_USERREQ__DRD_GET_DRD_THREAD_ID,   \
                                    0, 0, 0, 0, 0)
 
 

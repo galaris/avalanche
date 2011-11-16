@@ -61,11 +61,13 @@
 #include "pub_core_debuglog.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"    // __NR_sched_yield
+#include "pub_core_libcsetjmp.h"   // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_aspacemgr.h"
 #include "pub_core_clreq.h"         // for VG_USERREQ__*
 #include "pub_core_dispatch.h"
 #include "pub_core_errormgr.h"      // For VG_(get_n_errs_found)()
+#include "pub_core_gdbserver.h"     // for VG_(gdbserver) and VG_(gdbserver_activity)
 #include "pub_core_libcbase.h"
 #include "pub_core_libcassert.h"
 #include "pub_core_libcprint.h"
@@ -112,6 +114,13 @@ UInt VG_(dispatch_ctr);
 /* 64-bit counter for the number of basic blocks done. */
 static ULong bbs_done = 0;
 
+/* Counter to see if vgdb activity is to be verified.
+   When nr of bbs done reaches vgdb_next_poll, scheduler will
+   poll for gdbserver activity. VG_(force_vgdb_poll) and 
+   VG_(disable_vgdb_poll) allows the valgrind core (e.g. m_gdbserver)
+   to control when the next poll will be done. */
+static ULong vgdb_next_poll;
+
 /* Forwards */
 static void do_client_request ( ThreadId tid );
 static void scheduler_sanity ( ThreadId tid );
@@ -149,6 +158,21 @@ static
 void print_sched_event ( ThreadId tid, Char* what )
 {
    VG_(message)(Vg_DebugMsg, "  SCHED[%d]: %s\n", tid, what );
+}
+
+/* For showing SB counts, if the user asks to see them. */
+#define SHOW_SBCOUNT_EVERY (20ULL * 1000 * 1000)
+static ULong bbs_done_lastcheck = 0;
+
+static
+void maybe_show_sb_counts ( void )
+{
+   Long delta = bbs_done - bbs_done_lastcheck;
+   vg_assert(delta >= 0);
+   if (UNLIKELY(delta >= SHOW_SBCOUNT_EVERY)) {
+      VG_(umsg)("%'lld superblocks executed\n", bbs_done);
+      bbs_done_lastcheck = bbs_done;
+   }
 }
 
 static
@@ -404,10 +428,6 @@ static void os_state_clear(ThreadState *tst)
    tst->os_state.threadgroup = 0;
 #  if defined(VGO_linux)
    /* no other fields to clear */
-#  elif defined(VGO_aix5)
-   tst->os_state.cancel_async    = False;
-   tst->os_state.cancel_disabled = False;
-   tst->os_state.cancel_progress = Canc_NoRequest;
 #  elif defined(VGO_darwin)
    tst->os_state.post_mach_trap_fn = NULL;
    tst->os_state.pthread           = 0;
@@ -529,6 +549,7 @@ ThreadId VG_(scheduler_init_phase1) ( void )
       VG_(threads)[i].status                    = VgTs_Empty;
       VG_(threads)[i].client_stack_szB          = 0;
       VG_(threads)[i].client_stack_highest_word = (Addr)NULL;
+      VG_(threads)[i].err_disablement_level     = 0;
    }
 
    tid_main = VG_(alloc_ThreadState)();
@@ -581,7 +602,7 @@ void VG_(scheduler_init_phase2) ( ThreadId tid_main,
    do {									\
       ThreadState * volatile _qq_tst = VG_(get_ThreadState)(tid);	\
 									\
-      (jumped) = __builtin_setjmp(_qq_tst->sched_jmpbuf);               \
+      (jumped) = VG_MINIMAL_SETJMP(_qq_tst->sched_jmpbuf);              \
       if ((jumped) == 0) {						\
 	 vg_assert(!_qq_tst->sched_jmpbuf_valid);			\
 	 _qq_tst->sched_jmpbuf_valid = True;				\
@@ -657,13 +678,13 @@ static void do_pre_run_checks ( ThreadState* tst )
 #  if defined(VGA_ppc32) || defined(VGA_ppc64)
    /* ppc guest_state vector regs must be 16 byte aligned for
       loads/stores.  This is important! */
-   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex.guest_VR0));
-   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow1.guest_VR0));
-   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow2.guest_VR0));
+   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex.guest_VSR0));
+   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow1.guest_VSR0));
+   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow2.guest_VSR0));
    /* be extra paranoid .. */
-   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex.guest_VR1));
-   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow1.guest_VR1));
-   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow2.guest_VR1));
+   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex.guest_VSR1));
+   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow1.guest_VSR1));
+   vg_assert(VG_IS_16_ALIGNED(& tst->arch.vex_shadow2.guest_VSR1));
 #  endif
 
 #  if defined(VGA_arm)
@@ -677,8 +698,26 @@ static void do_pre_run_checks ( ThreadState* tst )
    vg_assert(VG_IS_8_ALIGNED(& tst->arch.vex_shadow1.guest_D1));
    vg_assert(VG_IS_8_ALIGNED(& tst->arch.vex_shadow2.guest_D1));
 #  endif
+
+#  if defined(VGA_s390x)
+   /* no special requirements */
+#  endif
 }
 
+// NO_VGDB_POLL value ensures vgdb is not polled, while
+// VGDB_POLL_ASAP ensures that the next scheduler call
+// will cause a poll.
+#define NO_VGDB_POLL    0xffffffffffffffffULL
+#define VGDB_POLL_ASAP  0x0ULL
+
+void VG_(disable_vgdb_poll) (void )
+{
+   vgdb_next_poll = NO_VGDB_POLL;
+}
+void VG_(force_vgdb_poll) ( void )
+{
+   vgdb_next_poll = VGDB_POLL_ASAP;
+}
 
 /* Run the thread tid for a while, and return a VG_TRC_* value
    indicating why VG_(run_innerloop) stopped. */
@@ -701,22 +740,6 @@ static UInt run_thread_for_a_while ( ThreadId tid )
 
    trc = 0;
    dispatch_ctr_SAVED = VG_(dispatch_ctr);
-
-#  if defined(VGP_ppc32_aix5) || defined(VGP_ppc64_aix5)
-   /* On AIX, we need to get a plausible value for SPRG3 for this
-      thread, since it's used I think as a thread-state pointer.  It
-      is presumably set by the kernel for each dispatched thread and
-      cannot be changed by user space.  It therefore seems safe enough
-      to copy the host's value of it into the guest state at the point
-      the thread is dispatched.
-      (Later): Hmm, looks like SPRG3 is only used in 32-bit mode.
-      Oh well. */
-   { UWord host_sprg3;
-     __asm__ __volatile__( "mfspr %0,259\n" : "=b"(host_sprg3) );
-    VG_(threads)[tid].arch.vex.guest_SPRG3_RO = host_sprg3;
-    vg_assert(sizeof(VG_(threads)[tid].arch.vex.guest_SPRG3_RO) == sizeof(void*));
-   }
-#  endif
 
    /* there should be no undealt-with signals */
    //vg_assert(VG_(threads)[tid].siginfo.si_signo == 0);
@@ -763,6 +786,16 @@ static UInt run_thread_for_a_while ( ThreadId tid )
 
    // Tell the tool this thread has stopped running client code
    VG_TRACK( stop_client_code, tid, bbs_done );
+
+   if (bbs_done >= vgdb_next_poll) {
+      if (VG_(clo_vgdb_poll))
+         vgdb_next_poll = bbs_done + (ULong)VG_(clo_vgdb_poll);
+      else
+         /* value was changed due to gdbserver invocation via ptrace */
+         vgdb_next_poll = NO_VGDB_POLL;
+      if (VG_(gdbserver_activity) (tid))
+         VG_(gdbserver) (tid);
+   }
 
    return trc;
 }
@@ -954,9 +987,57 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 {
    UInt     trc;
    ThreadState *tst = VG_(get_ThreadState)(tid);
+   static Bool vgdb_startup_action_done = False;
 
    if (VG_(clo_trace_sched))
       print_sched_event(tid, "entering VG_(scheduler)");      
+
+   /* Do vgdb initialization (but once). Only the first (main) task
+      starting up will do the below.
+      Initialize gdbserver earlier than at the first 
+      thread VG_(scheduler) is causing problems:
+      * at the end of VG_(scheduler_init_phase2) :
+        The main thread is in VgTs_Init state, but in a not yet
+        consistent state => the thread cannot be reported to gdb
+        (e.g. causes an assert in LibVEX_GuestX86_get_eflags when giving
+        back the guest registers to gdb).
+      * at end of valgrind_main, just
+        before VG_(main_thread_wrapper_NORETURN)(1) :
+        The main thread is still in VgTs_Init state but in a
+        more advanced state. However, the thread state is not yet
+        completely initialized : a.o., the os_state is not yet fully
+        set => the thread is then not properly reported to gdb,
+        which is then confused (causing e.g. a duplicate thread be
+        shown, without thread id).
+      * it would be possible to initialize gdbserver "lower" in the
+        call stack (e.g. in VG_(main_thread_wrapper_NORETURN)) but
+        these are platform dependent and the place at which
+        the thread state is completely initialized is not
+        specific anymore to the main thread (so a similar "do it only
+        once" would be needed).
+
+        => a "once only" initialization here is the best compromise. */
+   if (!vgdb_startup_action_done) {
+      vg_assert(tid == 1); // it must be the main thread.
+      vgdb_startup_action_done = True;
+      if (VG_(clo_vgdb) != Vg_VgdbNo) {
+         /* If we have to poll, ensures we do an initial poll at first
+            scheduler call. Otherwise, ensure no poll (unless interrupted
+            by ptrace). */
+         if (VG_(clo_vgdb_poll))
+            VG_(force_vgdb_poll) ();
+         else
+            VG_(disable_vgdb_poll) ();
+
+         vg_assert (VG_(dyn_vgdb_error) == VG_(clo_vgdb_error));
+         /* As we are initializing, VG_(dyn_vgdb_error) can't have been
+            changed yet. */
+
+         VG_(gdbserver_prerun_action) (1);
+      } else {
+         VG_(disable_vgdb_poll) ();
+      }
+   }
 
    /* set the proper running signal mask */
    block_signals();
@@ -969,17 +1050,9 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 
       if (VG_(dispatch_ctr) == 1) {
 
-#        if defined(VGP_ppc32_aix5) || defined(VGP_ppc64_aix5)
-         /* Note: count runnable threads before dropping The Lock. */
-         Int rt = VG_(count_runnable_threads)();
-#        endif
-
 	 /* Our slice is done, so yield the CPU to another thread.  On
             Linux, this doesn't sleep between sleeping and running,
-            since that would take too much time.  On AIX, we have to
-            prod the scheduler to get it consider other threads; not
-            doing so appears to cause very long delays before other
-            runnable threads get rescheduled. */
+            since that would take too much time. */
 
 	 /* 4 July 06: it seems that a zero-length nsleep is needed to
             cause async thread cancellation (canceller.c) to terminate
@@ -997,20 +1070,6 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 VG_(release_BigLock)(tid, VgTs_Yielding, 
                                    "VG_(scheduler):timeslice");
 	 /* ------------ now we don't have The Lock ------------ */
-
-#        if defined(VGP_ppc32_aix5) || defined(VGP_ppc64_aix5)
-         { static Int ctr=0;
-           vg_assert(__NR_AIX5__nsleep != __NR_AIX5_UNKNOWN);
-           vg_assert(__NR_AIX5_yield   != __NR_AIX5_UNKNOWN);
-           if (1 && rt > 0 && ((++ctr % 3) == 0)) { 
-              //struct vki_timespec ts;
-              //ts.tv_sec = 0;
-              //ts.tv_nsec = 0*1000*1000;
-              //VG_(do_syscall2)(__NR_AIX5__nsleep, (UWord)&ts, (UWord)NULL);
-	      VG_(do_syscall0)(__NR_AIX5_yield);
-           }
-         }
-#        endif
 
 	 VG_(acquire_BigLock)(tid, "VG_(scheduler):timeslice");
 	 /* ------------ now we do have The Lock ------------ */
@@ -1184,6 +1243,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
          VG_(umsg)(
             "valgrind: Unrecognised instruction at address %#lx.\n",
             VG_(get_IP)(tid));
+         VG_(get_and_pp_StackTrace)(tid, 50);
 #define M(a) VG_(umsg)(a "\n");
    M("Your program just tried to execute an instruction that Valgrind" );
    M("did not recognise.  There are two possible reasons for this."    );
@@ -1256,6 +1316,9 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 break;
 
       } /* switch (trc) */
+
+      if (0)
+         maybe_show_sb_counts();
    }
 
    if (VG_(clo_trace_sched))
@@ -1310,6 +1373,9 @@ void VG_(nuke_all_threads_except) ( ThreadId me, VgSchedReturnCode src )
 #elif defined(VGA_arm)
 #  define VG_CLREQ_ARGS       guest_R4
 #  define VG_CLREQ_RET        guest_R3
+#elif defined (VGA_s390x)
+#  define VG_CLREQ_ARGS       guest_r2
+#  define VG_CLREQ_RET        guest_r3
 #else
 #  error Unknown arch
 #endif
@@ -1575,7 +1641,24 @@ void do_client_request ( ThreadId tid )
          break;
       }
 
+      case VG_USERREQ__CHANGE_ERR_DISABLEMENT: {
+         Word delta = arg[1];
+         vg_assert(delta == 1 || delta == -1);
+         ThreadState* tst = VG_(get_ThreadState)(tid);
+         vg_assert(tst);
+         if (delta == 1 && tst->err_disablement_level < 0xFFFFFFFF) {
+            tst->err_disablement_level++;
+         }
+         else
+         if (delta == -1 && tst->err_disablement_level > 0) {
+            tst->err_disablement_level--;
+         }
+         SET_CLREQ_RETVAL( tid, 0 ); /* return value is meaningless */
+         break;
+      }
+
       case VG_USERREQ__MALLOCLIKE_BLOCK:
+      case VG_USERREQ__RESIZEINPLACE_BLOCK:
       case VG_USERREQ__FREELIKE_BLOCK:
          // Ignore them if the addr is NULL;  otherwise pass onto the tool.
          if (!arg[1]) {

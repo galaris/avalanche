@@ -32,6 +32,7 @@
 
 #include "pub_tool_basics.h"
 #include "pub_tool_aspacemgr.h"
+#include "pub_tool_gdbserver.h"
 #include "pub_tool_hashtable.h"     // For mc_include.h
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
@@ -43,6 +44,7 @@
 #include "pub_tool_replacemalloc.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_threadstate.h"
+
 #include "pub_tool_libcfile.h"
 #include "pub_tool_vki.h"
 #include "pub_tool_vkiscnums.h"
@@ -51,6 +53,8 @@
 #include "memcheck.h"   /* for client requests */
 
 #include <avalanche.h>
+
+#ifdef WITH_AVALANCHE
 
 VgHashTable basicBlocksTable;
 
@@ -72,7 +76,18 @@ static Int socketsNum = 0;
 static Int socketsBoundary;
 static replaceData* replace_data;
 static Char* bbFileName = NULL;
+static Char* tempDir;
+static Char* replaceFileName;
 
+#endif
+
+/* We really want this frame-pointer-less on all platforms, since the
+   helper functions are small and called very frequently.  By default
+   on x86-linux, though, Makefile.all.am doesn't specify it, so do it
+   here.  Requires gcc >= 4.4, unfortunately. */
+#if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 4)
+# pragma GCC optimize("-fomit-frame-pointer")
+#endif
 
 
 /* Set to 1 to do a little more sanity checking */
@@ -1076,67 +1091,17 @@ INLINE Bool MC_(in_ignored_range) ( Addr a )
    return False;
 }
 
-
-/* Parse a 32- or 64-bit hex number, including leading 0x, from string
-   starting at *ppc, putting result in *result, and return True.  Or
-   fail, in which case *ppc and *result are undefined, and return
-   False. */
-
-static Bool isHex ( UChar c )
-{
-  return ((c >= '0' && c <= '9') ||
-	  (c >= 'a' && c <= 'f') ||
-	  (c >= 'A' && c <= 'F'));
-}
-
-static UInt fromHex ( UChar c )
-{
-   if (c >= '0' && c <= '9')
-      return (UInt)c - (UInt)'0';
-   if (c >= 'a' && c <= 'f')
-      return 10 +  (UInt)c - (UInt)'a';
-   if (c >= 'A' && c <= 'F')
-      return 10 +  (UInt)c - (UInt)'A';
-   /*NOTREACHED*/
-   tl_assert(0);
-   return 0;
-}
-
-static Bool parse_Addr ( UChar** ppc, Addr* result )
-{
-   Int used, limit = 2 * sizeof(Addr);
-   if (**ppc != '0')
-      return False;
-   (*ppc)++;
-   if (**ppc != 'x')
-      return False;
-   (*ppc)++;
-   *result = 0;
-   used = 0;
-   while (isHex(**ppc)) {
-      UInt d = fromHex(**ppc);
-      tl_assert(d < 16);
-      *result = ((*result) << 4) | fromHex(**ppc);
-      (*ppc)++;
-      used++;
-      if (used > limit) return False;
-   }
-   if (used == 0)
-      return False;
-   return True;
-}
-
-/* Parse two such numbers separated by a dash, or fail. */
+/* Parse two Addr separated by a dash, or fail. */
 
 static Bool parse_range ( UChar** ppc, Addr* result1, Addr* result2 )
 {
-   Bool ok = parse_Addr(ppc, result1);
+   Bool ok = VG_(parse_Addr) (ppc, result1);
    if (!ok)
       return False;
    if (**ppc != '-')
       return False;
    (*ppc)++;
-   ok = parse_Addr(ppc, result2);
+   ok = VG_(parse_Addr) (ppc, result2);
    if (!ok)
       return False;
    return True;
@@ -1175,9 +1140,7 @@ static Bool parse_ignore_ranges ( UChar* str0 )
 /* --------------- Load/store slow cases. --------------- */
 
 static
-#ifndef PERF_FAST_LOADV
-INLINE
-#endif
+__attribute__((noinline))
 ULong mc_LOADVn_slow ( Addr a, SizeT nBits, Bool bigendian )
 {
    /* Make up a 64-bit result V word, which contains the loaded data for
@@ -1264,9 +1227,7 @@ ULong mc_LOADVn_slow ( Addr a, SizeT nBits, Bool bigendian )
 
 
 static
-#ifndef PERF_FAST_STOREV
-INLINE
-#endif
+__attribute__((noinline))
 void mc_STOREVn_slow ( Addr a, SizeT nBits, ULong vbytes, Bool bigendian )
 {
    SizeT szB = nBits / 8;
@@ -3815,6 +3776,8 @@ static
 void mc_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
 {
   MC_(make_mem_defined)(a, size);
+  
+#ifdef WITH_AVALANCHE
   Addr index; 
   if ((isRead || isRecv) && (sockets || datagrams) && (cursocket != -1))
   {
@@ -3858,6 +3821,7 @@ void mc_post_mem_write(CorePart part, ThreadId tid, Addr a, SizeT size)
       }
     }
   }
+#endif
 }
 
 
@@ -3934,7 +3898,7 @@ static UInt mb_get_origin_for_guest_offset ( ThreadId tid,
 static void mc_post_reg_write ( CorePart part, ThreadId tid, 
                                 PtrdiffT offset, SizeT size)
 {
-#  define MAX_REG_WRITE_SIZE 1408
+#  define MAX_REG_WRITE_SIZE 1664
    UChar area[MAX_REG_WRITE_SIZE];
    tl_assert(size <= MAX_REG_WRITE_SIZE);
    VG_(memset)(area, V_BITS8_DEFINED, size);
@@ -4323,8 +4287,8 @@ UWord mc_LOADV16 ( Addr a, Bool isBigEndian )
       // Handle common case quickly: a is suitably aligned, is mapped, and is
       // addressible.
       // Convert V bits from compact memory form to expanded register form
-      if      (vabits8 == VA_BITS8_DEFINED  ) { return V_BITS16_DEFINED;   }
-      else if (vabits8 == VA_BITS8_UNDEFINED) { return V_BITS16_UNDEFINED; }
+      if      (LIKELY(vabits8 == VA_BITS8_DEFINED  )) { return V_BITS16_DEFINED;   }
+      else if (LIKELY(vabits8 == VA_BITS8_UNDEFINED)) { return V_BITS16_UNDEFINED; }
       else {
          // The 4 (yes, 4) bytes are not all-defined or all-undefined, check
          // the two sub-bytes.
@@ -4435,8 +4399,8 @@ UWord MC_(helperc_LOADV8) ( Addr a )
       // Convert V bits from compact memory form to expanded register form
       // Handle common case quickly: a is mapped, and the entire
       // word32 it lives in is addressible.
-      if      (vabits8 == VA_BITS8_DEFINED  ) { return V_BITS8_DEFINED;   }
-      else if (vabits8 == VA_BITS8_UNDEFINED) { return V_BITS8_UNDEFINED; }
+      if      (LIKELY(vabits8 == VA_BITS8_DEFINED  )) { return V_BITS8_DEFINED;   }
+      else if (LIKELY(vabits8 == VA_BITS8_UNDEFINED)) { return V_BITS8_UNDEFINED; }
       else {
          // The 4 (yes, 4) bytes are not all-defined or all-undefined, check
          // the single byte.
@@ -4583,17 +4547,20 @@ static Int mc_get_or_set_vbits_for_client (
    Addr a, 
    Addr vbits, 
    SizeT szB, 
-   Bool setting /* True <=> set vbits,  False <=> get vbits */ 
+   Bool setting, /* True <=> set vbits,  False <=> get vbits */ 
+   Bool is_client_request /* True <=> real user request 
+                             False <=> internal call from gdbserver */ 
 )
 {
    SizeT i;
    Bool  ok;
    UChar vbits8;
 
-   /* Check that arrays are addressible before doing any getting/setting. */
+   /* Check that arrays are addressible before doing any getting/setting.
+      vbits to be checked only for real user request. */
    for (i = 0; i < szB; i++) {
       if (VA_BITS2_NOACCESS == get_vabits2(a + i) ||
-          VA_BITS2_NOACCESS == get_vabits2(vbits + i)) {
+          (is_client_request && VA_BITS2_NOACCESS == get_vabits2(vbits + i))) {
          return 3;
       }
    }
@@ -4612,8 +4579,9 @@ static Int mc_get_or_set_vbits_for_client (
          tl_assert(ok);
          ((UChar*)vbits)[i] = vbits8;
       }
-      // The bytes in vbits[] have now been set, so mark them as such.
-      MC_(make_mem_defined)(vbits, szB);
+      if (is_client_request)
+        // The bytes in vbits[] have now been set, so mark them as such.
+        MC_(make_mem_defined)(vbits, szB);
    }
 
    return 1;
@@ -4823,7 +4791,6 @@ Int           MC_(clo_mc_level)               = 2;
 static Bool mc_process_cmd_line_options(Char* arg)
 {
   Char* addr;
-  Char* dataToReplace;
 
    Char* tmp_str;
 
@@ -4865,7 +4832,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
       }
    }
 
-	if VG_BOOL_CLO(arg, "--partial-loads-ok", MC_(clo_partial_loads_ok)) {}
+   if VG_BOOL_CLO(arg, "--partial-loads-ok", MC_(clo_partial_loads_ok)) {}
    else if VG_BOOL_CLO(arg, "--show-reachable",   MC_(clo_show_reachable))   {}
    else if VG_BOOL_CLO(arg, "--show-possibly-lost",
                                             MC_(clo_show_possibly_lost))     {}
@@ -4922,76 +4889,53 @@ static Bool mc_process_cmd_line_options(Char* arg)
    else if VG_BHEX_CLO(arg, "--malloc-fill", MC_(clo_malloc_fill), 0x00,0xFF) {}
    else if VG_BHEX_CLO(arg, "--free-fill",   MC_(clo_free_fill),   0x00,0xFF) {}
 
-  else if (VG_INT_CLO(arg, "--alarm", alarm))
-  { 
-    return True;
-  }
-  else if (VG_STR_CLO(arg, "--port", addr))
-  {
-    port = (UShort) VG_(strtoll10)(addr, NULL);
-    return True;
-  }
-  else if (VG_BOOL_CLO(arg, "--sockets", sockets))
-  { 
-    return True; 
-  }
-  else if (VG_BOOL_CLO(arg, "--datagrams", datagrams))
-  { 
-    return True; 
-  }
-  else if (VG_BOOL_CLO(arg, "--no-coverage", noCoverage))
-  { 
-    return True; 
-  }
-  else if (VG_STR_CLO(arg, "--filename", bbFileName))
-  {
-    return True;
-  }
-  else if (VG_STR_CLO(arg, "--replace",  dataToReplace))
-  { 
-    replace = True;
-    Int fd = sr_Res(VG_(open)(dataToReplace, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
-    VG_(read)(fd, &socketsNum, 4);
-    socketsBoundary = socketsNum;
-    if (socketsNum > 0)
-    {
-      replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
-      Int i;
-      for (i = 0; i < socketsNum; i++)
-      {
-        VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
-        replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
-        VG_(read)(fd, replace_data[i].data, replace_data[i].length);
-      }
-    }
-    else
-    {
-      replace_data = NULL;
-    }
-    VG_(close)(fd);
-    return True; 
-  }
-  else if (VG_STR_CLO(arg, "--host", addr))
-  {
-    Char* dot = VG_(strchr)(addr, '.');
-    *dot = '\0';
-    ip1 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
-    *dot = '\0';
-    ip2 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    dot = VG_(strchr)(addr, '.');
-    *dot = '\0';
-    ip3 = (UShort) VG_(strtoll10)(addr, NULL);
-    addr = dot + 1;
-    ip4 = (UShort) VG_(strtoll10)(addr, NULL);
-    return True;
-  }
-  else
-  {
-    return VG_(replacement_malloc_process_cmd_line_option)(arg);
-  }
+#ifdef WITH_AVALANCHE
+   else if (VG_INT_CLO(arg, "--alarm", alarm)) { 
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--port", addr)) {
+      port = (UShort) VG_(strtoll10)(addr, NULL);
+      return True;
+   }
+   else if (VG_BOOL_CLO(arg, "--sockets", sockets)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--datagrams", datagrams)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--no-coverage", noCoverage)) { 
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--filename", bbFileName)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--temp-dir", tempDir)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--replace",  replaceFileName)) { 
+      replace = True;
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--host", addr)) {
+      Char* dot = VG_(strchr)(addr, '.');
+      *dot = '\0';
+      ip1 = (UShort) VG_(strtoll10)(addr, NULL);
+      addr = dot + 1;
+      dot = VG_(strchr)(addr, '.');
+      *dot = '\0';
+      ip2 = (UShort) VG_(strtoll10)(addr, NULL);
+      addr = dot + 1;
+      dot = VG_(strchr)(addr, '.');
+      *dot = '\0';
+      ip3 = (UShort) VG_(strtoll10)(addr, NULL);
+      addr = dot + 1;
+      ip4 = (UShort) VG_(strtoll10)(addr, NULL);
+      return True;
+   }
+#endif
+   else {
+      return VG_(replacement_malloc_process_cmd_line_option)(arg);
+   }
 
    return True;
 
@@ -5114,7 +5058,230 @@ static void show_client_block_stats ( void )
       cgb_allocs, cgb_discards, cgb_used_MAX, cgb_search 
    );
 }
+static void print_monitor_help ( void )
+{
+   VG_(gdb_printf) 
+      (
+"\n"
+"memcheck monitor commands:\n"
+"  get_vbits <addr> [<len>]\n"
+"        returns validity bits for <len> (or 1) bytes at <addr>\n"
+"            bit values 0 = valid, 1 = invalid, __ = unaddressable byte\n"
+"        Example: get_vbits 0x8049c78 10\n"
+"  make_memory [noaccess|undefined\n"
+"                     |defined|Definedifaddressable] <addr> [<len>]\n"
+"        mark <len> (or 1) bytes at <addr> with the given accessibility\n"
+"  check_memory [addressable|defined] <addr> [<len>]\n"
+"        check that <len> (or 1) bytes at <addr> have the given accessibility\n"
+"            and outputs a description of <addr>\n"
+"  leak_check [full*|summary] [reachable|possibleleak*|definiteleak]\n"
+"                [increased*|changed|any]\n"
+"            * = defaults\n"
+"        Examples: leak_check\n"
+"                  leak_check summary any\n"
+"\n");
+}
 
+/* return True if request recognised, False otherwise */
+static Bool handle_gdb_monitor_command (ThreadId tid, Char *req)
+{
+   Char* wcmd;
+   Char s[VG_(strlen(req))]; /* copy for strtok_r */
+   Char *ssaveptr;
+
+   VG_(strcpy) (s, req);
+
+   wcmd = VG_(strtok_r) (s, " ", &ssaveptr);
+   /* NB: if possible, avoid introducing a new command below which
+      starts with the same first letter(s) as an already existing
+      command. This ensures a shorter abbreviation for the user. */
+   switch (VG_(keyword_id) 
+           ("help get_vbits leak_check make_memory check_memory", 
+            wcmd, kwd_report_duplicated_matches)) {
+   case -2: /* multiple matches */
+      return True;
+   case -1: /* not found */
+      return False;
+   case  0: /* help */
+      print_monitor_help();
+      return True;
+   case  1: { /* get_vbits */
+      Addr address;
+      SizeT szB = 1;
+      VG_(strtok_get_address_and_size) (&address, &szB, &ssaveptr);
+      if (szB != 0) {
+         UChar vbits;
+         Int i;
+         Int unaddressable = 0;
+         for (i = 0; i < szB; i++) {
+            Int res = mc_get_or_set_vbits_for_client 
+               (address+i, (Addr) &vbits, 1, 
+                False, /* get them */
+                False  /* is client request */ ); 
+            if ((i % 32) == 0 && i != 0)
+               VG_(gdb_printf) ("\n");
+            else if ((i % 4) == 0 && i != 0)
+               VG_(gdb_printf) (" ");
+            if (res == 1) {
+               VG_(gdb_printf) ("%02x", vbits);
+            } else {
+               tl_assert(3 == res);
+               unaddressable++;
+               VG_(gdb_printf) ("__");
+            }
+         }
+         if ((i % 80) != 0)
+            VG_(gdb_printf) ("\n");
+         if (unaddressable) {
+            VG_(gdb_printf)
+               ("Address %p len %ld has %d bytes unaddressable\n",
+                (void *)address, szB, unaddressable);
+         }
+      }
+      return True;
+   }
+   case  2: { /* leak_check */
+      Int err = 0;
+      LeakCheckParams lcp;
+      Char* kw;
+      
+      lcp.mode               = LC_Full;
+      lcp.show_reachable     = False;
+      lcp.show_possibly_lost = True;
+      lcp.deltamode          = LCD_Increased;
+      lcp.requested_by_monitor_command = True;
+      
+      for (kw = VG_(strtok_r) (NULL, " ", &ssaveptr); 
+           kw != NULL; 
+           kw = VG_(strtok_r) (NULL, " ", &ssaveptr)) {
+         switch (VG_(keyword_id) 
+                 ("full summary "
+                  "reachable possibleleak definiteleak "
+                  "increased changed any",
+                  kw, kwd_report_all)) {
+         case -2: err++; break;
+         case -1: err++; break;
+         case  0: /* full */
+            lcp.mode = LC_Full; break;
+         case  1: /* summary */
+            lcp.mode = LC_Summary; break;
+         case  2: /* reachable */
+            lcp.show_reachable = True; 
+            lcp.show_possibly_lost = True; break;
+         case  3: /* possibleleak */
+            lcp.show_reachable = False;
+            lcp.show_possibly_lost = True; break;
+         case  4: /* definiteleak */
+            lcp.show_reachable = False;
+            lcp.show_possibly_lost = False; break;
+         case  5: /* increased */
+            lcp.deltamode = LCD_Increased; break;
+         case  6: /* changed */
+            lcp.deltamode = LCD_Changed; break;
+         case  7: /* any */
+            lcp.deltamode = LCD_Any; break;
+         default:
+            tl_assert (0);
+         }
+      }
+      if (!err)
+         MC_(detect_memory_leaks)(tid, lcp);
+      return True;
+   }
+      
+   case  3: { /* make_memory */
+      Addr address;
+      SizeT szB = 1;
+      int kwdid = VG_(keyword_id) 
+         ("noaccess undefined defined Definedifaddressable",
+          VG_(strtok_r) (NULL, " ", &ssaveptr), kwd_report_all);
+      VG_(strtok_get_address_and_size) (&address, &szB, &ssaveptr);
+      if (address == (Addr) 0 && szB == 0) return True;
+      switch (kwdid) {
+      case -2: break;
+      case -1: break;
+      case  0: MC_(make_mem_noaccess) (address, szB); break;
+      case  1: make_mem_undefined_w_tid_and_okind ( address, szB, tid, 
+                                                    MC_OKIND_USER ); break;
+      case  2: MC_(make_mem_defined) ( address, szB ); break;
+      case  3: make_mem_defined_if_addressable ( address, szB ); break;;
+      default: tl_assert(0);
+      }
+      return True;
+   }
+
+   case  4: { /* check_memory */
+      Addr address;
+      SizeT szB = 1;
+      Addr bad_addr;
+      UInt okind;
+      char* src;
+      UInt otag;
+      UInt ecu;
+      ExeContext* origin_ec;
+      MC_ReadResult res;
+
+      int kwdid = VG_(keyword_id) 
+         ("addressable defined",
+          VG_(strtok_r) (NULL, " ", &ssaveptr), kwd_report_all);
+      VG_(strtok_get_address_and_size) (&address, &szB, &ssaveptr);
+      if (address == (Addr) 0 && szB == 0) return True;
+      switch (kwdid) {
+      case -2: break;
+      case -1: break;
+      case  0: 
+         if (is_mem_addressable ( address, szB, &bad_addr ))
+            VG_(gdb_printf) ("Address %p len %ld addressable\n", 
+                             (void *)address, szB);
+         else
+            VG_(gdb_printf)
+               ("Address %p len %ld not addressable:\nbad address %p\n",
+                (void *)address, szB, (void *) bad_addr);
+         MC_(pp_describe_addr) (address);
+         break;
+      case  1: res = is_mem_defined ( address, szB, &bad_addr, &otag );
+         if (MC_AddrErr == res)
+            VG_(gdb_printf)
+               ("Address %p len %ld not addressable:\nbad address %p\n",
+                (void *)address, szB, (void *) bad_addr);
+         else if (MC_ValueErr == res) {
+            okind = otag & 3;
+            switch (okind) {
+            case MC_OKIND_STACK:   
+               src = " was created by a stack allocation"; break;
+            case MC_OKIND_HEAP:    
+               src = " was created by a heap allocation"; break;
+            case MC_OKIND_USER:    
+               src = " was created by a client request"; break;
+            case MC_OKIND_UNKNOWN: 
+               src = ""; break;
+            default: tl_assert(0);
+            }
+            VG_(gdb_printf) 
+               ("Address %p len %ld not defined:\n"
+                "Uninitialised value at %p%s\n",
+                (void *)address, szB, (void *) bad_addr, src);
+            ecu = otag & ~3;
+            if (VG_(is_plausible_ECU)(ecu)) {
+               origin_ec = VG_(get_ExeContext_from_ECU)( ecu );
+               VG_(pp_ExeContext)( origin_ec );
+            }
+         }
+         else
+            VG_(gdb_printf) ("Address %p len %ld defined\n",
+                             (void *)address, szB);
+         MC_(pp_describe_addr) (address);
+         break;
+      default: tl_assert(0);
+      }
+      return True;
+   }
+
+   default: 
+      tl_assert(0);
+      return False;
+   }
+}
 
 /*------------------------------------------------------------*/
 /*--- Client requests                                      ---*/
@@ -5128,6 +5295,7 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
 
    if (!VG_IS_TOOL_USERREQ('M','C',arg[0])
        && VG_USERREQ__MALLOCLIKE_BLOCK != arg[0]
+       && VG_USERREQ__RESIZEINPLACE_BLOCK != arg[0]
        && VG_USERREQ__FREELIKE_BLOCK   != arg[0]
        && VG_USERREQ__CREATE_MEMPOOL   != arg[0]
        && VG_USERREQ__DESTROY_MEMPOOL  != arg[0]
@@ -5136,7 +5304,8 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
        && VG_USERREQ__MEMPOOL_TRIM     != arg[0]
        && VG_USERREQ__MOVE_MEMPOOL     != arg[0]
        && VG_USERREQ__MEMPOOL_CHANGE   != arg[0]
-       && VG_USERREQ__MEMPOOL_EXISTS   != arg[0])
+       && VG_USERREQ__MEMPOOL_EXISTS   != arg[0]
+       && VG_USERREQ__GDB_MONITOR_COMMAND   != arg[0])
       return False;
 
    switch (arg[0]) {
@@ -5159,10 +5328,40 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
          break;
       }
 
-      case VG_USERREQ__DO_LEAK_CHECK:
-         MC_(detect_memory_leaks)(tid, arg[1] ? LC_Summary : LC_Full);
+      case VG_USERREQ__DO_LEAK_CHECK: {
+         LeakCheckParams lcp;
+         
+         if (arg[1] == 0)
+            lcp.mode = LC_Full;
+         else if (arg[1] == 1)
+            lcp.mode = LC_Summary;
+         else {
+            VG_(message)(Vg_UserMsg, 
+                         "Warning: unknown memcheck leak search mode\n");
+            lcp.mode = LC_Full;
+         }
+          
+         lcp.show_reachable = MC_(clo_show_reachable);
+         lcp.show_possibly_lost = MC_(clo_show_possibly_lost);
+
+         if (arg[2] == 0)
+            lcp.deltamode = LCD_Any;
+         else if (arg[2] == 1)
+            lcp.deltamode = LCD_Increased;
+         else if (arg[2] == 2)
+            lcp.deltamode = LCD_Changed;
+         else {
+            VG_(message)
+               (Vg_UserMsg, 
+                "Warning: unknown memcheck leak search deltamode\n");
+            lcp.deltamode = LCD_Any;
+         }
+         lcp.requested_by_monitor_command = False;
+         
+         MC_(detect_memory_leaks)(tid, lcp);
          *ret = 0; /* return value is meaningless */
          break;
+      }
 
       case VG_USERREQ__MAKE_MEM_NOACCESS:
          MC_(make_mem_noaccess) ( arg[1], arg[2] );
@@ -5214,12 +5413,16 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
 
       case VG_USERREQ__GET_VBITS:
          *ret = mc_get_or_set_vbits_for_client
-                   ( arg[1], arg[2], arg[3], False /* get them */ );
+                   ( arg[1], arg[2], arg[3],
+                     False /* get them */, 
+                     True /* is client request */ );
          break;
 
       case VG_USERREQ__SET_VBITS:
          *ret = mc_get_or_set_vbits_for_client
-                   ( arg[1], arg[2], arg[3], True /* set them */ );
+                   ( arg[1], arg[2], arg[3],
+                     True /* set them */,
+                     True /* is client request */ );
          break;
 
       case VG_USERREQ__COUNT_LEAKS: { /* count leaked bytes */
@@ -5260,6 +5463,15 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
 
          MC_(new_block) ( tid, p, sizeB, /*ignored*/0, is_zeroed, 
                           MC_AllocCustom, MC_(malloc_list) );
+         return True;
+      }
+      case VG_USERREQ__RESIZEINPLACE_BLOCK: {
+         Addr p         = (Addr)arg[1];
+         SizeT oldSizeB =       arg[2];
+         SizeT newSizeB =       arg[3];
+         UInt rzB       =       arg[4];
+
+         MC_(handle_resizeInPlace) ( tid, p, oldSizeB, newSizeB, rzB );
          return True;
       }
       case VG_USERREQ__FREELIKE_BLOCK: {
@@ -5346,6 +5558,14 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
 	 return True;
       }
 
+      case VG_USERREQ__GDB_MONITOR_COMMAND: {
+         Bool handled = handle_gdb_monitor_command (tid, (Char*)arg[1]);
+         if (handled)
+            *ret = 1;
+         else
+            *ret = 0;
+         return handled;
+      }
 
       default:
          VG_(message)(
@@ -5730,6 +5950,26 @@ static void ocache_sarp_Clear_Origins ( Addr a, UWord len ) {
 }
 
 
+static
+Char* concatTempDir(Char* fileName)
+{
+  Char* result;
+  if (tempDir == NULL)
+  {
+    result = VG_(malloc)(fileName, VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, fileName);
+  }
+  else
+  {
+    Int length = VG_(strlen)(tempDir);
+    result = VG_(malloc)(fileName, length + VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, tempDir);
+    VG_(strcpy)(result + length, fileName);
+    result[length + VG_(strlen)(fileName)] = '\0';
+  }
+  return result;
+}
+
 /*------------------------------------------------------------*/
 /*--- Setup and finalisation                               ---*/
 /*------------------------------------------------------------*/
@@ -5787,11 +6027,31 @@ static void mc_post_clo_init ( void )
       tl_assert(ocacheL2 == NULL);
    }
 
-  if (alarm != 0)
-  {
-    VG_(alarm)(alarm);
-  }
+#ifdef WITH_AVALANCHE  
+   if (replace) {
+      Char *replaceFile = concatTempDir(replaceFileName);
+      Int fd = sr_Res(VG_(open)(replaceFile, VKI_O_RDWR, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO));
+      VG_(read)(fd, &socketsNum, 4);
+      socketsBoundary = socketsNum;
+      if (socketsNum > 0) {
+         replace_data = (replaceData*) VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
+         Int i;
+         for (i = 0; i < socketsNum; i++) {
+            VG_(read)(fd, &(replace_data[i].length), sizeof(Int));
+            replace_data[i].data = (Char*) VG_(malloc)("replace_data", replace_data[i].length);
+            VG_(read)(fd, replace_data[i].data, replace_data[i].length);
+         }
+      } else {
+         replace_data = NULL;
+      }
+      VG_(close)(fd);
+      VG_(free)(replaceFile);
+   }
 
+   if (alarm != 0) {
+      VG_(alarm)(alarm);
+   }
+#endif
 }
 
 static void print_SM_info(char* type, int n_SMs)
@@ -5806,19 +6066,25 @@ static void print_SM_info(char* type, int n_SMs)
 
 static void mc_fini ( Int exitcode )
 {
+#ifdef WITH_AVALANCHE
   if (!noCoverage)
   {
     VG_(HT_ResetIter)(basicBlocksTable);
     bbNode* n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
     SysRes fd;
+    Char *bbFile;
     if (bbFileName != NULL)
     {
-      fd = VG_(open)(bbFileName, VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      bbFile = concatTempDir(bbFileName);
     }
     else
     {
-      fd = VG_(open)("basic_blocks.log", VKI_O_RDWR | VKI_O_TRUNC | VKI_O_CREAT, VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      bbFile = concatTempDir("basic_blocks.log");
     }
+    fd = VG_(open)(bbFile, VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, 
+                    VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP |
+                    VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP);
+    VG_(free)(bbFile);
     if (!sr_isError(fd))
     {
       while (n != NULL)
@@ -5830,11 +6096,18 @@ static void mc_fini ( Int exitcode )
       VG_(close)(sr_Res(fd));
     }
   }
+#endif
 
    MC_(print_malloc_stats)();
 
    if (MC_(clo_leak_check) != LC_Off) {
-      MC_(detect_memory_leaks)(1/*bogus ThreadId*/, MC_(clo_leak_check));
+      LeakCheckParams lcp;
+      lcp.mode = MC_(clo_leak_check);
+      lcp.show_reachable = MC_(clo_show_reachable);
+      lcp.show_possibly_lost = MC_(clo_show_possibly_lost);
+      lcp.deltamode = LCD_Any;
+      lcp.requested_by_monitor_command = False;
+      MC_(detect_memory_leaks)(1/*bogus ThreadId*/, lcp);
    } else {
       if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
          VG_(umsg)(
@@ -5952,7 +6225,24 @@ static void mc_fini ( Int exitcode )
    }
 }
 
-void pre_call(ThreadId tid, UInt syscallno)
+/* mark the given addr/len unaddressable for watchpoint implementation
+   The PointKind will be handled at access time */
+static Bool mc_mark_unaddressable_for_watchpoint (PointKind kind, Bool insert,
+                                                  Addr addr, SizeT len)
+{
+   /* GDBTD this is somewhat fishy. We might rather have to save the previous
+      accessibility and definedness in gdbserver so as to allow restoring it
+      properly. Currently, we assume that the user only watches things
+      which are properly addressable and defined */
+   if (insert)
+      MC_(make_mem_noaccess) (addr, len);
+   else
+      MC_(make_mem_defined)  (addr, len);
+   return True;
+}
+
+#ifdef WITH_AVALANCHE
+static void pre_call(ThreadId tid, UInt syscallno)
 {
   if (syscallno == __NR_read)
   {
@@ -5960,7 +6250,7 @@ void pre_call(ThreadId tid, UInt syscallno)
   }
 }
 
-void post_call(ThreadId tid, UInt syscallno, SysRes res)
+static void post_call(ThreadId tid, UInt syscallno, SysRes res)
 {
   if (syscallno == __NR_read)
   {
@@ -5972,6 +6262,7 @@ void post_call(ThreadId tid, UInt syscallno, SysRes res)
     //VG_(exit)(0);
   }
 }
+#endif
 
 
 static void mc_pre_clo_init(void)
@@ -5982,7 +6273,7 @@ static void mc_pre_clo_init(void)
    VG_(details_copyright_author)(
       "Copyright (C) 2002-2010, and GNU GPL'd, by Julian Seward et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
-   VG_(details_avg_translation_sizeB) ( 556 );
+   VG_(details_avg_translation_sizeB) ( 640 );
 
    VG_(basic_tool_funcs)          (mc_post_clo_init,
                                    MC_(instrument),
@@ -6119,6 +6410,8 @@ static void mc_pre_clo_init(void)
    VG_(track_post_reg_write)                  ( mc_post_reg_write );
    VG_(track_post_reg_write_clientcall_return)( mc_post_reg_write_clientcall );
 
+   VG_(needs_watchpoint)          ( mc_mark_unaddressable_for_watchpoint );
+
    init_shadow_memory();
    MC_(malloc_list)  = VG_(HT_construct)( "MC_(malloc_list)" );
    MC_(mempool_list) = VG_(HT_construct)( "MC_(mempool_list)" );
@@ -6168,10 +6461,12 @@ static void mc_pre_clo_init(void)
    tl_assert(MASK(8) == 0xFFFFFFF800000007ULL);
 #  endif
 
+#ifdef WITH_AVALANCHE
    VG_(needs_syscall_wrapper)(pre_call,
  			      post_call);
 
    basicBlocksTable = VG_(HT_construct)("basicBlocksTable");
+#endif
 }
 
 VG_DETERMINE_INTERFACE_VERSION(mc_pre_clo_init)

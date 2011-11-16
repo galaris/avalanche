@@ -1,8 +1,8 @@
-/*----------------------------------------------------------------------------------------*/
-/*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------- Executor.h ---------------------------------------*/
-/*----------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+/*------------------------------ AVALANCHE ----------------------------------*/
+/*- Driver. Coordinates other processes, traverses conditional jumps tree.  -*/
+/*------------------------------ Executor.h ---------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 /*
    Copyright (C) 2009 Ildar Isaev
@@ -30,23 +30,24 @@
 
 enum Kind
 {
-  TRACEGRIND,
-  COVGRIND,
-  MEMCHECK,
-  UNID
+    TG,
+    CV,
+    MC,
+    HG,
+    UNID
 };
 
 class Executor
 {
 public:
     Executor() : args(NULL), argsnum(0) {}
-   ~Executor()
+    virtual ~Executor()
     {
-      for(int i = 0; i < argsnum; i ++)
-      {
-        free(args[i]);
-      }
-      free(args);
+        for (int i = 0; i < argsnum; i ++)
+        {
+            free(args[i]);
+        }
+        free(args);
     }
     virtual int run(int thread_index = 0) = 0;
 
@@ -54,7 +55,6 @@ protected:
     char **args;
     unsigned int argsnum;
 };
-
 
 #endif //__EXECUTOR__H__
 

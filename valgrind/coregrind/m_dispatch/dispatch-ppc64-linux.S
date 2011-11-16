@@ -268,15 +268,13 @@ VG_(run_innerloop__dispatch_unprofiled):
 		r29 (=dispatch_ctr)
 		r31 (=guest_state)
 	   Stack state:
-		152(r1) (=orig guest_state)
 		144(r1) (=var space for FPSCR[RM])
 	*/
 	/* Has the guest state pointer been messed with?  If yes, exit.
            Also set up & VG_(tt_fast) early in an attempt at better
            scheduling. */
-        ld      9,152(1)        /* original guest_state ptr */
 	ld	5, .tocent__vgPlain_tt_fast@toc(2) /* &VG_(tt_fast) */
-        cmpd    9,31
+        rldicl. 0,31,0,63
         bne	.gsp_changed
 
         /* save the jump address in the guest state */
@@ -310,7 +308,7 @@ VG_(run_innerloop__dispatch_unprofiled):
 	/* start over */
 	b	.VG_(run_innerloop__dispatch_unprofiled)
 	/*NOTREACHED*/
-        .size VG_(run_innerloop), .-VG_(run_innerloop)
+        .size .VG_(run_innerloop), .-.VG_(run_innerloop)
 
 
 /*----------------------------------------------------*/
@@ -335,15 +333,13 @@ VG_(run_innerloop__dispatch_profiled):
 		r29 (=dispatch_ctr)
 		r31 (=guest_state)
 	   Stack state:
-		152(r1) (=orig guest_state)
 		144(r1) (=var space for FPSCR[RM])
 	*/
 	/* Has the guest state pointer been messed with?  If yes, exit.
            Also set up & VG_(tt_fast) early in an attempt at better
            scheduling. */
-        ld      9,152(1)        /* original guest_state ptr */
 	ld	5, .tocent__vgPlain_tt_fast@toc(2) /* &VG_(tt_fast) */
-        cmpd    9,31
+        rldicl. 0,31,0,63
         bne	.gsp_changed
 
         /* save the jump address in the guest state */
@@ -385,7 +381,7 @@ VG_(run_innerloop__dispatch_profiled):
 	/* start over */
 	b	.VG_(run_innerloop__dispatch_profiled)
 	/*NOTREACHED*/
-        .size VG_(run_a_noredir_translation), .-VG_(run_a_noredir_translation)
+        .size .VG_(run_a_noredir_translation), .-.VG_(run_a_noredir_translation)
 
 
 /*----------------------------------------------------*/

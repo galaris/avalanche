@@ -55,7 +55,8 @@ void libhb_shutdown ( Bool show_stats );
 Thr* libhb_create ( Thr* parent );
 
 /* Thread async exit */
-void libhb_async_exit ( Thr* exitter );
+void libhb_async_exit      ( Thr* exitter );
+void libhb_joinedwith_done ( Thr* exitter );
 
 /* Synchronisation objects (abstract to caller) */
 
@@ -124,15 +125,16 @@ void zsm_sapplyNN_f__msmcread ( Thr* thr, Addr a, SizeT len );
 void libhb_Thr_resumes ( Thr* thr );
 
 /* Set memory address ranges to new (freshly allocated), or noaccess
-   (no longer accessible). */
+   (no longer accessible).  NB: "AHAE" == "Actually Has An Effect" :-) */
 void libhb_srange_new      ( Thr*, Addr, SizeT );
-void libhb_srange_noaccess ( Thr*, Addr, SizeT ); /* IS IGNORED */
 void libhb_srange_untrack  ( Thr*, Addr, SizeT );
+void libhb_srange_noaccess_NoFX ( Thr*, Addr, SizeT ); /* IS IGNORED */
+void libhb_srange_noaccess_AHAE ( Thr*, Addr, SizeT ); /* IS NOT IGNORED */
 
-/* For the convenience of callers, we offer to store one void* item in
-   a Thr, which we ignore, but the caller can get or set any time. */
-void* libhb_get_Thr_opaque ( Thr* );
-void  libhb_set_Thr_opaque ( Thr*, void* );
+/* Get and set the hgthread (pointer to corresponding Thread
+   structure). */
+Thread* libhb_get_Thr_hgthread ( Thr* );
+void    libhb_set_Thr_hgthread ( Thr*, Thread* );
 
 /* Low level copy of shadow state from [src,src+len) to [dst,dst+len).
    Overlapping moves are checked for and asserted against. */
@@ -144,10 +146,21 @@ void libhb_maybe_GC ( void );
 
 /* Extract info from the conflicting-access machinery. */
 Bool libhb_event_map_lookup ( /*OUT*/ExeContext** resEC,
-                              /*OUT*/Thr**  resThr,
-                              /*OUT*/SizeT* resSzB,
-                              /*OUT*/Bool*  resIsW,
+                              /*OUT*/Thr**        resThr,
+                              /*OUT*/SizeT*       resSzB,
+                              /*OUT*/Bool*        resIsW,
+                              /*OUT*/WordSetID*   locksHeldW,
                               Thr* thr, Addr a, SizeT szB, Bool isW );
+
+/* ------ Exported from hg_main.c ------ */
+/* Yes, this is a horrible tangle.  Sigh. */
+
+/* Get the univ_lset (universe for locksets) from hg_main.c.  Sigh. */
+WordSetU* HG_(get_univ_lsets) ( void );
+
+/* Get the the header pointer for the double linked list of locks
+   (admin_locks). */
+Lock* HG_(get_admin_locks) ( void );
 
 #endif /* __LIBHB_H */
 

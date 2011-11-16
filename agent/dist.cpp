@@ -295,9 +295,9 @@ int main(int argc, char** argv)
         }
         for (set<int>::iterator fd = starvating_a.begin(); fd != starvating_a.end();)
         {
-          int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads;
+          int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, threads, dirLength, pluginlength;
           int argsnum, filtersNum, filterlength, masklength;
-          bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls, STPThreadsAuto;
+          bool useMemcheck, leaks, traceChildren, checkDanger, verbose, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
           filenum = 0;
           try 
           { 
@@ -340,12 +340,13 @@ int main(int argc, char** argv)
             pass(*fd, &tracegrindAlarm, sizeof(int));
             pass(*fd, &threads, sizeof(int));
             pass(*fd, &argsnum, sizeof(int));
-            pass(*fd, &useMemcheck, sizeof(bool));
             pass(*fd, &leaks, sizeof(bool));
             pass(*fd, &traceChildren, sizeof(bool));
             pass(*fd, &checkDanger, sizeof(bool));
             pass(*fd, &debug, sizeof(bool));
             pass(*fd, &verbose, sizeof(bool));
+            pass(*fd, &programOutput, sizeof(bool));
+            pass(*fd, &networkLog, sizeof(bool));
             pass(*fd, &suppressSubcalls, sizeof(bool));
             pass(*fd, &STPThreadsAuto, sizeof(bool));
 
@@ -356,6 +357,9 @@ int main(int argc, char** argv)
               pass(*fd, length);
               pass(*fd, &port, sizeof(int));
             }
+            pass(*fd, &pluginlength, sizeof(int));
+            printf("%d\n", pluginlength);
+            pass(*fd, pluginlength);
 
             pass(*fd, &masklength, sizeof(int));
             if (masklength != 0)
@@ -375,6 +379,12 @@ int main(int argc, char** argv)
             if (filterlength != 0)
             {
               pass(*fd, filterlength);
+            }
+ 
+            pass(*fd, &dirLength, sizeof(int));
+            if (dirLength != 0)
+            {
+              pass(*fd, dirLength);
             }
 
             for (int i = 0; i < argsnum; i++)
