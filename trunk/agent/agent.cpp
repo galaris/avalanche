@@ -40,6 +40,9 @@
 
 #include "util.h"
 
+#define PERM_R_W S_IRUSR | S_IROTH | S_IRGRP | \
+                 S_IWUSR | S_IWOTH | S_IWGRP
+
 using namespace std;
 
 int fd;
@@ -53,7 +56,7 @@ void recvInput(bool initial)
   int net_fd, length, namelength;
   if (sockets || datagrams)
   {
-    net_fd = open("replace_data", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+    net_fd = open("replace_data", O_WRONLY | O_CREAT | O_TRUNC, PERM_R_W);
     write(net_fd, &file_num, sizeof(int));
   }
   for (int j = 0; j < file_num; j ++)
@@ -69,6 +72,11 @@ void recvInput(bool initial)
       char* filename = new char[namelength + 1];
       readFromSocket(fd, filename, namelength);
       filename[namelength] = '\0';
+      if (strstr(filename, "argv.log") != NULL)
+      {
+        delete []filename;
+        filename = strdup("argv.log");
+      }
       file_name.push_back(filename);
     }
     readFromSocket(fd, &length, sizeof(int));
@@ -86,7 +94,7 @@ void recvInput(bool initial)
     }
     else
     {
-      int descr = open(file_name.at(j), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open(file_name.at(j), O_WRONLY | O_CREAT, PERM_R_W);
       if (descr == -1)
       {
         perror("open failed");
@@ -107,7 +115,7 @@ void recvInput(bool initial)
 void sig_hndlr(int signo)
 {
   int startdepth = 0;
-  int descr = open("startdepth.log", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
+  int descr = open("startdepth.log", O_WRONLY | O_CREAT, PERM_R_W);
   writeToSocket(fd, "g", 1);
   try
   {
@@ -116,7 +124,7 @@ void sig_hndlr(int signo)
   }
   catch (const char* msg)
   {
-    shutdown(fd, O_RDWR);
+    shutdown(fd, O_WRONLY);
     close(fd);
     printf("coudln't receive non zero scored input: %s\n", msg);
   }
@@ -205,9 +213,10 @@ int main(int argc, char** argv)
     signal(SIGINT, int_handler);
     writeToSocket(fd, "a", 1);
 
-    int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm;
+    int namelength, length, startdepth, invertdepth, alarm, tracegrindAlarm, pluginlength;
     int threads, argsnum, masklength, filtersNum, flength, received, net_fd;
-    bool useMemcheck, leaks, traceChildren, checkDanger, debug, verbose, suppressSubcalls, STPThreadsAuto;
+    bool useMemcheck, leaks, traceChildren, checkDanger, verbose, debug, programOutput, networkLog, suppressSubcalls, STPThreadsAuto;
+    string plugin_name;
   
     readFromSocket(fd, &file_num, sizeof(int));
     if (file_num == -1)
@@ -225,12 +234,13 @@ int main(int argc, char** argv)
     readFromSocket(fd, &tracegrindAlarm, sizeof(int));
     readFromSocket(fd, &threads, sizeof(int));
     readFromSocket(fd, &argsnum, sizeof(int));
-    readFromSocket(fd, &useMemcheck, sizeof(bool));
     readFromSocket(fd, &leaks, sizeof(bool));
     readFromSocket(fd, &traceChildren, sizeof(bool));
     readFromSocket(fd, &checkDanger, sizeof(bool));
     readFromSocket(fd, &debug, sizeof(bool));
     readFromSocket(fd, &verbose, sizeof(bool));
+    readFromSocket(fd, &programOutput, sizeof(bool));
+    readFromSocket(fd, &networkLog, sizeof(bool));
     readFromSocket(fd, &suppressSubcalls, sizeof(bool));
     readFromSocket(fd, &STPThreadsAuto, sizeof(bool));
  
@@ -299,10 +309,6 @@ int main(int argc, char** argv)
       sprintf(alrm, "--tracegrind-alarm=%d", tracegrindAlarm);
       avalanche_argv[av_argc++] = alrm;
     }
-    if (useMemcheck)
-    {
-      avalanche_argv[av_argc++] = "--use-memcheck";
-    }
     if (leaks)
     {
       avalanche_argv[av_argc++] = "--leaks";
@@ -321,7 +327,15 @@ int main(int argc, char** argv)
     }
     if (verbose)
     {
-      avalanche_argv[av_argc++] = "--verbose";
+      avalanche_argv[av_argc++] = "-v";
+    }
+    if (programOutput)
+    {
+      avalanche_argv[av_argc++] = "--program-output";
+    }
+    if (networkLog)
+    {
+      avalanche_argv[av_argc++] = "--network-log";
     }
     if (sockets)
     {
@@ -349,13 +363,22 @@ int main(int argc, char** argv)
       sprintf(prt, "--port=%d", port);
       avalanche_argv[av_argc++] = strdup(prt);
     }
-
+    
+    {
+      char buf[128], plugin_name[128];
+      readFromSocket(fd, &pluginlength, sizeof(int));
+      readFromSocket(fd, buf, pluginlength);
+      buf[pluginlength] = '\0';
+      sprintf(plugin_name, "--tool=%s", buf);
+      avalanche_argv[av_argc++] = strdup(plugin_name);
+    }
+    
     readFromSocket(fd, &masklength, sizeof(int));
     if (masklength != 0)
     {
       char* mask = new char[masklength];
       readFromSocket(fd, mask, masklength);
-      int descr = open("mask", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open("mask", O_WRONLY | O_CREAT | O_TRUNC, PERM_R_W);
       if (descr == -1)
       {
         perror("open failed");
@@ -385,7 +408,7 @@ int main(int argc, char** argv)
     {
       char* filter = new char[flength];
       readFromSocket(fd, filter, flength);
-      int descr = open("filter", O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
+      int descr = open("filter", O_WRONLY | O_CREAT | O_TRUNC, PERM_R_W);
       if (descr == -1)
       {
         perror("open failed");
@@ -398,6 +421,17 @@ int main(int argc, char** argv)
       avalanche_argv[av_argc++] = "--func-file=filter";
     }
 
+    readFromSocket(fd, &length, sizeof(int));
+    if (length != 0)
+    {
+      char* resultDir = new char[length + 1];
+      readFromSocket(fd, resultDir, length);
+      resultDir[length] = '\0';
+      char buf[256];
+      sprintf(buf, "--result-dir=%s", resultDir);
+      avalanche_argv[av_argc++] = strdup(buf);
+    }
+
     for (int i = 0; i < argsnum; i++)
     {
       int arglength;
@@ -408,7 +442,7 @@ int main(int argc, char** argv)
       avalanche_argv[av_argc++] = arg;
     }
     avalanche_argv[av_argc] = NULL;
-
+    
     for (;;)
     {
       signal(SIGUSR1, sig_hndlr);
@@ -451,7 +485,7 @@ int main(int argc, char** argv)
   {
     char report[128];
     sprintf(report, "report%d.log", i);
-    int fd = open(report, O_RDONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+    int fd = open(report, O_RDONLY, PERM_R_W);
     if (fd != -1)
     {
       struct stat fileInfo;
@@ -473,6 +507,7 @@ int main(int argc, char** argv)
     delete [](file_name.at(i));
   }
   file_name.clear();
+  unlink("argv.log");
   return 0;
 }
 

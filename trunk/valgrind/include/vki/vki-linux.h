@@ -89,6 +89,8 @@
 #  include "vki-posixtypes-ppc64-linux.h"
 #elif defined(VGA_arm)
 #  include "vki-posixtypes-arm-linux.h"
+#elif defined(VGA_s390x)
+#  include "vki-posixtypes-s390x-linux.h"
 #else
 #  error Unknown platform
 #endif
@@ -201,6 +203,8 @@ typedef unsigned int	        vki_uint;
 #  include "vki-ppc64-linux.h"
 #elif defined(VGA_arm)
 #  include "vki-arm-linux.h"
+#elif defined(VGA_s390x)
+#  include "vki-s390x-linux.h"
 #else
 #  error Unknown platform
 #endif
@@ -925,6 +929,11 @@ struct	vki_rusage {
 struct vki_rlimit {
 	unsigned long	rlim_cur;
 	unsigned long	rlim_max;
+};
+
+struct vki_rlimit64 {
+	__vki_u64 rlim_cur;
+	__vki_u64 rlim_max;
 };
 
 //----------------------------------------------------------------------
@@ -1963,7 +1972,9 @@ struct vki_hd_geometry {
 //----------------------------------------------------------------------
 
 #define VKI_FBIOGET_VSCREENINFO	0x4600
+#define VKI_FBIOPUT_VSCREENINFO	0x4601
 #define VKI_FBIOGET_FSCREENINFO	0x4602
+#define VKI_FBIOPAN_DISPLAY	0x4606
 
 struct vki_fb_fix_screeninfo {
 	char id[16];			/* identification string eg "TT Builtin" */
@@ -2390,6 +2401,7 @@ struct vki_usbdevfs_ioctl {
 #define VKI_USBDEVFS_REAPURBNDELAY     _VKI_IOW('U', 13, void *)
 #define VKI_USBDEVFS_CONNECTINFO       _VKI_IOW('U', 17, struct vki_usbdevfs_connectinfo)
 #define VKI_USBDEVFS_IOCTL             _VKI_IOWR('U', 18, struct vki_usbdevfs_ioctl)
+#define VKI_USBDEVFS_RESET             _VKI_IO('U', 20)
 
 #define VKI_USBDEVFS_URB_TYPE_ISO              0
 #define VKI_USBDEVFS_URB_TYPE_INTERRUPT        1
@@ -2620,10 +2632,10 @@ struct	vki_iwreq
 };
 
 /*--------------------------------------------------------------------*/
-// From linux-2.6.31.5/include/linux/perf_counter.h
+// From linux-2.6.31.5/include/linux/perf_event.h
 /*--------------------------------------------------------------------*/
 
-struct vki_perf_counter_attr {
+struct vki_perf_event_attr {
 
 	/*
 	 * Major type: hardware/software/tracepoint/etc.
@@ -2662,13 +2674,37 @@ struct vki_perf_counter_attr {
 					inherit_stat   :  1, /* per task counts       */
 					enable_on_exec :  1, /* next exec enables     */
 					task           :  1, /* trace fork/exit       */
+					watermark      :  1, /* wakeup_watermark      */
+					/*
+					 * precise_ip:
+					 *
+					 *  0 - SAMPLE_IP can have arbitrary skid
+					 *  1 - SAMPLE_IP must have constant skid
+					 *  2 - SAMPLE_IP requested to have 0 skid
+					 *  3 - SAMPLE_IP must have 0 skid
+					 *
+					 *  See also PERF_RECORD_MISC_EXACT_IP
+					 */
+					precise_ip     :  2, /* skid constraint       */
+					mmap_data      :  1, /* non-exec mmap data    */
+					sample_id_all  :  1, /* sample_type all events */
 
-					__reserved_1   : 50;
+					__reserved_1   : 45;
 
-	__vki_u32			wakeup_events;	/* wakeup every n events */
-	__vki_u32			__reserved_2;
+	union {
+		__vki_u32		wakeup_events;	  /* wakeup every n events */
+		__vki_u32		wakeup_watermark; /* bytes before wakeup   */
+	};
 
-	__vki_u64			__reserved_3;
+	__vki_u32			bp_type;
+	union {
+		__vki_u64		bp_addr;
+		__vki_u64		config1; /* extension of config */
+	};
+	union {
+		__vki_u64		bp_len;
+		__vki_u64		config2; /* extension of config1 */
+	};
 };
 
 /*--------------------------------------------------------------------*/
@@ -2716,6 +2752,14 @@ struct vki_getcpu_cache {
 #define VKI_EV_FF_STATUS	0x17
 #define VKI_EV_MAX		0x1f
 #define VKI_EV_CNT		(VKI_EV_MAX+1)
+
+//----------------------------------------------------------------------
+// From linux-2.6.39-rc2/include/asm_generic/ioctls.h
+//----------------------------------------------------------------------
+
+#ifndef VKI_FIOQSIZE
+#define VKI_FIOQSIZE 0x5460     /* Value differs on some platforms */
+#endif
 
 #endif // __VKI_LINUX_H
 

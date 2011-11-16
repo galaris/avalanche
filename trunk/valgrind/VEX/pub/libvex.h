@@ -56,7 +56,8 @@ typedef
       VexArchAMD64, 
       VexArchARM,
       VexArchPPC32,
-      VexArchPPC64
+      VexArchPPC64,
+      VexArchS390X
    }
    VexArch;
 
@@ -86,12 +87,57 @@ typedef
 #define VEX_HWCAPS_PPC32_FX    (1<<10) /* FP extns (fsqrt, fsqrts) */
 #define VEX_HWCAPS_PPC32_GX    (1<<11) /* Graphics extns
                                           (fres,frsqrte,fsel,stfiwx) */
+#define VEX_HWCAPS_PPC32_VX    (1<<12) /* Vector-scalar floating-point (VSX); implies ISA 2.06 or higher  */
 
 /* ppc64: baseline capability is integer and basic FP insns */
-#define VEX_HWCAPS_PPC64_V     (1<<12) /* Altivec (VMX) */
-#define VEX_HWCAPS_PPC64_FX    (1<<13) /* FP extns (fsqrt, fsqrts) */
-#define VEX_HWCAPS_PPC64_GX    (1<<14) /* Graphics extns
+#define VEX_HWCAPS_PPC64_V     (1<<13) /* Altivec (VMX) */
+#define VEX_HWCAPS_PPC64_FX    (1<<14) /* FP extns (fsqrt, fsqrts) */
+#define VEX_HWCAPS_PPC64_GX    (1<<15) /* Graphics extns
                                           (fres,frsqrte,fsel,stfiwx) */
+#define VEX_HWCAPS_PPC64_VX    (1<<16) /* Vector-scalar floating-point (VSX); implies ISA 2.06 or higher  */
+
+/* s390x: Hardware capability encoding
+
+   Bits    Information
+   [26:31] Machine model
+   [25]    Long displacement facility
+   [24]    Extended-immediate facility
+   [23]    General-instruction-extension facility
+   [22]    Decimal floating point facility
+   [21]    FPR-GR transfer facility
+   [0:20]  Currently unused; reserved for future use
+*/
+
+/* Model numbers must be assigned in chronological order.
+   They are used as array index. */
+#define VEX_S390X_MODEL_Z900     0
+#define VEX_S390X_MODEL_Z800     1
+#define VEX_S390X_MODEL_Z990     2
+#define VEX_S390X_MODEL_Z890     3
+#define VEX_S390X_MODEL_Z9_EC    4
+#define VEX_S390X_MODEL_Z9_BC    5
+#define VEX_S390X_MODEL_Z10_EC   6
+#define VEX_S390X_MODEL_Z10_BC   7
+#define VEX_S390X_MODEL_Z196     8
+#define VEX_S390X_MODEL_Z114     9
+#define VEX_S390X_MODEL_INVALID  10
+#define VEX_S390X_MODEL_MASK     0x3F
+
+#define VEX_HWCAPS_S390X_LDISP (1<<6)   /* Long-displacement facility */
+#define VEX_HWCAPS_S390X_EIMM  (1<<7)   /* Extended-immediate facility */
+#define VEX_HWCAPS_S390X_GIE   (1<<8)   /* General-instruction-extension facility */
+#define VEX_HWCAPS_S390X_DFP   (1<<9)   /* Decimal floating point facility */
+#define VEX_HWCAPS_S390X_FGX   (1<<10)  /* FPR-GR transfer facility */
+
+/* Special value representing all available s390x hwcaps */
+#define VEX_HWCAPS_S390X_ALL   (VEX_HWCAPS_S390X_LDISP | \
+                                VEX_HWCAPS_S390X_EIMM  | \
+                                VEX_HWCAPS_S390X_GIE   | \
+                                VEX_HWCAPS_S390X_DFP   | \
+                                VEX_HWCAPS_S390X_FGX)
+
+#define VEX_HWCAPS_S390X(x)  ((x) & ~VEX_S390X_MODEL_MASK)
+#define VEX_S390X_MODEL(x)   ((x) &  VEX_S390X_MODEL_MASK)
 
 /* arm: baseline capability is ARMv4 */
 /* Bits 5:0 - architecture level (e.g. 5 for v5, 6 for v6 etc) */
@@ -381,15 +427,25 @@ typedef
 /* Initialise the library.  You must call this first. */
 
 extern void LibVEX_Init (
+
    /* failure exit function */
+#  if __cplusplus == 1 && __GNUC__ && __GNUC__ <= 3
+   /* g++ 3.x doesn't understand attributes on function parameters.
+      See #265762. */
+#  else
    __attribute__ ((noreturn))
+#  endif
    void (*failure_exit) ( void ),
+
    /* logging output function */
    void (*log_bytes) ( HChar*, Int nbytes ),
+
    /* debug paranoia level */
    Int debuglevel,
+
    /* Are we supporting valgrind checking? */
    Bool valgrind_support,
+
    /* Control ... */
    /*READONLY*/VexControl* vcon
 );
@@ -401,10 +457,12 @@ extern void LibVEX_Init (
 
 /* Describes the outcome of a translation attempt. */
 typedef
-   enum { 
-      VexTransOK, 
-      VexTransAccessFail, 
-      VexTransOutputFull 
+   struct {
+      /* overall status */
+      enum { VexTransOK,
+             VexTransAccessFail, VexTransOutputFull } status;
+      /* The number of extents that have a self-check (0 to 3) */
+      UInt n_sc_extents;
    }
    VexTranslateResult;
 
@@ -480,8 +538,13 @@ typedef
 
       IRSB* (*finaltidy) ( IRSB* );
 
-      /* IN: should this translation be self-checking?  default: False */
-      Bool    do_self_check;
+      /* IN: a callback used to ask the caller which of the extents,
+         if any, a self check is required for.  Must not be NULL.
+         The returned value is a bitmask with a 1 in position i indicating
+         that the i'th extent needs a check.  Since there can be at most
+         3 extents, the returned values must be between 0 and 7. */
+      UInt (*needs_self_check)( /*callback_opaque*/void*,
+                                VexGuestExtents* );
 
       /* IN: optionally, a callback which allows the caller to add its
          own IR preamble following the self-check and any other
@@ -497,8 +560,8 @@ typedef
       /* IN: debug: trace vex activity at various points */
       Int     traceflags;
 
-      /* IN: address of the dispatcher entry point.  Describes the
-         place where generated code should jump to at the end of each
+      /* IN: address of the dispatcher entry points.  Describes the
+         places where generated code should jump to at the end of each
          bb.
 
          At the end of each translation, the next guest address is
@@ -512,19 +575,26 @@ typedef
          control; caller supplies this) in the following way:
 
          - On host archs which lack a link register (x86, amd64), by a
-           jump to the host address specified in 'dispatcher', which
-           must be non-NULL.
+           jump to the host address specified in
+           'dispatcher_assisted', if the guest state pointer has been
+           changed so as to request some action before the next block
+           is run, or 'dispatcher_unassisted' (the fast path), in
+           which it is assumed that the guest state pointer is
+           unchanged and we wish to continue directly with the next
+           translation.  Both of these must be non-NULL.
 
          - On host archs which have a link register (ppc32, ppc64), by
            a branch to the link register (which is guaranteed to be
            unchanged from whatever it was at entry to the
-           translation).  'dispatch' must be NULL.
+           translation).  'dispatch_assisted' and
+           'dispatch_unassisted' must be NULL.
 
          The aim is to get back and forth between translations and the
          dispatcher without creating memory traffic to store return
          addresses.
       */
-      void* dispatch;
+      void* dispatch_unassisted;
+      void* dispatch_assisted;
    }
    VexTranslateArgs;
 

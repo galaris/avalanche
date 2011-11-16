@@ -23,9 +23,6 @@
    limitations under the License.
 */
 
-#include "Logger.h"
-#include "TmpFile.h"
-
 #include <stdlib.h>
 
 #include <unistd.h>
@@ -35,23 +32,27 @@
 #include <fstream>
 #include <set>
 
+#include "Logger.h"
+#include "TmpFile.h"
+#include "ExecutionManager.h"
+
 using namespace std;
 
 static Logger *logger = Logger::getLogger();
 
 unsigned int TmpFile::tmpnum = 0;
 
-TmpFile::TmpFile(): is_exported(false), is_good(true)
+TmpFile::TmpFile(): is_good(true)
 {
     char s[64];
     sprintf(s, "tmpfile_%u", tmpnum++);
-    filename = strdup(s);
+    filename = strdup((ExecutionManager::getTempDir() + string(s)).c_str());
     FILE *fp = fopen(filename, "wt");
     
     if (!fp) 
     {
         is_good = false;
-        ERR(logger, "Cannot open file " << filename << ":" << strerror(errno));
+        LOG (Logger :: ERROR, "Cannot open file " << filename << ":" << strerror(errno));
     }
     else
     {
@@ -61,19 +62,13 @@ TmpFile::TmpFile(): is_exported(false), is_good(true)
 
 TmpFile::~TmpFile()
 {
-    if (is_exported != true) 
-    {
-      remove();
-    }
-    free(filename);
-}
-
-void TmpFile::remove()
-{
-    if (is_good != true) return;
-
     if (::unlink(filename) == -1)
-        ERR(logger, "Cannot delete file " << filename <<":"<< strerror(errno));
+    {
+        LOG (Logger :: ERROR, "Cannot delete file " << 
+                              filename <<":"<< strerror(errno));
+    }
+
+    free(filename);
 }
 
 void TmpFile::print() const
@@ -86,7 +81,7 @@ void TmpFile::print() const
         char buf[65536];
 
         in_file.getline(buf, 65536);
-        DBG(logger, buf);
+        LOG (Logger :: DEBUG, buf);
     }
     in_file.close();
 }

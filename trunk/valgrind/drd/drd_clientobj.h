@@ -1,8 +1,8 @@
-/* -*- mode: C; c-basic-offset: 3; -*- */
+/* -*- mode: C; c-basic-offset: 3; indent-tabs-mode: nil; -*- */
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2010 Bart Van Assche <bvanassche@acm.org>.
+  Copyright (C) 2006-2011 Bart Van Assche <bvanassche@acm.org>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -125,7 +125,8 @@ struct barrier_info
    Word     post_iteration;    // post barrier completion count modulo two.
    Word     pre_waiters_left;  // number of waiters left for a complete barrier.
    Word     post_waiters_left; // number of waiters left for a complete barrier.
-   OSet*    oset;              // Per-thread barrier information.
+   OSet*    oset[2];           // Per-thread barrier information for the latest
+                               // two barrier iterations.
 };
 
 struct rwlock_info

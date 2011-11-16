@@ -4,6 +4,9 @@ pkglib_PROGRAMS = stp
 INCLUDES = -I../sat/mtl -I../sat/core -I../sat/simp
 YFLAGS = -d -v
 
+CXXLD = $(CC)
+LIBS = -static-libgcc -Wl,-Bstatic,-lstdc++,-Bdynamic -lm
+
 stp_LDADD = -L../AST -last -L../sat/core -lminisat \
 	    -L../simplifier -lsimplifier -L../bitvec -lconsteval \
 	    -L../constantbv -lconstantbv

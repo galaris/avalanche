@@ -42,6 +42,8 @@
 class FileBuffer;
 class OptionConfig;
 class Input;
+struct FileOffsetSet;
+class Error;
 
 class Key
 {
@@ -90,16 +92,6 @@ public:
 
     void run();
 
-    void emulateClient();
-
-    void emulateServer();
-
-    void setupServer();
-
-    void makefifo();
-   
-    void cleanfifo();
-
     int processQuery(Input* first_input, bool* actual, unsigned long first_depth, unsigned long cur_depth, unsigned int thread_index = 0);
 
     int processTraceSequental(Input* first_input, unsigned long first_depth);
@@ -111,12 +103,10 @@ public:
     void getCovgrindOptions(std::vector <std::string> &plugin_opts, std::string fileNameModifier, bool addNoCoverage);
 
     int calculateScore(std::string filaNameModifier = "");
-    int checkAndScore(Input* input, bool addNoCoverage, bool first_run, bool use_remote, std::string fileNameModifier = "");
+    int checkAndScore(Input* input, bool addNoCoverage, bool first_run, std::string fileNameModifier = "");
 
-    void dumpExploit(Input* input, FileBuffer* stack_trace, bool info_available, bool same_exploit, int exploit_group);
-    bool dumpMCExploit(Input* input, const char* exec_log);
-    void dumpExploitArgv();
-
+    int dumpError(Input *input, Error* error);
+    
     bool updateArgv(Input* input);
 
     int checkDivergence(Input* first_input, int score);
@@ -124,8 +114,13 @@ public:
     void updateInput(Input* input);
 
     void talkToServer();
+    
+    int parseOffsetLog(std::vector<FileOffsetSet> &used_offsets);
+    
+    void addInput(Input* input, unsigned int depth, unsigned int score);
 
     OptionConfig* getConfig() { return config; }
+    static std::string getTempDir();
 
     ~ExecutionManager();
 
@@ -135,7 +130,6 @@ private:
     std::vector <std::string> cur_argv;
     std::set<unsigned long> delta_basicBlocksCovered;
     std::set<unsigned long> basicBlocksCovered;
-    int exploits;
     int divergences;
 };
 

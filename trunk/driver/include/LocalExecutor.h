@@ -33,24 +33,26 @@
 class LocalExecutor : public Executor
 {
 public:
-    LocalExecutor(): prog(NULL), file_out(-1), file_err(-1) {}
+    LocalExecutor(): prog(NULL), file_out(-1), file_err(-1),
+                     file_err_name(NULL) {}
 
     int exec(bool setlimit);
     int wait();
-    void redirect_stdout(char *filename);
-    void redirect_stderr(char *filename);
+    int redirect_stdout(char *filename);
+    int redirect_stderr(char *filename);
     virtual int run (int thread_index = 0) { return 0; }
-    ~LocalExecutor();
+    virtual ~LocalExecutor();
 
 protected:
     char  *prog;
     pid_t child_pid;
 
 private:
-    void do_redirect(int file_to_redirect, int with_file);
+    int do_redirect(int file_to_redirect, int with_file);
 
     int file_out;
     int file_err;
+    char *file_err_name;
 };
 
 

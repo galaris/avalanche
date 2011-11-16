@@ -1,6 +1,6 @@
 
 /*--------------------------------------------------------------------*/
-/*--- Wrappers for generic (non-AIX5!) Unix system calls           ---*/
+/*--- Wrappers for generic Unix system calls                       ---*/
 /*---                                            syswrap-generic.c ---*/
 /*--------------------------------------------------------------------*/
 
@@ -34,6 +34,7 @@
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"
+#include "pub_core_libcsetjmp.h"    // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_debuginfo.h"     // VG_(di_notify_*)
 #include "pub_core_aspacemgr.h"
@@ -42,6 +43,7 @@
 #include "pub_core_clientstate.h"   // VG_(brk_base), VG_(brk_limit)
 #include "pub_core_debuglog.h"
 #include "pub_core_errormgr.h"
+#include "pub_tool_gdbserver.h"     // VG_(gdbserver)
 #include "pub_core_libcbase.h"
 #include "pub_core_libcassert.h"
 #include "pub_core_libcfile.h"
@@ -76,7 +78,6 @@ Int boundSocket = -1;
 Int listeningSocket = -1;
 ULong curoffs;
 ULong cursize;
-//Char* inputfile = NULL;
 Bool caughtOpen = False;
 Bool curDeclared = True;
 Bool sockets = False;
@@ -87,7 +88,7 @@ UShort port;
 UChar ip1, ip2, ip3, ip4;
 
 
-/* Returns True iff address range is something the client can
+/* Returns True if address range is something the client can
    plausibly mess with: all of it is either already belongs to the
    client or is free or a reservation. */
 
@@ -298,8 +299,9 @@ SysRes do_mremap( Addr old_addr, SizeT old_len,
       goto eINVAL;
 
    /* reject wraparounds */
-   if (old_addr + old_len < old_addr
-       || new_addr + new_len < new_len)
+   if (old_addr + old_len < old_addr)
+      goto eINVAL;
+   if (f_fixed == True && new_addr + new_len < new_len)
       goto eINVAL;
 
    /* kernel rejects all fixed, no-move requests (which are
@@ -791,7 +793,6 @@ void init_preopened_fds_without_proc_self_fd(void)
 
 void VG_(init_preopened_fds)(void)
 {
-// Nb: AIX5 is handled in syswrap-aix5.c.
 // DDD: should probably use HAVE_PROC here or similar, instead.
 #if defined(VGO_linux)
    Int ret;
@@ -1286,7 +1287,6 @@ ML_(generic_POST_sys_socket) ( ThreadId tid, SysRes res, UWord arg0, UWord arg1,
    //SOCK_DGRAM = 2
    if (datagrams && ((arg1 & 0xff) == 2))
    {
-     VG_(printf)("caught DGRAM socket creation res=%d\n", sr_Res(res));
      if (fds == NULL) 
      {
        fds = VG_(HT_construct)("fds");
@@ -1385,7 +1385,6 @@ ML_(generic_POST_sys_accept) ( ThreadId tid,
    }
    if (sockets && (arg0 == listeningSocket))
    {
-     VG_(printf)("caught accept, arg0=%x arg1=%x arg2=%x sd=%d\n", arg0, arg1, arg2, sr_Res(res));
      fdsNode* node = VG_(HT_lookup)(fds, sr_Res(res));
      if (node == NULL)
      {
@@ -1501,7 +1500,6 @@ ML_(generic_POST_sys_recvfrom) ( ThreadId tid,
        {
          node->offs = node->offs + sr_Res(res);
        }
-       VG_(printf)("caught recvfrom from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
      }
      else
      {
@@ -1558,7 +1556,6 @@ ML_(generic_POST_sys_recv) ( ThreadId tid,
        {
          node->offs = node->offs + res;
        }
-       VG_(printf)("caught recv from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
      }
      else
      {
@@ -1608,7 +1605,6 @@ ML_(generic_PRE_sys_connect) ( ThreadId tid,
        }
        if (sockets)
        {
-         VG_(printf)("caught connect arg0=%x arg1=%x arg2=%x\n", arg0, arg1, arg2);
          fdsNode* node = VG_(HT_lookup)(fds, arg0);
          if (node == NULL)
          {
@@ -1982,7 +1978,7 @@ ML_(generic_POST_sys_shmat) ( ThreadId tid,
                               UWord res,
                               UWord arg0, UWord arg1, UWord arg2 )
 {
-   UInt segmentSize = get_shm_size ( arg0 );
+   UInt segmentSize = VG_PGROUNDUP(get_shm_size(arg0));
    if ( segmentSize > 0 ) {
       UInt prot = VKI_PROT_READ|VKI_PROT_WRITE;
       Bool d;
@@ -1999,7 +1995,7 @@ ML_(generic_POST_sys_shmat) ( ThreadId tid,
          cope with the discrepancy, aspacem's sync checker omits the
          dev/ino correspondence check in cases where V does not know
          the dev/ino. */
-      d = VG_(am_notify_client_shmat)( res, VG_PGROUNDUP(segmentSize), prot );
+      d = VG_(am_notify_client_shmat)( res, segmentSize, prot );
 
       /* we don't distinguish whether it's read-only or
        * read-write -- it doesn't matter really. */
@@ -2167,6 +2163,11 @@ ML_(generic_POST_sys_shmctl) ( ThreadId tid,
  * - On amd64-linux everything is simple and there is just the one
  *   call, mmap (aka sys_mmap)  which takes the arguments in the
  *   normal way and the offset in bytes.
+ *
+ * - On s390x-linux there is mmap (aka old_mmap) which takes the
+ *   arguments in a memory block and the offset in bytes. mmap2
+ *   is also available (but not exported via unistd.h) with
+ *   arguments in a memory block and the offset in pages.
  *
  * To cope with all this we provide a generic handler function here
  * and then each platform implements one or more system call handlers
@@ -2638,6 +2639,7 @@ PRE(sys_sync)
 
 PRE(sys_fstatfs)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_fstatfs ( %ld, %#lx )",ARG1,ARG2);
    PRE_REG_READ2(long, "fstatfs",
                  unsigned int, fd, struct statfs *, buf);
@@ -2651,6 +2653,7 @@ POST(sys_fstatfs)
 
 PRE(sys_fstatfs64)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_fstatfs64 ( %ld, %llu, %#lx )",ARG1,(ULong)ARG2,ARG3);
    PRE_REG_READ3(long, "fstatfs64",
                  unsigned int, fd, vki_size_t, size, struct statfs64 *, buf);
@@ -2697,6 +2700,7 @@ POST(sys_pread64)
 
 PRE(sys_mknod)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_mknod ( %#lx(%s), 0x%lx, 0x%lx )", ARG1, (char*)ARG1, ARG2, ARG3 );
    PRE_REG_READ3(long, "mknod",
                  const char *, pathname, int, mode, unsigned, dev);
@@ -2783,8 +2787,29 @@ PRE(sys_execve)
       return;
    }
 
+   // debug-only printing
+   if (0) {
+      VG_(printf)("ARG1 = %p(%s)\n", (void*)ARG1, (HChar*)ARG1);
+      if (ARG2) {
+         VG_(printf)("ARG2 = ");
+         Int q;
+         HChar** vec = (HChar**)ARG2;
+         for (q = 0; vec[q]; q++)
+            VG_(printf)("%p(%s) ", vec[q], vec[q]);
+         VG_(printf)("\n");
+      } else {
+         VG_(printf)("ARG2 = null\n");
+      }
+   }
+
    // Decide whether or not we want to follow along
-   trace_this_child = VG_(should_we_trace_this_child)( (HChar*)ARG1 );
+   { // Make 'child_argv' be a pointer to the child's arg vector
+     // (skipping the exe name)
+     HChar** child_argv = (HChar**)ARG2;
+     if (child_argv && child_argv[0] == NULL)
+        child_argv = NULL;
+     trace_this_child = VG_(should_we_trace_this_child)( (HChar*)ARG1, child_argv );
+   }
 
    // Do the important checks:  it is a file, is executable, permissions are
    // ok, etc.  We allow setuid executables to run only in the case when
@@ -2808,6 +2833,16 @@ PRE(sys_execve)
 
    /* After this point, we can't recover if the execve fails. */
    VG_(debugLog)(1, "syswrap", "Exec of %s\n", (Char*)ARG1);
+
+   
+   // Terminate gdbserver if it is active.
+   if (VG_(clo_vgdb)  != Vg_VgdbNo) {
+      // If the child will not be traced, we need to terminate gdbserver
+      // to cleanup the gdbserver resources (e.g. the FIFO files).
+      // If child will be traced, we also terminate gdbserver: the new 
+      // Valgrind will start a fresh gdbserver after exec.
+      VG_(gdbserver) (0);
+   }
 
    /* Resistance is futile.  Nuke all other threads.  POSIX mandates
       this. (Really, nuke them all, since the new process will make
@@ -3044,6 +3079,7 @@ PRE(sys_brk)
 
 PRE(sys_chdir)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_chdir ( %#lx(%s) )", ARG1,(char*)ARG1);
    PRE_REG_READ1(long, "chdir", const char *, path);
    PRE_MEM_RASCIIZ( "chdir(path)", ARG1 );
@@ -3051,6 +3087,7 @@ PRE(sys_chdir)
 
 PRE(sys_chmod)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_chmod ( %#lx(%s), %ld )", ARG1,(char*)ARG1,ARG2);
    PRE_REG_READ2(long, "chmod", const char *, path, vki_mode_t, mode);
    PRE_MEM_RASCIIZ( "chmod(path)", ARG1 );
@@ -3058,6 +3095,7 @@ PRE(sys_chmod)
 
 PRE(sys_chown)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_chown ( %#lx(%s), 0x%lx, 0x%lx )", ARG1,(char*)ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "chown",
                  const char *, path, vki_uid_t, owner, vki_gid_t, group);
@@ -3066,6 +3104,7 @@ PRE(sys_chown)
 
 PRE(sys_lchown)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_lchown ( %#lx(%s), 0x%lx, 0x%lx )", ARG1,(char*)ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "lchown",
                  const char *, path, vki_uid_t, owner, vki_gid_t, group);
@@ -3074,6 +3113,7 @@ PRE(sys_lchown)
 
 PRE(sys_close)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_close ( %ld )", ARG1);
    PRE_REG_READ1(long, "close", unsigned int, fd);
 
@@ -3089,7 +3129,6 @@ POST(sys_close)
 {
    if ((fds != NULL) && (VG_(HT_lookup)(fds, ARG1) != NULL))
    {
-      VG_(printf)("caught close arg=%ld\n", ARG1);
       VG_(HT_remove)(fds, ARG1);
       curfile = NULL;
       curfilenum = -1;
@@ -3135,12 +3174,14 @@ POST(sys_dup2)
 
 PRE(sys_fchdir)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_fchdir ( %ld )", ARG1);
    PRE_REG_READ1(long, "fchdir", unsigned int, fd);
 }
 
 PRE(sys_fchown)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_fchown ( %ld, %ld, %ld )", ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "fchown",
                  unsigned int, fd, vki_uid_t, owner, vki_gid_t, group);
@@ -3148,12 +3189,14 @@ PRE(sys_fchown)
 
 PRE(sys_fchmod)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_fchmod ( %ld, %ld )", ARG1,ARG2);
    PRE_REG_READ2(long, "fchmod", unsigned int, fildes, vki_mode_t, mode);
 }
 
 PRE(sys_newfstat)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_newfstat ( %ld, %#lx )", ARG1,ARG2);
    PRE_REG_READ2(long, "fstat", unsigned int, fd, struct stat *, buf);
    PRE_MEM_WRITE( "fstat(buf)", ARG2, sizeof(struct vki_stat) );
@@ -3186,7 +3229,7 @@ PRE(sys_fork)
 
    if (!SUCCESS) return;
 
-#if defined(VGO_linux) || defined(VGO_aix5)
+#if defined(VGO_linux)
    // RES is 0 for child, non-0 (the child's PID) for parent.
    is_child = ( RES == 0 ? True : False );
    child_pid = ( is_child ? -1 : RES );
@@ -3854,7 +3897,6 @@ HWord hashCode(Char* str)
 
 POST(sys_open)
 {
-   VG_(printf)("POST sys_open ARG1=%s, RES=%d\n", ARG1, RES);
    vg_assert(SUCCESS);
    if (fds == NULL) 
    {
@@ -3880,7 +3922,6 @@ POST(sys_open)
    if (sn != NULL)
    {
      caughtOpen = True;
-     VG_(printf)("caught open, ARG1=%s, RES=%d\n", ARG1, RES);
      fdsNode* node = VG_(HT_lookup)(fds, RES);
      Char* name;
      Int i = 0;
@@ -4003,7 +4044,6 @@ PRE(sys_read)
        cursize = node->size;
        curfilenum = node->seqnum;
        node->offs = node->offs + (ULong) ARG3 < cursize ? node->offs + (ULong) ARG3 : cursize;
-       VG_(printf)("caught read, curfile=%s curoffs=%d cursize=%d\n", curfile, curoffs, cursize);
      }
      else
      {
@@ -4036,7 +4076,6 @@ POST(sys_read)
        cursocket = node->seqnum;
        curoffs = node->offs;
        node->offs = node->offs + RES;
-       VG_(printf)("caught read from socket, cursocket=%d curoffs=%d\n", cursocket, curoffs);
      }
      else
      {
@@ -4128,6 +4167,7 @@ POST(sys_poll)
 
 PRE(sys_readlink)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    Word saved = SYSNO;
 
    PRINT("sys_readlink ( %#lx(%s), %#lx, %llu )", ARG1,(char*)ARG1,ARG2,(ULong)ARG3);
@@ -4209,6 +4249,7 @@ POST(sys_readv)
 
 PRE(sys_rename)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_rename ( %#lx(%s), %#lx(%s) )", ARG1,(char*)ARG1,ARG2,(char*)ARG2);
    PRE_REG_READ2(long, "rename", const char *, oldpath, const char *, newpath);
    PRE_MEM_RASCIIZ( "rename(oldpath)", ARG1 );
@@ -4508,6 +4549,7 @@ PRE(sys_writev)
 
 PRE(sys_utimes)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_utimes ( %#lx(%s), %#lx )", ARG1,(char*)ARG1,ARG2);
    PRE_REG_READ2(long, "utimes", char *, filename, struct timeval *, tvp);
    PRE_MEM_RASCIIZ( "utimes(filename)", ARG1 );

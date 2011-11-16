@@ -23,17 +23,14 @@
    limitations under the License.
 */
 
-#include "Logger.h"
-#include "STP_Executor.h"
-#include "STP_Output.h"
-#include "TmpFile.h"
-#include "Monitor.h"
-
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <pthread.h>
+
+#include "Logger.h"
+#include "STP_Executor.h"
+#include "TmpFile.h"
+#include "Monitor.h"
 
 using namespace std;
 
@@ -57,59 +54,64 @@ STP_Executor::STP_Executor(bool debug_full_enable,
     args[1] = strdup("-p");
 }
 
-STP_Output *STP_Executor::run(const char *file_name, int thread_index)
+string STP_Executor::run(const char *file_name, int thread_index)
 {
     if (!thread_num)
     {
-      LOG(logger, "Running STP");
+      LOG(Logger :: DEBUG, "Running STP.");
     }
     else
     {
-      LOG(logger, "Thread #" << thread_index << ": Running STP");
+      LOG(Logger :: DEBUG, "Thread #" << thread_index << ": Running STP.");
     }
     
     args[2] = strdup(file_name);
 
-    TmpFile file_out;
-    TmpFile file_err;
+    TmpFile* file_out = new TmpFile();
+    TmpFile* file_err = new TmpFile();
 
-    redirect_stdout(file_out.getName());
-    redirect_stderr(file_err.getName());
+    monitor->setTmpFiles(file_out, file_err);
+
+    if ((redirect_stdout(file_out->getName()) == -1) ||
+        (redirect_stderr(file_err->getName()) == -1))
+    {
+        return string("");
+    }
 
     int ret = exec(true);
     monitor->setPID(child_pid, thread_index);
  
     if (ret == -1) {
-        ERR(logger, "Problem in execution: " << strerror(errno));
-        return NULL;
+        LOG(Logger :: ERROR, "Problem in execution: " << strerror(errno));
+        return string("");
     }
 
     ret = wait();
     if (ret == -1) {
         if (!monitor->getKilledStatus())
         {
-          ERR(logger, "Problem in waiting: " << strerror(errno));
+          LOG(Logger :: ERROR, "Problem in waiting: " << strerror(errno));
         }
-        return NULL;
+        return string("");
     }
     if (!thread_num)
     {
-      LOG(logger, "STP is finished");
+      LOG(Logger :: DEBUG, "STP is finished.");
     }
     else
     {
-      LOG(logger, "Thread #" << thread_index << ": STP is finished");
+      LOG(Logger :: DEBUG, "Thread #" << thread_index << ": STP is finished.");
     }
 
     if (ret != 0) {
-        LOG(logger, "STP exits with code " << ret);
-        return NULL;
+        LOG(Logger :: DEBUG, "STP exits with code " << ret);
+        return string("");
     }
 
-    STP_Output *stp_output = new STP_Output;
+    return file_out->getName();
+}
 
-    stp_output->setFile(file_out.exportFile());
-
-    return stp_output;
+STP_Executor::~STP_Executor()
+{
 }
 

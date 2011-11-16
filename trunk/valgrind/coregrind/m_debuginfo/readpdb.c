@@ -86,8 +86,8 @@
    doesn't make much sense.  Here, we use text_bias as empirically
    producing the most ranges that fall inside the text segments for a
    multi-dll program.  Of course, it could still be nonsense :-) */
-#define BIAS_FOR_SYMBOLS   (di->rx_map_avma)
-#define BIAS_FOR_LINETAB   (di->rx_map_avma)
+#define BIAS_FOR_SYMBOLS   (di->fsm.rx_map_avma)
+#define BIAS_FOR_LINETAB   (di->fsm.rx_map_avma)
 #define BIAS_FOR_LINETAB2  (di->text_bias)
 #define BIAS_FOR_FPO       (di->text_bias)
 /* Using di->text_bias for the FPOs causes 981 in range and 1 out of
@@ -1285,14 +1285,15 @@ static ULong DEBUG_SnarfCodeView(
 
          if (0 /*VG_(needs).data_syms*/) {
             nmstr = ML_(addStr)(di, symname, sym->data_v1.p_name.namelen);
-
-            vsym.addr = bias + sectp[sym->data_v1.segment-1].VirtualAddress
-                             + sym->data_v1.offset;
-            vsym.name = nmstr;
-            vsym.size = sym->data_v1.p_name.namelen;
-                      // FIXME: .namelen is sizeof(.data) including .name[]
-            vsym.isText = (sym->generic.id == S_PUB_V1);
-            vsym.isIFunc = False;
+            vsym.addr      = bias + sectp[sym->data_v1.segment-1].VirtualAddress
+                                 + sym->data_v1.offset;
+            vsym.tocptr    = 0;
+            vsym.pri_name  = nmstr;
+            vsym.sec_names = NULL;
+            vsym.size      = sym->data_v1.p_name.namelen;
+                             // FIXME: .namelen is sizeof(.data) including .name[]
+            vsym.isText    = (sym->generic.id == S_PUB_V1);
+            vsym.isIFunc   = False;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1310,16 +1311,17 @@ static ULong DEBUG_SnarfCodeView(
 
          if (sym->generic.id==S_PUB_V2 /*VG_(needs).data_syms*/) {
             nmstr = ML_(addStr)(di, symname, k);
-
-            vsym.addr = bias + sectp[sym->data_v2.segment-1].VirtualAddress
-                             + sym->data_v2.offset;
-            vsym.name = nmstr;
-            vsym.size = 4000;
-                        // FIXME: data_v2.len is sizeof(.data),
-                        // not size of function!
-            vsym.isText = !!(IMAGE_SCN_CNT_CODE 
-                             & sectp[sym->data_v2.segment-1].Characteristics);
-            vsym.isIFunc = False;
+            vsym.addr      = bias + sectp[sym->data_v2.segment-1].VirtualAddress
+                                  + sym->data_v2.offset;
+            vsym.tocptr    = 0;
+            vsym.pri_name  = nmstr;
+            vsym.sec_names = NULL;
+            vsym.size      = 4000;
+                             // FIXME: data_v2.len is sizeof(.data),
+                             // not size of function!
+            vsym.isText    = !!(IMAGE_SCN_CNT_CODE 
+                                & sectp[sym->data_v2.segment-1].Characteristics);
+            vsym.isIFunc   = False;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1343,16 +1345,17 @@ static ULong DEBUG_SnarfCodeView(
          if (1  /*sym->generic.id==S_PUB_FUNC1_V3 
                   || sym->generic.id==S_PUB_FUNC2_V3*/) {
             nmstr = ML_(addStr)(di, symname, k);
-
-            vsym.addr = bias + sectp[sym->public_v3.segment-1].VirtualAddress
-                             + sym->public_v3.offset;
-            vsym.name = nmstr;
-            vsym.size = 4000;
-                        // FIXME: public_v3.len is not length of the
-                        // .text of the function
-            vsym.isText = !!(IMAGE_SCN_CNT_CODE
-                             & sectp[sym->data_v2.segment-1].Characteristics);
-            vsym.isIFunc = False;
+            vsym.addr      = bias + sectp[sym->public_v3.segment-1].VirtualAddress
+                                  + sym->public_v3.offset;
+            vsym.tocptr    = 0;
+            vsym.pri_name  = nmstr;
+            vsym.sec_names = NULL;
+            vsym.size      = 4000;
+                             // FIXME: public_v3.len is not length of the
+                             // .text of the function
+            vsym.isText    = !!(IMAGE_SCN_CNT_CODE
+                                & sectp[sym->data_v2.segment-1].Characteristics);
+            vsym.isIFunc   = False;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1378,13 +1381,14 @@ static ULong DEBUG_SnarfCodeView(
                               sym->proc_v1.p_name.namelen);
          symname[sym->proc_v1.p_name.namelen] = '\0';
          nmstr = ML_(addStr)(di, symname, sym->proc_v1.p_name.namelen);
-
-         vsym.addr = bias + sectp[sym->proc_v1.segment-1].VirtualAddress
-                          + sym->proc_v1.offset;
-         vsym.name = nmstr;
-         vsym.size = sym->proc_v1.proc_len;
-         vsym.isText = True;
-         vsym.isIFunc = False;
+         vsym.addr      = bias + sectp[sym->proc_v1.segment-1].VirtualAddress
+                               + sym->proc_v1.offset;
+         vsym.tocptr    = 0;
+         vsym.pri_name  = nmstr;
+         vsym.sec_names = NULL;
+         vsym.size      = sym->proc_v1.proc_len;
+         vsym.isText    = True;
+         vsym.isIFunc   = False;
          if (debug)
              VG_(message)(Vg_UserMsg,
                          "  Adding function %s addr=%#lx length=%d\n",
@@ -1399,13 +1403,14 @@ static ULong DEBUG_SnarfCodeView(
                               sym->proc_v2.p_name.namelen);
          symname[sym->proc_v2.p_name.namelen] = '\0';
          nmstr = ML_(addStr)(di, symname, sym->proc_v2.p_name.namelen);
-
-         vsym.addr = bias + sectp[sym->proc_v2.segment-1].VirtualAddress
-                          + sym->proc_v2.offset;
-         vsym.name = nmstr;
-         vsym.size = sym->proc_v2.proc_len;
-         vsym.isText = True;
-         vsym.isIFunc = False;
+         vsym.addr      = bias + sectp[sym->proc_v2.segment-1].VirtualAddress
+                               + sym->proc_v2.offset;
+         vsym.tocptr    = 0;
+         vsym.pri_name  = nmstr;
+         vsym.sec_names = NULL;
+         vsym.size      = sym->proc_v2.proc_len;
+         vsym.isText    = True;
+         vsym.isIFunc   = False;
          if (debug)
             VG_(message)(Vg_UserMsg,
                          "  Adding function %s addr=%#lx length=%d\n",
@@ -1422,13 +1427,14 @@ static ULong DEBUG_SnarfCodeView(
          if (1) {
             nmstr = ML_(addStr)(di, sym->proc_v3.name,
                                     VG_(strlen)(sym->proc_v3.name));
-
-            vsym.addr = bias + sectp[sym->proc_v3.segment-1].VirtualAddress
-                             + sym->proc_v3.offset;
-            vsym.name = nmstr;
-            vsym.size  = sym->proc_v3.proc_len;
-            vsym.isText = 1;
-            vsym.isIFunc = False;
+            vsym.addr      = bias + sectp[sym->proc_v3.segment-1].VirtualAddress
+                                  + sym->proc_v3.offset;
+            vsym.tocptr    = 0;
+            vsym.pri_name  = nmstr;
+            vsym.sec_names = NULL;
+            vsym.size      = sym->proc_v3.proc_len;
+            vsym.isText    = 1;
+            vsym.isIFunc   = False;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -2101,21 +2107,21 @@ static void pdb_dump( struct pdb_reader* pdb,
     */
    file = symbols_image + header_size;
    while ( file - symbols_image < header_size + symbols.module_size ) {
-      int file_nr, file_index, symbol_size, lineno_size;
+      int file_nr, /* file_index, */ symbol_size, lineno_size;
       char *file_name;
 
       if ( symbols.version < 19970000 ) {
          PDB_SYMBOL_FILE *sym_file = (PDB_SYMBOL_FILE *) file;
          file_nr     = sym_file->file;
          file_name   = sym_file->filename;
-         file_index  = sym_file->range.index;
+         /* file_index  = sym_file->range.index; */ /* UNUSED */
          symbol_size = sym_file->symbol_size;
          lineno_size = sym_file->lineno_size;
       } else {
          PDB_SYMBOL_FILE_EX *sym_file = (PDB_SYMBOL_FILE_EX *) file;
          file_nr     = sym_file->file;
          file_name   = sym_file->filename;
-         file_index  = sym_file->range.index;
+         /* file_index  = sym_file->range.index; */ /* UNUSED */
          symbol_size = sym_file->symbol_size;
          lineno_size = sym_file->lineno_size;
       }
@@ -2253,7 +2259,7 @@ Bool ML_(read_pdb_debug_info)(
         + OFFSET_OF(IMAGE_NT_HEADERS, OptionalHeader)
         + ntheaders_avma->FileHeader.SizeOfOptionalHeader;
 
-   di->rx_map_avma = (Addr)obj_avma;
+   di->fsm.rx_map_avma = (Addr)obj_avma;
 
    /* Iterate over PE(?) headers.  Try to establish the text_bias,
       that's all we really care about. */
@@ -2284,35 +2290,35 @@ Bool ML_(read_pdb_debug_info)(
             the real text section and valgrind will compute the wrong
             avma value and hence the wrong bias. */
          if (!(pe_sechdr_avma->Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
-            di->have_rx_map = True;
-            if (di->rx_map_avma == 0) {
-               di->rx_map_avma = mapped_avma;
+            di->fsm.have_rx_map = True;
+            if (di->fsm.rx_map_avma == 0) {
+               di->fsm.rx_map_avma = mapped_avma;
             }
-            if (di->rx_map_size==0) {
-               di->rx_map_foff = pe_sechdr_avma->PointerToRawData;
+            if (di->fsm.rx_map_size==0) {
+               di->fsm.rx_map_foff = pe_sechdr_avma->PointerToRawData;
             }
             di->text_present = True;
             if (di->text_avma==0) {
                di->text_avma = mapped_avma;
             }
             di->text_size   += pe_sechdr_avma->Misc.VirtualSize;
-            di->rx_map_size += pe_sechdr_avma->Misc.VirtualSize;
+            di->fsm.rx_map_size += pe_sechdr_avma->Misc.VirtualSize;
          }
       }
       else if (pe_sechdr_avma->Characteristics 
                & IMAGE_SCN_CNT_INITIALIZED_DATA) {
-         di->have_rw_map = True;
-         if (di->rw_map_avma == 0) {
-            di->rw_map_avma = mapped_avma;
+         di->fsm.have_rw_map = True;
+         if (di->fsm.rw_map_avma == 0) {
+            di->fsm.rw_map_avma = mapped_avma;
          }
-         if (di->rw_map_size==0) {
-            di->rw_map_foff = pe_sechdr_avma->PointerToRawData;
+         if (di->fsm.rw_map_size==0) {
+            di->fsm.rw_map_foff = pe_sechdr_avma->PointerToRawData;
          }
          di->data_present = True;
          if (di->data_avma==0) {
             di->data_avma = mapped_avma;
          }
-         di->rw_map_size += pe_sechdr_avma->Misc.VirtualSize;
+         di->fsm.rw_map_size += pe_sechdr_avma->Misc.VirtualSize;
          di->data_size   += pe_sechdr_avma->Misc.VirtualSize;
       }
       else if (pe_sechdr_avma->Characteristics
@@ -2325,29 +2331,29 @@ Bool ML_(read_pdb_debug_info)(
       mapped_avma     = VG_PGROUNDDN(mapped_avma);
       mapped_end_avma = VG_PGROUNDUP(mapped_end_avma);
 
-      /* Urr.  These tests are bogus; ->rx_map_avma is not necessarily
+      /* Urr.  These tests are bogus; ->fsm.rx_map_avma is not necessarily
          the start of the text section. */
       if ((1 /*VG_(needs).data_syms*/ 
            || (pe_sechdr_avma->Characteristics & IMAGE_SCN_CNT_CODE))
-          && mapped_avma >= di->rx_map_avma
-          && mapped_avma <= (di->rx_map_avma+di->text_size)
-          && mapped_end_avma > (di->rx_map_avma+di->text_size)) {
-         UInt newsz = mapped_end_avma - di->rx_map_avma;
+          && mapped_avma >= di->fsm.rx_map_avma
+          && mapped_avma <= (di->fsm.rx_map_avma+di->text_size)
+          && mapped_end_avma > (di->fsm.rx_map_avma+di->text_size)) {
+         UInt newsz = mapped_end_avma - di->fsm.rx_map_avma;
          if (newsz > di->text_size) {
             /* extending the mapping is always needed for PE files
                under WINE */
             di->text_size = newsz;
-            di->rx_map_size = newsz;
+            di->fsm.rx_map_size = newsz;
          }
       }
    }
 
-   if (di->have_rx_map && di->have_rw_map && !di->have_dinfo) {
-      vg_assert(di->filename);
+   if (di->fsm.have_rx_map && di->fsm.have_rw_map && !di->have_dinfo) {
+      vg_assert(di->fsm.filename);
       TRACE_SYMTAB("\n");
       TRACE_SYMTAB("------ start PE OBJECT with PDB INFO "
                    "---------------------\n");
-      TRACE_SYMTAB("------ name = %s\n", di->filename);
+      TRACE_SYMTAB("------ name = %s\n", di->fsm.filename);
       TRACE_SYMTAB("\n");
    }
 
@@ -2360,14 +2366,17 @@ Bool ML_(read_pdb_debug_info)(
    if (VG_(clo_verbosity) > 1) {
       VG_(message)(Vg_DebugMsg,
                    "rx_map: avma %#lx size %7lu foff %llu\n",
-                   di->rx_map_avma, di->rx_map_size, (Off64T)di->rx_map_foff);
+                   di->fsm.rx_map_avma, di->fsm.rx_map_size,
+                   (Off64T)di->fsm.rx_map_foff);
       VG_(message)(Vg_DebugMsg,
                    "rw_map: avma %#lx size %7lu foff %llu\n",
-                   di->rw_map_avma, di->rw_map_size, (Off64T)di->rw_map_foff);
+                   di->fsm.rw_map_avma, di->fsm.rw_map_size,
+                   (Off64T)di->fsm.rw_map_foff);
 
       VG_(message)(Vg_DebugMsg,
                    "  text: avma %#lx svma %#lx size %7lu bias %#lx\n",
-                   di->text_avma, di->text_svma, di->text_size, di->text_bias);
+                   di->text_avma, di->text_svma,
+                   di->text_size, di->text_bias);
    }
 
    /*
@@ -2423,7 +2432,7 @@ Bool ML_(read_pdb_debug_info)(
    }
 
    TRACE_SYMTAB("\n");
-   TRACE_SYMTAB("------ name = %s\n", di->filename);
+   TRACE_SYMTAB("------ name = %s\n", di->fsm.filename);
    TRACE_SYMTAB("------ end PE OBJECT with PDB INFO "
                 "--------------------\n");
    TRACE_SYMTAB("\n");
@@ -2474,7 +2483,7 @@ HChar* ML_(find_name_of_pdb_file)( HChar* pename )
                 + 100/*misc*/;
    HChar* cmd = ML_(dinfo_zalloc)("di.readpe.fnopf.cmd", cmdlen);
    vg_assert(cmd);
-   VG_(sprintf)(cmd, "%s -c \"%s %s | %s '\\.pdb|\\.PDB' >> %s\"",
+   VG_(sprintf)(cmd, "%s -c \"%s '%s' | %s '\\.pdb|\\.PDB' >> %s\"",
                      sh, strings, pename, egrep, tmpname);
    vg_assert(cmd[cmdlen-1] == 0);
    if (0) VG_(printf)("QQQQQQQQ: %s\n", cmd);

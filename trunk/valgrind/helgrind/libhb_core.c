@@ -94,6 +94,257 @@
 /////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////
 //                                                             //
+// data decls: VtsID                                           //
+//                                                             //
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+
+/* VtsIDs: Unique small-integer IDs for VTSs.  VtsIDs can't exceed 30
+   bits, since they have to be packed into the lowest 30 bits of an
+   SVal. */
+typedef  UInt  VtsID;
+#define VtsID_INVALID 0xFFFFFFFF
+
+
+
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+//                                                             //
+// data decls: SVal                                            //
+//                                                             //
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+
+typedef  ULong  SVal;
+
+/* This value has special significance to the implementation, and callers
+   may not store it in the shadow memory. */
+#define SVal_INVALID (3ULL << 62)
+
+/* This is the default value for shadow memory.  Initially the shadow
+   memory contains no accessible areas and so all reads produce this
+   value.  TODO: make this caller-defineable. */
+#define SVal_NOACCESS (2ULL << 62)
+
+
+
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+//                                                             //
+// data decls: ScalarTS                                        //
+//                                                             //
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+
+/* Scalar Timestamp.  We have to store a lot of these, so there is
+   some effort to make them as small as possible.  Logically they are
+   a pair, (Thr*, ULong), but that takes 16 bytes on a 64-bit target.
+   We pack it into 64 bits by representing the Thr* using a ThrID, a
+   small integer (18 bits), and a 46 bit integer for the timestamp
+   number.  The 46/18 split is arbitary, but has the effect that
+   Helgrind can only handle programs that create 2^18 or fewer threads
+   over their entire lifetime, and have no more than 2^46 timestamp
+   ticks (synchronisation operations on the same thread).
+
+   This doesn't seem like much of a limitation.  2^46 ticks is
+   7.06e+13, and if each tick (optimistically) takes the machine 1000
+   cycles to process, then the minimum time to process that many ticks
+   at a clock rate of 5 GHz is 162.9 days.  And that's doing nothing
+   but VTS ticks, which isn't realistic.
+
+   NB1: SCALARTS_N_THRBITS must be 29 or lower.  The obvious limit is
+   32 since a ThrID is a UInt.  29 comes from the fact that
+   'Thr_n_RCEC', which records information about old accesses, packs
+   not only a ThrID but also 2+1 other bits (access size and
+   writeness) in a UInt, hence limiting size to 32-(2+1) == 29.
+
+   NB2: thrid values are issued upwards from 1024, and values less
+   than that aren't valid.  This isn't per se necessary (any order
+   will do, so long as they are unique), but it does help ensure they
+   are less likely to get confused with the various other kinds of
+   small-integer thread ids drifting around (eg, TId).  See also NB5.
+
+   NB3: this probably also relies on the fact that Thr's are never
+   deallocated -- they exist forever.  Hence the 1-1 mapping from
+   Thr's to thrid values (set up in Thr__new) persists forever.
+
+   NB4: temp_max_sized_VTS is allocated at startup and never freed.
+   It is a maximum sized VTS, so has (1 << SCALARTS_N_TYMBITS)
+   ScalarTSs.  So we can't make SCALARTS_N_THRBITS too large without
+   making the memory use for this go sky-high.  With
+   SCALARTS_N_THRBITS at 18, it occupies 2MB of memory, which seems
+   like an OK tradeoff.  If more than 256k threads need to be
+   supported, we could change SCALARTS_N_THRBITS to 20, which would
+   facilitate supporting 1 million threads at the cost of 8MB storage
+   for temp_max_sized_VTS.
+
+   NB5: the conflicting-map mechanism (Thr_n_RCEC, specifically) uses
+   ThrID == 0 to denote an empty Thr_n_RCEC record.  So ThrID == 0
+   must never be a valid ThrID.  Given NB2 that's OK.
+*/
+#define SCALARTS_N_THRBITS 18  /* valid range: 11 to 29 inclusive */
+
+#define SCALARTS_N_TYMBITS (64 - SCALARTS_N_THRBITS)
+typedef
+   struct {
+      ThrID thrid : SCALARTS_N_THRBITS;
+      ULong tym   : SCALARTS_N_TYMBITS;
+   }
+   ScalarTS;
+
+#define ThrID_MAX_VALID ((1 << SCALARTS_N_THRBITS) - 1)
+
+
+
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+//                                                             //
+// data decls: Filter                                          //
+//                                                             //
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+
+// baseline: 5, 9
+#define FI_LINE_SZB_LOG2  5
+#define FI_NUM_LINES_LOG2 10
+
+#define FI_LINE_SZB       (1 << FI_LINE_SZB_LOG2)
+#define FI_NUM_LINES      (1 << FI_NUM_LINES_LOG2)
+
+#define FI_TAG_MASK        (~(Addr)(FI_LINE_SZB - 1))
+#define FI_GET_TAG(_a)     ((_a) & FI_TAG_MASK)
+
+#define FI_GET_LINENO(_a)  ( ((_a) >> FI_LINE_SZB_LOG2) \
+                             & (Addr)(FI_NUM_LINES-1) )
+
+
+/* In the lines, each 8 bytes are treated individually, and are mapped
+   to a UShort.  Regardless of endianness of the underlying machine,
+   bits 1 and 0 pertain to the lowest address and bits 15 and 14 to
+   the highest address.
+
+   Of each bit pair, the higher numbered bit is set if a R has been
+   seen, so the actual layout is:
+
+   15 14             ...  01 00
+
+   R  W  for addr+7  ...  R  W  for addr+0
+
+   So a mask for the R-bits is 0xAAAA and for the W bits is 0x5555.
+*/
+
+/* tags are separated from lines.  tags are Addrs and are
+   the base address of the line. */
+typedef
+   struct {
+      UShort u16s[FI_LINE_SZB / 8]; /* each UShort covers 8 bytes */
+   }
+   FiLine;
+
+typedef
+   struct {
+      Addr   tags[FI_NUM_LINES];
+      FiLine lines[FI_NUM_LINES];
+   }
+   Filter;
+
+
+
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+//                                                             //
+// data decls: Thr, ULong_n_EC                                 //
+//                                                             //
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+
+// Records stacks for H1 history mechanism (DRD-style)
+typedef
+   struct { ULong ull; ExeContext* ec; }
+   ULong_n_EC;
+
+
+/* How many of the above records to collect for each thread?  Older
+   ones are dumped when we run out of space.  62.5k requires 1MB per
+   thread, since each ULong_n_EC record is 16 bytes long.  When more
+   than N_KWs_N_STACKs_PER_THREAD are present, the older half are
+   deleted to make space.  Hence in the worst case we will be able to
+   produce a stack at least for the last N_KWs_N_STACKs_PER_THREAD / 2
+   Kw transitions (segments in this thread).  For the current setting
+   that gives a guaranteed stack for at least the last 31.25k
+   segments. */
+#define N_KWs_N_STACKs_PER_THREAD 62500
+
+
+struct _Thr {
+   /* Current VTSs for this thread.  They change as we go along.  viR
+      is the VTS to be used for reads, viW for writes.  Usually they
+      are the same, but can differ when we deal with reader-writer
+      locks.  It is always the case that 
+         VtsID__cmpLEQ(viW,viR) == True
+      that is, viW must be the same, or lagging behind, viR. */
+   VtsID viR;
+   VtsID viW;
+
+   /* Is initially False, and is set to True after the thread really
+      has done a low-level exit.  When True, we expect to never see
+      any more memory references done by this thread. */
+   Bool llexit_done;
+
+   /* Is initially False, and is set to True after the thread has been
+      joined with (reaped by some other thread).  After this point, we
+      do not expect to see any uses of .viR or .viW, so it is safe to
+      set them to VtsID_INVALID. */
+   Bool joinedwith_done;
+
+   /* A small integer giving a unique identity to this Thr.  See
+      comments on the definition of ScalarTS for details. */
+   ThrID thrid : SCALARTS_N_THRBITS;
+
+   /* A filter that removes references for which we believe that
+      msmcread/msmcwrite will not change the state, nor report a
+      race. */
+   Filter* filter;
+
+   /* A pointer back to the top level Thread structure.  There is a
+      1-1 mapping between Thread and Thr structures -- each Thr points
+      at its corresponding Thread, and vice versa.  Really, Thr and
+      Thread should be merged into a single structure. */
+   Thread* hgthread;
+
+   /* The ULongs (scalar Kws) in this accumulate in strictly
+      increasing order, without duplicates.  This is important because
+      we need to be able to find a given scalar Kw in this array
+      later, by binary search. */
+   XArray* /* ULong_n_EC */ local_Kws_n_stacks;
+};
+
+
+
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+//                                                             //
+// data decls: SO                                              //
+//                                                             //
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+
+// (UInt) `echo "Synchronisation object" | md5sum`
+#define SO_MAGIC 0x56b3c5b0U
+
+struct _SO {
+   struct _SO* admin_prev;
+   struct _SO* admin_next;
+   VtsID viR; /* r-clock of sender */
+   VtsID viW; /* w-clock of sender */
+   UInt  magic;
+};
+
+
+
+/////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////
+//                                                             //
 // Forward declarations                                        //
 //                                                             //
 /////////////////////////////////////////////////////////////////
@@ -104,6 +355,18 @@
    once at startup and then never changed. */
 static void        (*main_get_stacktrace)( Thr*, Addr*, UWord ) = NULL;
 static ExeContext* (*main_get_EC)( Thr* ) = NULL;
+
+/* misc fn and data fwdses */
+static void VtsID__rcinc ( VtsID ii );
+static void VtsID__rcdec ( VtsID ii );
+
+static inline Bool SVal__isC ( SVal s );
+static inline VtsID SVal__unC_Rmin ( SVal s );
+static inline VtsID SVal__unC_Wmin ( SVal s );
+static inline SVal SVal__mkC ( VtsID rmini, VtsID wmini );
+
+/* A double linked list of all the SO's. */
+SO* admin_SO;
 
 
 
@@ -117,17 +380,6 @@ static ExeContext* (*main_get_EC)( Thr* ) = NULL;
 
 #ifndef __HB_ZSM_H
 #define __HB_ZSM_H
-
-typedef  ULong  SVal;
-
-/* This value has special significance to the implementation, and callers
-   may not store it in the shadow memory. */
-#define SVal_INVALID (3ULL << 62)
-
-/* This is the default value for shadow memory.  Initially the shadow
-   memory contains no accessible areas and so all reads produce this
-   value.  TODO: make this caller-defineable. */
-#define SVal_NOACCESS (2ULL << 62)
 
 /* Initialise the library.  Once initialised, it will (or may) call
    rcinc and rcdec in response to all the calls below, in order to
@@ -345,11 +597,19 @@ static UWord stats__vts__tick            = 0; // # calls to VTS__tick
 static UWord stats__vts__join            = 0; // # calls to VTS__join
 static UWord stats__vts__cmpLEQ          = 0; // # calls to VTS__cmpLEQ
 static UWord stats__vts__cmp_structural  = 0; // # calls to VTS__cmp_structural
-static UWord stats__vts__cmp_structural_slow = 0; // # calls to VTS__cmp_structural w/ slow case
-static UWord stats__vts__indexat_slow    = 0; // # calls to VTS__indexAt_SLOW
-static UWord stats__vts_set__fadoa       = 0; // # calls to vts_set__find_and_dealloc__or_add
-static UWord stats__vts_set__fadoa_d     = 0; // # calls to vts_set__find_and_dealloc__or_add
-                                              // that lead to a deallocation
+
+// # calls to VTS__cmp_structural w/ slow case
+static UWord stats__vts__cmp_structural_slow = 0;
+
+// # calls to VTS__indexAt_SLOW
+static UWord stats__vts__indexat_slow = 0;
+
+// # calls to vts_set__find__or__clone_and_add
+static UWord stats__vts_set__focaa    = 0;
+
+// # calls to vts_set__find__or__clone_and_add that lead to an
+// allocation
+static UWord stats__vts_set__focaa_a  = 0;
 
 
 static inline Addr shmem__round_to_SecMap_base ( Addr a ) {
@@ -1524,13 +1784,72 @@ static void zsm_init ( void(*p_rcinc)(SVal), void(*p_rcdec)(SVal) )
 /////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////
 
-#ifndef __HB_VTS_H
-#define __HB_VTS_H
 
-/* VtsIDs can't exceed 30 bits, since they have to be packed into the
-   lowest 30 bits of an SVal. */
-typedef  UInt  VtsID;
-#define VtsID_INVALID 0xFFFFFFFF
+/* There's a 1-1 mapping between Thr and ThrIDs -- the latter merely
+   being compact stand-ins for Thr*'s.  Use these functions to map
+   between them. */
+static ThrID Thr__to_ThrID   ( Thr*  thr   ); /* fwds */
+static Thr*  Thr__from_ThrID ( ThrID thrid ); /* fwds */
+
+__attribute__((noreturn))
+static void scalarts_limitations_fail_NORETURN ( Bool due_to_nThrs )
+{
+   if (due_to_nThrs) {
+      HChar* s =
+         "\n"
+         "Helgrind: cannot continue, run aborted: too many threads.\n"
+         "Sorry.  Helgrind can only handle programs that create\n"
+         "%'llu or fewer threads over their entire lifetime.\n"
+         "\n";
+      VG_(umsg)(s, (ULong)(ThrID_MAX_VALID - 1024));
+   } else {
+      HChar* s =
+         "\n"
+         "Helgrind: cannot continue, run aborted: too many\n"
+         "synchronisation events.  Sorry. Helgrind can only handle\n"
+         "programs which perform %'llu or fewer\n"
+         "inter-thread synchronisation events (locks, unlocks, etc).\n"
+         "\n";
+      VG_(umsg)(s, (1ULL << SCALARTS_N_TYMBITS) - 1);
+   }
+   VG_(exit)(1);
+   /*NOTREACHED*/
+   tl_assert(0); /*wtf?!*/
+}
+
+
+/* The dead thread (ThrID, actually) table.  A thread may only be
+   listed here if we have been notified thereof by libhb_async_exit.
+   New entries are added at the end.  The order isn't important, but
+   the ThrID values must be unique.  This table lists the identity of
+   all threads that have ever died -- none are ever removed.  We keep
+   this table so as to be able to prune entries from VTSs.  We don't
+   actually need to keep the set of threads that have ever died --
+   only the threads that have died since the previous round of
+   pruning.  But it's useful for sanity check purposes to keep the
+   entire set, so we do. */
+static XArray* /* of ThrID */ verydead_thread_table = NULL;
+
+/* Arbitrary total ordering on ThrIDs. */
+static Int cmp__ThrID ( void* v1, void* v2 ) {
+   ThrID id1 = *(ThrID*)v1;
+   ThrID id2 = *(ThrID*)v2;
+   if (id1 < id2) return -1;
+   if (id1 > id2) return 1;
+   return 0;
+}
+
+static void verydead_thread_table_init ( void )
+{
+   tl_assert(!verydead_thread_table);
+   verydead_thread_table
+     = VG_(newXA)( HG_(zalloc),
+                   "libhb.verydead_thread_table_init.1",
+                   HG_(free), sizeof(ThrID) );
+   tl_assert(verydead_thread_table);
+   VG_(setCmpFnXA)(verydead_thread_table, cmp__ThrID);
+}
+
 
 /* A VTS contains .ts, its vector clock, and also .id, a field to hold
    a backlink for the caller's convenience.  Since we have no idea
@@ -1538,41 +1857,57 @@ typedef  UInt  VtsID;
    VtsID_INVALID. */
 typedef
    struct {
-      VtsID   id;
-      XArray* ts; /* XArray* ScalarTS(abstract) */
+      VtsID    id;
+      UInt     usedTS;
+      UInt     sizeTS;
+      ScalarTS ts[0];
    }
    VTS;
 
+/* Allocate a VTS capable of storing 'sizeTS' entries. */
+static VTS* VTS__new ( HChar* who, UInt sizeTS );
 
-/* Create a new, empty VTS. */
-static VTS* VTS__new ( void );
+/* Make a clone of 'vts', sizing the new array to exactly match the
+   number of ScalarTSs present. */
+static VTS* VTS__clone ( HChar* who, VTS* vts );
+
+/* Make a clone of 'vts' with the thrids in 'thrids' removed.  The new
+   array is sized exactly to hold the number of required elements.
+   'thridsToDel' is an array of ThrIDs to be omitted in the clone, and
+   must be in strictly increasing order. */
+static VTS* VTS__subtract ( HChar* who, VTS* vts, XArray* thridsToDel );
 
 /* Delete this VTS in its entirety. */
 static void VTS__delete ( VTS* vts );
 
-/* Create a new singleton VTS. */
-static VTS* VTS__singleton ( Thr* thr, ULong tym );
+/* Create a new singleton VTS in 'out'.  Caller must have
+   pre-allocated 'out' sufficiently big to hold the result in all
+   possible cases. */
+static void VTS__singleton ( /*OUT*/VTS* out, Thr* thr, ULong tym );
 
-/* Return a new VTS in which vts[me]++, so to speak.  'vts' itself is
-   not modified. */
-static VTS* VTS__tick ( Thr* me, VTS* vts );
+/* Create in 'out' a VTS which is the same as 'vts' except with
+   vts[me]++, so to speak.  Caller must have pre-allocated 'out'
+   sufficiently big to hold the result in all possible cases. */
+static void VTS__tick ( /*OUT*/VTS* out, Thr* me, VTS* vts );
 
-/* Return a new VTS constructed as the join (max) of the 2 args.
-   Neither arg is modified. */
-static VTS* VTS__join ( VTS* a, VTS* b );
+/* Create in 'out' a VTS which is the join (max) of 'a' and
+   'b'. Caller must have pre-allocated 'out' sufficiently big to hold
+   the result in all possible cases. */
+static void VTS__join ( /*OUT*/VTS* out, VTS* a, VTS* b );
 
 /* Compute the partial ordering relation of the two args.  Although we
    could be completely general and return an enumeration value (EQ,
    LT, GT, UN), in fact we only need LEQ, and so we may as well
    hardwire that fact.
 
-   Returns NULL iff LEQ(A,B), or non-NULL if not.  In the latter case,
-   the returned Thr* indicates the discovered point for which they are
-   not.  There may be more than one such point, but we only care about
-   seeing one of them, not all of them.  This rather strange
-   convention is used because sometimes we want to know the actual
-   index at which they first differ. */
-static Thr* VTS__cmpLEQ ( VTS* a, VTS* b );
+   Returns zero iff LEQ(A,B), or a valid ThrID if not (zero is an
+   invald ThrID).  In the latter case, the returned ThrID indicates
+   the discovered point for which they are not.  There may be more
+   than one such point, but we only care about seeing one of them, not
+   all of them.  This rather strange convention is used because
+   sometimes we want to know the actual index at which they first
+   differ. */
+static UInt VTS__cmpLEQ ( VTS* a, VTS* b );
 
 /* Compute an arbitrary structural (total) ordering on the two args,
    based on their VCs, so they can be looked up in a table, tree, etc.
@@ -1585,19 +1920,14 @@ static void VTS__show ( HChar* buf, Int nBuf, VTS* vts );
 /* Debugging only.  Return vts[index], so to speak. */
 static ULong VTS__indexAt_SLOW ( VTS* vts, Thr* idx );
 
-#endif /* ! __HB_VTS_H */
-
+/* Notify the VTS machinery that a thread has been declared
+   comprehensively dead: that is, it has done an async exit AND it has
+   been joined with.  This should ensure that its local clocks (.viR
+   and .viW) will never again change, and so all mentions of this
+   thread from all VTSs in the system may be removed. */
+static void VTS__declare_thread_very_dead ( Thr* idx );
 
 /*--------------- to do with Vector Timestamps ---------------*/
-
-/* Scalar Timestamp */
-typedef
-   struct {
-      Thr*    thr;
-      ULong   tym;
-   }
-   ScalarTS;
-
 
 static Bool is_sane_VTS ( VTS* vts )
 {
@@ -1605,12 +1935,19 @@ static Bool is_sane_VTS ( VTS* vts )
    ScalarTS  *st1, *st2;
    if (!vts) return False;
    if (!vts->ts) return False;
-   n = VG_(sizeXA)( vts->ts );
+   if (vts->usedTS > vts->sizeTS) return False;
+   n = vts->usedTS;
+   if (n == 1) {
+      st1 = &vts->ts[0];
+      if (st1->tym == 0)
+         return False;
+   }
+   else
    if (n >= 2) {
       for (i = 0; i < n-1; i++) {
-         st1 = VG_(indexXA)( vts->ts, i );
-         st2 = VG_(indexXA)( vts->ts, i+1 );
-         if (st1->thr >= st2->thr)
+         st1 = &vts->ts[i];
+         st2 = &vts->ts[i+1];
+         if (st1->thrid >= st2->thrid)
             return False;
          if (st1->tym == 0 || st2->tym == 0)
             return False;
@@ -1622,141 +1959,206 @@ static Bool is_sane_VTS ( VTS* vts )
 
 /* Create a new, empty VTS.
 */
-VTS* VTS__new ( void )
+static VTS* VTS__new ( HChar* who, UInt sizeTS )
 {
-   VTS* vts;
-   vts = HG_(zalloc)( "libhb.VTS__new.1", sizeof(VTS) );
-   tl_assert(vts);
-   vts->id = VtsID_INVALID;
-   vts->ts = VG_(newXA)( HG_(zalloc), "libhb.VTS__new.2",
-                         HG_(free), sizeof(ScalarTS) );
-   tl_assert(vts->ts);
+   VTS* vts = HG_(zalloc)(who, sizeof(VTS) + (sizeTS+1) * sizeof(ScalarTS));
+   tl_assert(vts->usedTS == 0);
+   vts->sizeTS = sizeTS;
+   *(ULong*)(&vts->ts[sizeTS]) = 0x0ddC0ffeeBadF00dULL;
    return vts;
+}
+
+/* Clone this VTS.
+*/
+static VTS* VTS__clone ( HChar* who, VTS* vts )
+{
+   tl_assert(vts);
+   tl_assert( *(ULong*)(&vts->ts[vts->sizeTS]) == 0x0ddC0ffeeBadF00dULL);
+   UInt nTS = vts->usedTS;
+   VTS* clone = VTS__new(who, nTS);
+   clone->id = vts->id;
+   clone->sizeTS = nTS;
+   clone->usedTS = nTS;
+   UInt i;
+   for (i = 0; i < nTS; i++) {
+      clone->ts[i] = vts->ts[i];
+   }
+   tl_assert( *(ULong*)(&clone->ts[clone->sizeTS]) == 0x0ddC0ffeeBadF00dULL);
+   return clone;
+}
+
+
+/* Make a clone of a VTS with specified ThrIDs removed.  'thridsToDel'
+   must be in strictly increasing order.  We could obviously do this
+   much more efficiently (in linear time) if necessary.
+*/
+static VTS* VTS__subtract ( HChar* who, VTS* vts, XArray* thridsToDel )
+{
+   UInt i, j;
+   tl_assert(vts);
+   tl_assert(thridsToDel);
+   tl_assert( *(ULong*)(&vts->ts[vts->sizeTS]) == 0x0ddC0ffeeBadF00dULL);
+   UInt nTS = vts->usedTS;
+   /* Figure out how many ScalarTSs will remain in the output. */
+   UInt nReq = nTS;
+   for (i = 0; i < nTS; i++) {
+      ThrID thrid = vts->ts[i].thrid;
+      if (VG_(lookupXA)(thridsToDel, &thrid, NULL, NULL))
+         nReq--;
+   }
+   tl_assert(nReq <= nTS);
+   /* Copy the ones that will remain. */
+   VTS* res = VTS__new(who, nReq);
+   j = 0;
+   for (i = 0; i < nTS; i++) {
+      ThrID thrid = vts->ts[i].thrid;
+      if (VG_(lookupXA)(thridsToDel, &thrid, NULL, NULL))
+         continue;
+      res->ts[j++] = vts->ts[i];
+   }
+   tl_assert(j == nReq);
+   tl_assert(j == res->sizeTS);
+   res->usedTS = j;
+   tl_assert( *(ULong*)(&res->ts[j]) == 0x0ddC0ffeeBadF00dULL);
+   return res;
 }
 
 
 /* Delete this VTS in its entirety.
 */
-void VTS__delete ( VTS* vts )
+static void VTS__delete ( VTS* vts )
 {
    tl_assert(vts);
-   tl_assert(vts->ts);
-   VG_(deleteXA)( vts->ts );
+   tl_assert(vts->usedTS <= vts->sizeTS);
+   tl_assert( *(ULong*)(&vts->ts[vts->sizeTS]) == 0x0ddC0ffeeBadF00dULL);
    HG_(free)(vts);
 }
 
 
 /* Create a new singleton VTS. 
 */
-VTS* VTS__singleton ( Thr* thr, ULong tym ) {
-   ScalarTS st;
-   VTS*     vts;
+static void VTS__singleton ( /*OUT*/VTS* out, Thr* thr, ULong tym )
+{
    tl_assert(thr);
    tl_assert(tym >= 1);
-   vts = VTS__new();
-   st.thr = thr;
-   st.tym = tym;
-   VG_(addToXA)( vts->ts, &st );
-   return vts;
+   tl_assert(out);
+   tl_assert(out->usedTS == 0);
+   tl_assert(out->sizeTS >= 1);
+   UInt hi = out->usedTS++;
+   out->ts[hi].thrid = Thr__to_ThrID(thr);
+   out->ts[hi].tym   = tym;
 }
 
 
 /* Return a new VTS in which vts[me]++, so to speak.  'vts' itself is
    not modified.
 */
-VTS* VTS__tick ( Thr* me, VTS* vts )
+static void VTS__tick ( /*OUT*/VTS* out, Thr* me, VTS* vts )
 {
-   ScalarTS* here = NULL;
-   ScalarTS  tmp;
-   VTS*      res;
-   Word      i, n; 
+   UInt      i, n;
+   ThrID     me_thrid;
+   Bool      found = False;
 
    stats__vts__tick++;
 
+   tl_assert(out);
+   tl_assert(out->usedTS == 0);
+   if (vts->usedTS >= ThrID_MAX_VALID)
+      scalarts_limitations_fail_NORETURN( True/*due_to_nThrs*/ );
+   tl_assert(out->sizeTS >= 1 + vts->usedTS);
+
    tl_assert(me);
+   me_thrid = Thr__to_ThrID(me);
    tl_assert(is_sane_VTS(vts));
-   //if (0) VG_(printf)("tick vts thrno %ld szin %d\n",
-   //                   (Word)me->errmsg_index, (Int)VG_(sizeXA)(vts) );
-   res = VTS__new();
-   n = VG_(sizeXA)( vts->ts );
+   n = vts->usedTS;
 
-   /* main loop doesn't handle zero-entry case correctly, so
-      special-case it. */
-   if (n == 0) {
-      tmp.thr = me;
-      tmp.tym = 1;
-      VG_(addToXA)( res->ts, &tmp );
-      tl_assert(is_sane_VTS(res));
-      return res;
-   }
-
+   /* Copy all entries which precede 'me'. */
    for (i = 0; i < n; i++) {
-      here = VG_(indexXA)( vts->ts, i );
-      if (me < here->thr) {
-         /* We just went past 'me', without seeing it. */
-         tmp.thr = me;
-         tmp.tym = 1;
-         VG_(addToXA)( res->ts, &tmp );
-         tmp = *here;
-         VG_(addToXA)( res->ts, &tmp );
-         i++;
+      ScalarTS* here = &vts->ts[i];
+      if (UNLIKELY(here->thrid >= me_thrid))
          break;
-      } 
-      else if (me == here->thr) {
-         tmp = *here;
-         tmp.tym++;
-         VG_(addToXA)( res->ts, &tmp );
-         i++;
-         break;
-      }
-      else /* me > here->thr */ {
-         tmp = *here;
-         VG_(addToXA)( res->ts, &tmp );
-      }
+      UInt hi = out->usedTS++;
+      out->ts[hi] = *here;
    }
+
+   /* 'i' now indicates the next entry to copy, if any.
+       There are 3 possibilities:
+       (a) there is no next entry (we used them all up already):
+           add (me_thrid,1) to the output, and quit
+       (b) there is a next entry, and its thrid > me_thrid:
+           add (me_thrid,1) to the output, then copy the remaining entries
+       (c) there is a next entry, and its thrid == me_thrid:
+           copy it to the output but increment its timestamp value.
+           Then copy the remaining entries.  (c) is the common case.
+   */
    tl_assert(i >= 0 && i <= n);
-   if (i == n && here && here->thr < me) {
-      tmp.thr = me;
-      tmp.tym = 1;
-      VG_(addToXA)( res->ts, &tmp );
+   if (i == n) { /* case (a) */
+      UInt hi = out->usedTS++;
+      out->ts[hi].thrid = me_thrid;
+      out->ts[hi].tym   = 1;
    } else {
+      /* cases (b) and (c) */
+      ScalarTS* here = &vts->ts[i];
+      if (me_thrid == here->thrid) { /* case (c) */
+         if (UNLIKELY(here->tym >= (1ULL << SCALARTS_N_TYMBITS) - 2ULL)) {
+            /* We're hosed.  We have to stop. */
+            scalarts_limitations_fail_NORETURN( False/*!due_to_nThrs*/ );
+         }
+         UInt hi = out->usedTS++;
+         out->ts[hi].thrid = here->thrid;
+         out->ts[hi].tym   = here->tym + 1;
+         i++;
+         found = True;
+      } else { /* case (b) */
+         UInt hi = out->usedTS++;
+         out->ts[hi].thrid = me_thrid;
+         out->ts[hi].tym   = 1;
+      }
+      /* And copy any remaining entries. */
       for (/*keepgoing*/; i < n; i++) {
-         here = VG_(indexXA)( vts->ts, i );
-         tmp = *here;
-         VG_(addToXA)( res->ts, &tmp );
+         ScalarTS* here2 = &vts->ts[i];
+         UInt hi = out->usedTS++;
+         out->ts[hi] = *here2;
       }
    }
-   tl_assert(is_sane_VTS(res));
-   //if (0) VG_(printf)("tick vts thrno %ld szou %d\n",
-   //                   (Word)me->errmsg_index, (Int)VG_(sizeXA)(res) );
-   return res;
+
+   tl_assert(is_sane_VTS(out));
+   tl_assert(out->usedTS == vts->usedTS + (found ? 0 : 1));
+   tl_assert(out->usedTS <= out->sizeTS);
 }
 
 
 /* Return a new VTS constructed as the join (max) of the 2 args.
    Neither arg is modified.
 */
-VTS* VTS__join ( VTS* a, VTS* b )
+static void VTS__join ( /*OUT*/VTS* out, VTS* a, VTS* b )
 {
-   Word     ia, ib, useda, usedb;
+   UInt     ia, ib, useda, usedb;
    ULong    tyma, tymb, tymMax;
-   Thr*     thr;
-   VTS*     res;
+   ThrID    thrid;
+   UInt     ncommon = 0;
 
    stats__vts__join++;
 
-   tl_assert(a && a->ts);
-   tl_assert(b && b->ts);
-   useda = VG_(sizeXA)( a->ts );
-   usedb = VG_(sizeXA)( b->ts );
+   tl_assert(a);
+   tl_assert(b);
+   useda = a->usedTS;
+   usedb = b->usedTS;
 
-   res = VTS__new();
+   tl_assert(out);
+   tl_assert(out->usedTS == 0);
+   /* overly conservative test, but doing better involves comparing
+      the two VTSs, which we don't want to do at this point. */
+   if (useda + usedb >= ThrID_MAX_VALID)
+      scalarts_limitations_fail_NORETURN( True/*due_to_nThrs*/ );
+   tl_assert(out->sizeTS >= useda + usedb);
+
    ia = ib = 0;
 
    while (1) {
 
-      /* This logic is to enumerate triples (thr, tyma, tymb) drawn
-         from a and b in order, where thr is the next Thr*
+      /* This logic is to enumerate triples (thrid, tyma, tymb) drawn
+         from a and b in order, where thrid is the next ThrID
          occurring in either a or b, and tyma/b are the relevant
          scalar timestamps, taking into account implicit zeroes. */
       tl_assert(ia >= 0 && ia <= useda);
@@ -1768,44 +2170,45 @@ VTS* VTS__join ( VTS* a, VTS* b )
 
       } else if (ia == useda && ib != usedb) {
          /* a empty, use up b */
-         ScalarTS* tmpb = VG_(indexXA)( b->ts, ib );
-         thr  = tmpb->thr;
-         tyma = 0;
-         tymb = tmpb->tym;
+         ScalarTS* tmpb = &b->ts[ib];
+         thrid = tmpb->thrid;
+         tyma  = 0;
+         tymb  = tmpb->tym;
          ib++;
 
       } else if (ia != useda && ib == usedb) {
          /* b empty, use up a */
-         ScalarTS* tmpa = VG_(indexXA)( a->ts, ia );
-         thr  = tmpa->thr;
-         tyma = tmpa->tym;
-         tymb = 0;
+         ScalarTS* tmpa = &a->ts[ia];
+         thrid = tmpa->thrid;
+         tyma  = tmpa->tym;
+         tymb  = 0;
          ia++;
 
       } else {
-         /* both not empty; extract lowest-Thr*'d triple */
-         ScalarTS* tmpa = VG_(indexXA)( a->ts, ia );
-         ScalarTS* tmpb = VG_(indexXA)( b->ts, ib );
-         if (tmpa->thr < tmpb->thr) {
-            /* a has the lowest unconsidered Thr* */
-            thr  = tmpa->thr;
-            tyma = tmpa->tym;
-            tymb = 0;
+         /* both not empty; extract lowest-ThrID'd triple */
+         ScalarTS* tmpa = &a->ts[ia];
+         ScalarTS* tmpb = &b->ts[ib];
+         if (tmpa->thrid < tmpb->thrid) {
+            /* a has the lowest unconsidered ThrID */
+            thrid = tmpa->thrid;
+            tyma  = tmpa->tym;
+            tymb  = 0;
             ia++;
-         } else if (tmpa->thr > tmpb->thr) {
-            /* b has the lowest unconsidered Thr* */
-            thr  = tmpb->thr;
-            tyma = 0;
-            tymb = tmpb->tym;
+         } else if (tmpa->thrid > tmpb->thrid) {
+            /* b has the lowest unconsidered ThrID */
+            thrid = tmpb->thrid;
+            tyma  = 0;
+            tymb  = tmpb->tym;
             ib++;
          } else {
-            /* they both next mention the same Thr* */
-            tl_assert(tmpa->thr == tmpb->thr);
-            thr  = tmpa->thr; /* == tmpb->thr */
-            tyma = tmpa->tym;
-            tymb = tmpb->tym;
+            /* they both next mention the same ThrID */
+            tl_assert(tmpa->thrid == tmpb->thrid);
+            thrid = tmpa->thrid; /* == tmpb->thrid */
+            tyma  = tmpa->tym;
+            tymb  = tmpb->tym;
             ia++;
             ib++;
+            ncommon++;
          }
       }
 
@@ -1813,35 +2216,35 @@ VTS* VTS__join ( VTS* a, VTS* b )
          useful with it. */
       tymMax = tyma > tymb ? tyma : tymb;
       if (tymMax > 0) {
-         ScalarTS st;
-         st.thr = thr;
-         st.tym = tymMax;
-         VG_(addToXA)( res->ts, &st );
+         UInt hi = out->usedTS++;
+         out->ts[hi].thrid = thrid;
+         out->ts[hi].tym   = tymMax;
       }
 
    }
 
-   tl_assert(is_sane_VTS( res ));
-
-   return res;
+   tl_assert(is_sane_VTS(out));
+   tl_assert(out->usedTS <= out->sizeTS);
+   tl_assert(out->usedTS == useda + usedb - ncommon);
 }
 
 
-/* Determine if 'a' <= 'b', in the partial ordering.  Returns NULL if
-   they are, or the first Thr* for which they are not.  This rather
-   strange convention is used because sometimes we want to know the
-   actual index at which they first differ. */
-static Thr* VTS__cmpLEQ ( VTS* a, VTS* b )
+/* Determine if 'a' <= 'b', in the partial ordering.  Returns zero if
+   they are, or the first ThrID for which they are not (no valid ThrID
+   has the value zero).  This rather strange convention is used
+   because sometimes we want to know the actual index at which they
+   first differ. */
+static UInt/*ThrID*/ VTS__cmpLEQ ( VTS* a, VTS* b )
 {
    Word  ia, ib, useda, usedb;
    ULong tyma, tymb;
 
    stats__vts__cmpLEQ++;
 
-   tl_assert(a && a->ts);
-   tl_assert(b && b->ts);
-   useda = VG_(sizeXA)( a->ts );
-   usedb = VG_(sizeXA)( b->ts );
+   tl_assert(a);
+   tl_assert(b);
+   useda = a->usedTS;
+   usedb = b->usedTS;
 
    ia = ib = 0;
 
@@ -1850,7 +2253,7 @@ static Thr* VTS__cmpLEQ ( VTS* a, VTS* b )
       /* This logic is to enumerate doubles (tyma, tymb) drawn
          from a and b in order, and tyma/b are the relevant
          scalar timestamps, taking into account implicit zeroes. */
-      Thr* thr;
+      ThrID thrid;
 
       tl_assert(ia >= 0 && ia <= useda);
       tl_assert(ib >= 0 && ib <= usedb);
@@ -1861,44 +2264,44 @@ static Thr* VTS__cmpLEQ ( VTS* a, VTS* b )
 
       } else if (ia == useda && ib != usedb) {
          /* a empty, use up b */
-         ScalarTS* tmpb = VG_(indexXA)( b->ts, ib );
-         tyma = 0;
-         tymb = tmpb->tym;
-         thr  = tmpb->thr;
+         ScalarTS* tmpb = &b->ts[ib];
+         tyma  = 0;
+         tymb  = tmpb->tym;
+         thrid = tmpb->thrid;
          ib++;
 
       } else if (ia != useda && ib == usedb) {
          /* b empty, use up a */
-         ScalarTS* tmpa = VG_(indexXA)( a->ts, ia );
-         tyma = tmpa->tym;
-         thr  = tmpa->thr;
-         tymb = 0;
+         ScalarTS* tmpa = &a->ts[ia];
+         tyma  = tmpa->tym;
+         thrid = tmpa->thrid;
+         tymb  = 0;
          ia++;
 
       } else {
-         /* both not empty; extract lowest-Thr*'d triple */
-         ScalarTS* tmpa = VG_(indexXA)( a->ts, ia );
-         ScalarTS* tmpb = VG_(indexXA)( b->ts, ib );
-         if (tmpa->thr < tmpb->thr) {
-            /* a has the lowest unconsidered Thr* */
-            tyma = tmpa->tym;
-            thr  = tmpa->thr;
-            tymb = 0;
+         /* both not empty; extract lowest-ThrID'd triple */
+         ScalarTS* tmpa = &a->ts[ia];
+         ScalarTS* tmpb = &b->ts[ib];
+         if (tmpa->thrid < tmpb->thrid) {
+            /* a has the lowest unconsidered ThrID */
+            tyma  = tmpa->tym;
+            thrid = tmpa->thrid;
+            tymb  = 0;
             ia++;
          }
          else
-         if (tmpa->thr > tmpb->thr) {
-            /* b has the lowest unconsidered Thr* */
-            tyma = 0;
-            tymb = tmpb->tym;
-            thr  = tmpb->thr;
+         if (tmpa->thrid > tmpb->thrid) {
+            /* b has the lowest unconsidered ThrID */
+            tyma  = 0;
+            tymb  = tmpb->tym;
+            thrid = tmpb->thrid;
             ib++;
          } else {
-            /* they both next mention the same Thr* */
-            tl_assert(tmpa->thr == tmpb->thr);
-            tyma = tmpa->tym;
-            thr  = tmpa->thr;
-            tymb = tmpb->tym;
+            /* they both next mention the same ThrID */
+            tl_assert(tmpa->thrid == tmpb->thrid);
+            tyma  = tmpa->tym;
+            thrid = tmpa->thrid;
+            tymb  = tmpb->tym;
             ia++;
             ib++;
          }
@@ -1909,12 +2312,12 @@ static Thr* VTS__cmpLEQ ( VTS* a, VTS* b )
       if (tyma > tymb) {
          /* not LEQ at this index.  Quit, since the answer is
             determined already. */
-         tl_assert(thr);
-         return thr;
+         tl_assert(thrid >= 1024);
+         return thrid;
       }
    }
 
-   return NULL; /* all points are LEQ */
+   return 0; /* all points are LEQ => return an invalid ThrID */
 }
 
 
@@ -1938,8 +2341,8 @@ Word VTS__cmp_structural ( VTS* a, VTS* b )
    tl_assert(a);
    tl_assert(b);
 
-   VG_(getContentsXA_UNSAFE)( a->ts, (void**)&ctsa, &useda );
-   VG_(getContentsXA_UNSAFE)( b->ts, (void**)&ctsb, &usedb );
+   ctsa = &a->ts[0]; useda = a->usedTS;
+   ctsb = &b->ts[0]; usedb = b->usedTS;
 
    if (LIKELY(useda == usedb)) {
       ScalarTS *tmpa = NULL, *tmpb = NULL;
@@ -1949,7 +2352,8 @@ Word VTS__cmp_structural ( VTS* a, VTS* b )
       for (i = 0; i < useda; i++) {
          tmpa = &ctsa[i];
          tmpb = &ctsb[i];
-         if (LIKELY(tmpa->tym == tmpb->tym && tmpa->thr == tmpb->thr))
+         if (LIKELY(tmpa->tym == tmpb->tym
+                    && tmpa->thrid == tmpb->thrid))
             continue;
          else
             break;
@@ -1961,8 +2365,8 @@ Word VTS__cmp_structural ( VTS* a, VTS* b )
          tl_assert(i >= 0 && i < useda);
          if (tmpa->tym < tmpb->tym) return -1;
          if (tmpa->tym > tmpb->tym) return 1;
-         if (tmpa->thr < tmpb->thr) return -1;
-         if (tmpa->thr > tmpb->thr) return 1;
+         if (tmpa->thrid < tmpb->thrid) return -1;
+         if (tmpa->thrid > tmpb->thrid) return 1;
          /* we just established them as non-identical, hence: */
       }
       /*NOTREACHED*/
@@ -1978,7 +2382,8 @@ Word VTS__cmp_structural ( VTS* a, VTS* b )
 
 /* Debugging only.  Display the given VTS in the buffer.
 */
-void VTS__show ( HChar* buf, Int nBuf, VTS* vts ) {
+void VTS__show ( HChar* buf, Int nBuf, VTS* vts )
+{
    ScalarTS* st;
    HChar     unit[64];
    Word      i, n;
@@ -1987,13 +2392,13 @@ void VTS__show ( HChar* buf, Int nBuf, VTS* vts ) {
    tl_assert(nBuf > 16);
    buf[0] = '[';
    buf[1] = 0;
-   n = VG_(sizeXA)( vts->ts );
+   n =  vts->usedTS;
    for (i = 0; i < n; i++) {
       tl_assert(avail >= 40);
-      st = VG_(indexXA)( vts->ts, i );
+      st = &vts->ts[i];
       VG_(memset)(unit, 0, sizeof(unit));
-      VG_(sprintf)(unit, i < n-1 ? "%p:%lld " : "%p:%lld",
-                         st->thr, st->tym);
+      VG_(sprintf)(unit, i < n-1 ? "%u:%llu " : "%u:%llu",
+                         st->thrid, (ULong)st->tym);
       if (avail < VG_(strlen)(unit) + 40/*let's say*/) {
          VG_(strcat)(buf, " ...]");
          buf[nBuf-1] = 0;
@@ -2009,17 +2414,45 @@ void VTS__show ( HChar* buf, Int nBuf, VTS* vts ) {
 
 /* Debugging only.  Return vts[index], so to speak.
 */
-ULong VTS__indexAt_SLOW ( VTS* vts, Thr* idx ) {
+ULong VTS__indexAt_SLOW ( VTS* vts, Thr* idx )
+{
    UWord i, n;
+   ThrID idx_thrid = Thr__to_ThrID(idx);
    stats__vts__indexat_slow++;
    tl_assert(vts && vts->ts);
-   n = VG_(sizeXA)( vts->ts );
+   n = vts->usedTS;
    for (i = 0; i < n; i++) {
-      ScalarTS* st = VG_(indexXA)( vts->ts, i );
-      if (st->thr == idx)
+      ScalarTS* st = &vts->ts[i];
+      if (st->thrid == idx_thrid)
          return st->tym;
    }
    return 0;
+}
+
+
+/* See comment on prototype above.
+*/
+static void VTS__declare_thread_very_dead ( Thr* thr )
+{
+   if (0) VG_(printf)("VTQ:  tae %p\n", thr);
+
+   tl_assert(thr->llexit_done);
+   tl_assert(thr->joinedwith_done);
+
+   ThrID nyu;
+   nyu = Thr__to_ThrID(thr);
+   VG_(addToXA)( verydead_thread_table, &nyu );
+
+   /* We can only get here if we're assured that we'll never again
+      need to look at this thread's ::viR or ::viW.  Set them to
+      VtsID_INVALID, partly so as to avoid holding on to the VTSs, but
+      mostly so that we don't wind up pruning them (as that would be
+      nonsensical: the only interesting ScalarTS entry for a dead
+      thread is its own index, and the pruning will remove that.). */
+   VtsID__rcdec(thr->viR);
+   VtsID__rcdec(thr->viW);
+   thr->viR = VtsID_INVALID;
+   thr->viW = VtsID_INVALID;
 }
 
 
@@ -2048,7 +2481,7 @@ ULong VTS__indexAt_SLOW ( VTS* vts, Thr* idx ) {
 //                                                     //
 /////////////////////////////////////////////////////////
 
-static WordFM* /* VTS* void void */ vts_set = NULL;
+static WordFM* /* WordFM VTS* void */ vts_set = NULL;
 
 static void vts_set_init ( void )
 {
@@ -2059,30 +2492,31 @@ static void vts_set_init ( void )
    tl_assert(vts_set);
 }
 
-/* Given a newly made VTS, look in vts_set to see if we already have
-   an identical one.  If yes, free up this one and return instead a
-   pointer to the existing one.  If no, add this one to the set and
-   return the same pointer.  Caller differentiates the two cases by
-   comparing returned pointer with the supplied one (although that
-   does require that the supplied VTS is not already in the set).
-*/
-static VTS* vts_set__find_and_dealloc__or_add ( VTS* cand )
+/* Given a VTS, look in vts_set to see if we already have a
+   structurally identical one.  If yes, return the pair (True, pointer
+   to the existing one).  If no, clone this one, add the clone to the
+   set, and return (False, pointer to the clone). */
+static Bool vts_set__find__or__clone_and_add ( /*OUT*/VTS** res, VTS* cand )
 {
    UWord keyW, valW;
-   stats__vts_set__fadoa++;
+   stats__vts_set__focaa++;
+   tl_assert(cand->id == VtsID_INVALID);
    /* lookup cand (by value) */
    if (VG_(lookupFM)( vts_set, &keyW, &valW, (UWord)cand )) {
       /* found it */
       tl_assert(valW == 0);
       /* if this fails, cand (by ref) was already present (!) */
       tl_assert(keyW != (UWord)cand);
-      stats__vts_set__fadoa_d++;
-      VTS__delete(cand);
-      return (VTS*)keyW;
+      *res = (VTS*)keyW;
+      return True;
    } else {
-      /* not present.  Add and return pointer to same. */
-      VG_(addToFM)( vts_set, (UWord)cand, 0/*val is unused*/ );
-      return cand;
+      /* not present.  Clone, add and return address of clone. */
+      stats__vts_set__focaa_a++;
+      VTS* clone = VTS__clone( "libhb.vts_set_focaa.1", cand );
+      tl_assert(clone != cand);
+      VG_(addToFM)( vts_set, (UWord)clone, 0/*val is unused*/ );
+      *res = clone;
+      return False;
    }
 }
 
@@ -2099,18 +2533,19 @@ static void VtsID__invalidate_caches ( void ); /* fwds */
    If .vts == NULL, then this entry is not in use, so:
    - .rc == 0
    - this entry is on the freelist (unfortunately, does not imply
-     any constraints on value for .nextfree)
+     any constraints on value for .freelink)
    If .vts != NULL, then this entry is in use:
    - .vts is findable in vts_set
    - .vts->id == this entry number
    - no specific value for .rc (even 0 is OK)
-   - this entry is not on freelist, so .nextfree == VtsID_INVALID
+   - this entry is not on freelist, so .freelink == VtsID_INVALID
 */
 typedef
    struct {
       VTS*  vts;      /* vts, in vts_set */
       UWord rc;       /* reference count - enough for entire aspace */
       VtsID freelink; /* chain for free entries, VtsID_INVALID at end */
+      VtsID remap;    /* used only during pruning */
    }
    VtsTE;
 
@@ -2176,6 +2611,7 @@ static VtsID get_new_VtsID ( void )
    te.vts = NULL;
    te.rc = 0;
    te.freelink = VtsID_INVALID;
+   te.remap    = VtsID_INVALID;
    ii = (VtsID)VG_(addToXA)( vts_tab, &te );
    return ii;
 }
@@ -2206,29 +2642,30 @@ static void VtsID__rcdec ( VtsID ii )
 }
 
 
-/* Look up 'cand' in our collection of VTSs.  If present, deallocate
-   it and return the VtsID for the pre-existing version.  If not
-   present, add it to both vts_tab and vts_set, allocate a fresh VtsID
-   for it, and return that. */
-static VtsID vts_tab__find_and_dealloc__or_add ( VTS* cand )
+/* Look up 'cand' in our collection of VTSs.  If present, return the
+   VtsID for the pre-existing version.  If not present, clone it, add
+   the clone to both vts_tab and vts_set, allocate a fresh VtsID for
+   it, and return that. */
+static VtsID vts_tab__find__or__clone_and_add ( VTS* cand )
 {
-   VTS* auld;
+   VTS* in_tab = NULL;
    tl_assert(cand->id == VtsID_INVALID);
-   auld = vts_set__find_and_dealloc__or_add(cand);
-   if (auld != cand) {
-      /* We already have an Aulde one.  Use that. */
+   Bool already_have = vts_set__find__or__clone_and_add( &in_tab, cand );
+   tl_assert(in_tab);
+   if (already_have) {
+      /* We already have a copy of 'cand'.  Use that. */
       VtsTE* ie;
-      tl_assert(auld->id != VtsID_INVALID);
-      ie = VG_(indexXA)( vts_tab, auld->id );
-      tl_assert(ie->vts == auld);
-      return auld->id;
+      tl_assert(in_tab->id != VtsID_INVALID);
+      ie = VG_(indexXA)( vts_tab, in_tab->id );
+      tl_assert(ie->vts == in_tab);
+      return in_tab->id;
    } else {
       VtsID  ii = get_new_VtsID();
       VtsTE* ie = VG_(indexXA)( vts_tab, ii );
-      ie->vts = cand;
+      ie->vts = in_tab;
       ie->rc = 0;
       ie->freelink = VtsID_INVALID;
-      cand->id = ii;
+      in_tab->id = ii;
       return ii;
    }
 }
@@ -2260,12 +2697,53 @@ static void show_vts_stats ( HChar* caller )
    VG_(printf)("        total rc %4llu\n", totrc);
 }
 
+
+/* --- Helpers for VtsID pruning --- */
+
+static
+void remap_VtsID ( /*MOD*/XArray* /* of VtsTE */ old_tab,
+                   /*MOD*/XArray* /* of VtsTE */ new_tab,
+                   VtsID* ii )
+{
+   VtsTE *old_te, *new_te;
+   VtsID old_id, new_id;
+   /* We're relying here on VG_(indexXA)'s range checking to assert on
+      any stupid values, in particular *ii == VtsID_INVALID. */
+   old_id = *ii;
+   old_te = VG_(indexXA)( old_tab, old_id );
+   old_te->rc--;
+   new_id = old_te->remap;
+   new_te = VG_(indexXA)( new_tab, new_id );
+   new_te->rc++;
+   *ii = new_id;
+}
+
+static
+void remap_VtsIDs_in_SVal ( /*MOD*/XArray* /* of VtsTE */ old_tab,
+                            /*MOD*/XArray* /* of VtsTE */ new_tab,
+                            SVal* s )
+{
+   SVal old_sv, new_sv;
+   old_sv = *s;
+   if (SVal__isC(old_sv)) {
+      VtsID rMin, wMin;
+      rMin = SVal__unC_Rmin(old_sv);
+      wMin = SVal__unC_Wmin(old_sv);
+      remap_VtsID( old_tab, new_tab, &rMin );
+      remap_VtsID( old_tab, new_tab, &wMin );
+      new_sv = SVal__mkC( rMin, wMin );
+      *s = new_sv;
+  }
+}
+
+
 /* NOT TO BE CALLED FROM WITHIN libzsm. */
 __attribute__((noinline))
 static void vts_tab__do_GC ( Bool show_stats )
 {
    UWord i, nTab, nLive, nFreed;
 
+   /* ---------- BEGIN VTS GC ---------- */
    /* check this is actually necessary. */
    tl_assert(vts_tab_freelist == VtsID_INVALID);
 
@@ -2284,13 +2762,13 @@ static void vts_tab__do_GC ( Bool show_stats )
       show_vts_stats("before GC");
    }
 
-   /* Now we can inspect the entire vts_tab.  Any entries
-      with zero .rc fields are now no longer in use and can be
+   /* Now we can inspect the entire vts_tab.  Any entries with zero
+      .rc fields are now no longer in use and can be put back on the
       free list, removed from vts_set, and deleted. */
    nFreed = 0;
    for (i = 0; i < nTab; i++) {
       Bool present;
-      UWord oldK = 0, oldV = 0;
+      UWord oldK = 0, oldV = 12345;
       VtsTE* te = VG_(indexXA)( vts_tab, i );
       if (te->vts == NULL) {
          tl_assert(te->rc == 0);
@@ -2332,12 +2810,332 @@ static void vts_tab__do_GC ( Bool show_stats )
    }
 
    if (VG_(clo_stats)) {
-      static UInt ctr = 0;
+      static UInt ctr = 1;
       tl_assert(nTab > 0);
       VG_(message)(Vg_DebugMsg,
                   "libhb: VTS GC: #%u  old size %lu  live %lu  (%2llu%%)\n",
                   ctr++, nTab, nLive, (100ULL * (ULong)nLive) / (ULong)nTab);
    }
+   /* ---------- END VTS GC ---------- */
+
+   /* Decide whether to do VTS pruning.  We have one of three
+      settings. */
+   static UInt pruning_auto_ctr = 0; /* do not make non-static */
+
+   Bool do_pruning = False;
+   switch (HG_(clo_vts_pruning)) {
+      case 0: /* never */
+         break;
+      case 1: /* auto */
+         do_pruning = (++pruning_auto_ctr % 5) == 0;
+         break;
+      case 2: /* always */
+         do_pruning = True;
+         break;
+      default:
+         tl_assert(0);
+   }
+
+   /* The rest of this routine only handles pruning, so we can
+      quit at this point if it is not to be done. */
+   if (!do_pruning)
+      return;
+
+   /* ---------- BEGIN VTS PRUNING ---------- */
+   /* We begin by sorting the backing table on its .thr values, so as
+      to (1) check they are unique [else something has gone wrong,
+      since it means we must have seen some Thr* exiting more than
+      once, which can't happen], and (2) so that we can quickly look
+      up the dead-thread entries as we work through the VTSs. */
+   VG_(sortXA)( verydead_thread_table );
+   /* Sanity check: check for unique .sts.thr values. */
+   UWord nBT = VG_(sizeXA)( verydead_thread_table );
+   if (nBT > 0) {
+      ThrID thrid1, thrid2;
+      thrid2 = *(ThrID*)VG_(indexXA)( verydead_thread_table, 0 );
+      for (i = 1; i < nBT; i++) {
+         thrid1 = thrid2;
+         thrid2 = *(ThrID*)VG_(indexXA)( verydead_thread_table, i );
+         tl_assert(thrid1 < thrid2);
+      }
+   }
+   /* Ok, so the dead thread table has unique and in-order keys. */
+
+   /* We will run through the old table, and create a new table and
+      set, at the same time setting the .remap entries in the old
+      table to point to the new entries.  Then, visit every VtsID in
+      the system, and replace all of them with new ones, using the
+      .remap entries in the old table.  Finally, we can delete the old
+      table and set. */
+
+   XArray* /* of VtsTE */ new_tab
+      = VG_(newXA)( HG_(zalloc), "libhb.vts_tab__do_GC.new_tab",
+                    HG_(free), sizeof(VtsTE) );
+
+   /* WordFM VTS* void */
+   WordFM* new_set
+      = VG_(newFM)( HG_(zalloc), "libhb.vts_tab__do_GC.new_set",
+                    HG_(free),
+                    (Word(*)(UWord,UWord))VTS__cmp_structural );
+
+   /* Visit each old VTS.  For each one:
+
+      * make a pruned version
+
+      * search new_set for the pruned version, yielding either
+        Nothing (not present) or the new VtsID for it.
+
+      * if not present, allocate a new VtsID for it, insert (pruned
+        VTS, new VtsID) in the tree, and set
+        remap_table[old VtsID] = new VtsID.
+
+      * if present, set remap_table[old VtsID] = new VtsID, where
+        new VtsID was determined by the tree lookup.  Then free up
+        the clone.
+   */
+
+   UWord nBeforePruning = 0, nAfterPruning = 0;
+   UWord nSTSsBefore = 0, nSTSsAfter = 0;
+   VtsID new_VtsID_ctr = 0;
+
+   for (i = 0; i < nTab; i++) {
+
+      /* For each old VTS .. */
+      VtsTE* old_te  = VG_(indexXA)( vts_tab, i );
+      VTS*   old_vts = old_te->vts;
+      tl_assert(old_te->remap == VtsID_INVALID);
+
+      /* Skip it if not in use */
+      if (old_te->rc == 0) {
+         tl_assert(old_vts == NULL);
+         continue;
+      }
+      tl_assert(old_vts != NULL);
+      tl_assert(old_vts->id == i);
+      tl_assert(old_vts->ts != NULL);
+
+      /* It is in use. Make a pruned version. */
+      nBeforePruning++;
+      nSTSsBefore += old_vts->usedTS;
+      VTS* new_vts = VTS__subtract("libhb.vts_tab__do_GC.new_vts",
+                                   old_vts, verydead_thread_table);
+      tl_assert(new_vts->sizeTS == new_vts->usedTS);
+      tl_assert(*(ULong*)(&new_vts->ts[new_vts->usedTS])
+                == 0x0ddC0ffeeBadF00dULL);
+
+      /* Get rid of the old VTS and the tree entry.  It's a bit more
+         complex to incrementally delete the VTSs now than to nuke
+         them all after we're done, but the upside is that we don't
+         wind up temporarily storing potentially two complete copies
+         of each VTS and hence spiking memory use. */
+      UWord oldK = 0, oldV = 12345;
+      Bool  present = VG_(delFromFM)( vts_set,
+                                      &oldK, &oldV, (UWord)old_vts );
+      tl_assert(present); /* else it isn't in vts_set ?! */
+      tl_assert(oldV == 0); /* no info stored in vts_set val fields */
+      tl_assert(oldK == (UWord)old_vts); /* else what did delFromFM find?! */
+      /* now free the VTS itself */
+      VTS__delete(old_vts);
+      old_te->vts = NULL;
+      old_vts = NULL;
+
+      /* NO MENTIONS of old_vts allowed beyond this point. */
+
+      /* Ok, we have the pruned copy in new_vts.  See if a
+         structurally identical version is already present in new_set.
+         If so, delete the one we just made and move on; if not, add
+         it. */
+      VTS*  identical_version = NULL;
+      UWord valW = 12345;
+      if (VG_(lookupFM)(new_set, (UWord*)&identical_version, &valW,
+                        (UWord)new_vts)) {
+         // already have it
+         tl_assert(valW == 0);
+         tl_assert(identical_version != NULL);
+         tl_assert(identical_version != new_vts);
+         VTS__delete(new_vts);
+         new_vts = identical_version;
+         tl_assert(new_vts->id != VtsID_INVALID);
+      } else {
+         tl_assert(valW == 12345);
+         tl_assert(identical_version == NULL);
+         new_vts->id = new_VtsID_ctr++;
+         Bool b = VG_(addToFM)(new_set, (UWord)new_vts, 0);
+         tl_assert(!b);
+         VtsTE new_te;
+         new_te.vts      = new_vts;
+         new_te.rc       = 0;
+         new_te.freelink = VtsID_INVALID;
+         new_te.remap    = VtsID_INVALID;
+         Word j = VG_(addToXA)( new_tab, &new_te );
+         tl_assert(j <= i);
+         tl_assert(j == new_VtsID_ctr - 1);
+         // stats
+         nAfterPruning++;
+         nSTSsAfter += new_vts->usedTS;
+      }
+      old_te->remap = new_vts->id;
+
+   } /* for (i = 0; i < nTab; i++) */
+
+   /* At this point, we have:
+      * the old VTS table, with its .remap entries set,
+        and with all .vts == NULL.
+      * the old VTS tree should be empty, since it and the old VTSs
+        it contained have been incrementally deleted was we worked
+        through the old table.
+      * the new VTS table, with all .rc == 0, all .freelink and .remap
+        == VtsID_INVALID. 
+      * the new VTS tree.
+   */
+   tl_assert( VG_(sizeFM)(vts_set) == 0 );
+
+   /* Now actually apply the mapping. */
+   /* Visit all the VtsIDs in the entire system.  Where do we expect
+      to find them?
+      (a) in shadow memory -- the LineZs and LineFs
+      (b) in our collection of struct _Thrs.
+      (c) in our collection of struct _SOs.
+      Nowhere else, AFAICS.  Not in the zsm cache, because that just
+      got invalidated.
+
+      Using the .remap fields in vts_tab, map each old VtsID to a new
+      VtsID.  For each old VtsID, dec its rc; and for each new one,
+      inc it.  This sets up the new refcounts, and it also gives a
+      cheap sanity check of the old ones: all old refcounts should be
+      zero after this operation.
+   */
+
+   /* Do the mappings for (a) above: iterate over the Primary shadow
+      mem map (WordFM Addr SecMap*). */
+   UWord secmapW = 0;
+   VG_(initIterFM)( map_shmem );
+   while (VG_(nextIterFM)( map_shmem, NULL, &secmapW )) {
+      UWord   j;
+      SecMap* sm = (SecMap*)secmapW;
+      tl_assert(sm->magic == SecMap_MAGIC);
+      /* Deal with the LineZs */
+      for (i = 0; i < N_SECMAP_ZLINES; i++) {
+         LineZ* lineZ = &sm->linesZ[i];
+         if (lineZ->dict[0] == SVal_INVALID)
+            continue; /* not in use -- data is in F rep instead */
+         for (j = 0; j < 4; j++)
+            remap_VtsIDs_in_SVal(vts_tab, new_tab, &lineZ->dict[j]);
+      }
+      /* Deal with the LineFs */
+      for (i = 0; i < sm->linesF_size; i++) {
+         LineF* lineF = &sm->linesF[i];
+         if (!lineF->inUse)
+            continue;
+         for (j = 0; j < N_LINE_ARANGE; j++)
+            remap_VtsIDs_in_SVal(vts_tab, new_tab, &lineF->w64s[j]);
+      }
+   }
+   VG_(doneIterFM)( map_shmem );
+
+   /* Do the mappings for (b) above: visit our collection of struct
+      _Thrs. */
+   Thread* hgthread = get_admin_threads();
+   tl_assert(hgthread);
+   while (hgthread) {
+      Thr* hbthr = hgthread->hbthr;
+      tl_assert(hbthr);
+      /* Threads that are listed in the prunable set have their viR
+         and viW set to VtsID_INVALID, so we can't mess with them. */
+      if (hbthr->llexit_done && hbthr->joinedwith_done) {
+         tl_assert(hbthr->viR == VtsID_INVALID);
+         tl_assert(hbthr->viW == VtsID_INVALID);
+         hgthread = hgthread->admin;
+         continue;
+      }
+      remap_VtsID( vts_tab, new_tab, &hbthr->viR );
+      remap_VtsID( vts_tab, new_tab, &hbthr->viW );
+      hgthread = hgthread->admin;
+   }
+
+   /* Do the mappings for (c) above: visit the struct _SOs. */
+   SO* so = admin_SO;
+   while (so) {
+      if (so->viR != VtsID_INVALID)
+         remap_VtsID( vts_tab, new_tab, &so->viR );
+      if (so->viW != VtsID_INVALID)
+         remap_VtsID( vts_tab, new_tab, &so->viW );
+      so = so->admin_next;
+   }
+
+   /* So, we're nearly done (with this incredibly complex operation).
+      Check the refcounts for the old VtsIDs all fell to zero, as
+      expected.  Any failure is serious. */
+   for (i = 0; i < nTab; i++) {
+      VtsTE* te = VG_(indexXA)( vts_tab, i );
+      tl_assert(te->vts == NULL);
+      /* This is the assert proper.  Note we're also asserting
+         zeroness for old entries which are unmapped (hence have
+         .remap == VtsID_INVALID).  That's OK. */
+      tl_assert(te->rc == 0);
+   }
+
+   /* Install the new table and set. */
+   VG_(deleteFM)(vts_set, NULL/*kFin*/, NULL/*vFin*/);
+   vts_set = new_set;
+   VG_(deleteXA)( vts_tab );
+   vts_tab = new_tab;
+
+   /* The freelist of vts_tab entries is empty now, because we've
+      compacted all of the live entries at the low end of the
+      table. */
+   vts_tab_freelist = VtsID_INVALID;
+
+   /* Sanity check vts_set and vts_tab. */
+
+   /* Because all the live entries got slid down to the bottom of vts_tab: */
+   tl_assert( VG_(sizeXA)( vts_tab ) == VG_(sizeFM)( vts_set ));
+
+   /* Assert that the vts_tab and vts_set entries point at each other
+      in the required way */
+   UWord wordK = 0, wordV = 0;
+   VG_(initIterFM)( vts_set );
+   while (VG_(nextIterFM)( vts_set, &wordK, &wordV )) {
+      tl_assert(wordK != 0);
+      tl_assert(wordV == 0);
+      VTS* vts = (VTS*)wordK;
+      tl_assert(vts->id != VtsID_INVALID);
+      VtsTE* te = VG_(indexXA)( vts_tab, vts->id );
+      tl_assert(te->vts == vts);
+   }
+   VG_(doneIterFM)( vts_set );
+
+   /* Also iterate over the table, and check each entry is
+      plausible. */
+   nTab = VG_(sizeXA)( vts_tab );
+   for (i = 0; i < nTab; i++) {
+      VtsTE* te = VG_(indexXA)( vts_tab, i );
+      tl_assert(te->vts);
+      tl_assert(te->vts->id == i);
+      tl_assert(te->rc > 0); /* 'cos we just GC'd */
+      tl_assert(te->freelink == VtsID_INVALID); /* in use */
+      tl_assert(te->remap == VtsID_INVALID); /* not relevant */
+   }
+
+   /* And we're done.  Bwahahaha. Ha. Ha. Ha. */
+   if (VG_(clo_stats)) {
+      static UInt ctr = 1;
+      tl_assert(nTab > 0);
+      VG_(message)(
+         Vg_DebugMsg,
+         "libhb: VTS PR: #%u  before %lu (avg sz %lu)  "
+            "after %lu (avg sz %lu)\n",
+         ctr++,
+         nBeforePruning, nSTSsBefore / (nBeforePruning ? nBeforePruning : 1),
+         nAfterPruning, nSTSsAfter / (nAfterPruning ? nAfterPruning : 1)
+      );
+   }
+   if (0)
+   VG_(printf)("VTQ: before pruning %lu (avg sz %lu), "
+               "after pruning %lu (avg sz %lu)\n",
+               nBeforePruning, nSTSsBefore / nBeforePruning,
+               nAfterPruning, nSTSsAfter / nAfterPruning);
+   /* ---------- END VTS PRUNING ---------- */
 }
 
 
@@ -2346,6 +3144,11 @@ static void vts_tab__do_GC ( Bool show_stats )
 // Vts IDs                                             //
 //                                                     //
 /////////////////////////////////////////////////////////
+
+//////////////////////////
+/* A temporary, max-sized VTS which is used as a temporary (the first
+   argument) in VTS__singleton, VTS__tick and VTS__join operations. */
+static VTS* temp_max_sized_VTS = NULL;
 
 //////////////////////////
 static ULong stats__cmpLEQ_queries = 0;
@@ -2430,7 +3233,7 @@ static Bool VtsID__cmpLEQ_WRK ( VtsID vi1, VtsID vi2 ) {
    ////--
    v1  = VtsID__to_VTS(vi1);
    v2  = VtsID__to_VTS(vi2);
-   leq = VTS__cmpLEQ( v1, v2 ) == NULL;
+   leq = VTS__cmpLEQ( v1, v2 ) == 0;
    ////++
    cmpLEQ_cache[hash].vi1 = vi1;
    cmpLEQ_cache[hash].vi2 = vi2;
@@ -2447,7 +3250,7 @@ __attribute__((noinline))
 static VtsID VtsID__join2_WRK ( VtsID vi1, VtsID vi2 ) {
    UInt  hash;
    VtsID res;
-   VTS   *vts1, *vts2, *nyu;
+   VTS   *vts1, *vts2;
    //if (vi1 == vi2) return vi1;
    tl_assert(vi1 != vi2);
    ////++
@@ -2460,8 +3263,9 @@ static VtsID VtsID__join2_WRK ( VtsID vi1, VtsID vi2 ) {
    ////--
    vts1 = VtsID__to_VTS(vi1);
    vts2 = VtsID__to_VTS(vi2);
-   nyu  = VTS__join(vts1,vts2);
-   res  = vts_tab__find_and_dealloc__or_add(nyu);
+   temp_max_sized_VTS->usedTS = 0;
+   VTS__join(temp_max_sized_VTS, vts1,vts2);
+   res = vts_tab__find__or__clone_and_add(temp_max_sized_VTS);
    ////++
    join2_cache[hash].vi1 = vi1;
    join2_cache[hash].vi2 = vi2;
@@ -2475,15 +3279,17 @@ static inline VtsID VtsID__join2 ( VtsID vi1, VtsID vi2 ) {
 
 /* create a singleton VTS, namely [thr:1] */
 static VtsID VtsID__mk_Singleton ( Thr* thr, ULong tym ) {
-   VTS* nyu = VTS__singleton(thr,tym);
-   return vts_tab__find_and_dealloc__or_add(nyu);
+   temp_max_sized_VTS->usedTS = 0;
+   VTS__singleton(temp_max_sized_VTS, thr,tym);
+   return vts_tab__find__or__clone_and_add(temp_max_sized_VTS);
 }
 
 /* tick operation, creates value 1 if specified index is absent */
 static VtsID VtsID__tick ( VtsID vi, Thr* idx ) {
    VTS* vts = VtsID__to_VTS(vi);
-   VTS* nyu = VTS__tick(idx,vts);
-   return vts_tab__find_and_dealloc__or_add(nyu);
+   temp_max_sized_VTS->usedTS = 0;
+   VTS__tick(temp_max_sized_VTS, idx,vts);
+   return vts_tab__find__or__clone_and_add(temp_max_sized_VTS);
 }
 
 /* index into a VTS (only for assertions) */
@@ -2500,12 +3306,14 @@ static ULong VtsID__indexAt ( VtsID vi, Thr* idx ) {
 static Thr* VtsID__findFirst_notLEQ ( VtsID vi1, VtsID vi2 )
 {
    VTS  *vts1, *vts2;
-   Thr* diffthr;
+   Thr*  diffthr;
+   ThrID diffthrid;
    tl_assert(vi1 != vi2);
    vts1 = VtsID__to_VTS(vi1);
    vts2 = VtsID__to_VTS(vi2);
    tl_assert(vts1 != vts2);
-   diffthr = VTS__cmpLEQ(vts1, vts2);
+   diffthrid = VTS__cmpLEQ(vts1, vts2);
+   diffthr = Thr__from_ThrID(diffthrid);
    tl_assert(diffthr); /* else they are LEQ ! */
    return diffthr;
 }
@@ -2516,50 +3324,6 @@ static Thr* VtsID__findFirst_notLEQ ( VtsID vi1, VtsID vi2 )
 // Filters                                             //
 //                                                     //
 /////////////////////////////////////////////////////////
-
-// baseline: 5, 9
-#define FI_LINE_SZB_LOG2  5
-#define FI_NUM_LINES_LOG2 10
-
-#define FI_LINE_SZB       (1 << FI_LINE_SZB_LOG2)
-#define FI_NUM_LINES      (1 << FI_NUM_LINES_LOG2)
-
-#define FI_TAG_MASK        (~(Addr)(FI_LINE_SZB - 1))
-#define FI_GET_TAG(_a)     ((_a) & FI_TAG_MASK)
-
-#define FI_GET_LINENO(_a)  ( ((_a) >> FI_LINE_SZB_LOG2) \
-                             & (Addr)(FI_NUM_LINES-1) )
-
-
-/* In the lines, each 8 bytes are treated individually, and are mapped
-   to a UShort.  Regardless of endianness of the underlying machine,
-   bits 1 and 0 pertain to the lowest address and bits 15 and 14 to
-   the highest address.
-
-   Of each bit pair, the higher numbered bit is set if a R has been
-   seen, so the actual layout is:
-
-   15 14             ...  01 00
-
-   R  W  for addr+7  ...  R  W  for addr+0
-
-   So a mask for the R-bits is 0xAAAA and for the W bits is 0x5555.
-*/
-
-/* tags are separated from lines.  tags are Addrs and are
-   the base address of the line. */
-typedef
-   struct {
-      UShort u16s[FI_LINE_SZB / 8]; /* each UShort covers 8 bytes */
-   }
-   FiLine;
-
-typedef
-   struct {
-      Addr   tags[FI_NUM_LINES];
-      FiLine lines[FI_NUM_LINES];
-   }
-   Filter;
 
 /* Forget everything we know -- clear the filter and let everything
    through.  This needs to be as fast as possible, since it is called
@@ -2878,55 +3642,31 @@ static inline Bool Filter__ok_to_skip_cwr08 ( Filter* fi, Addr a )
 //                                                     //
 /////////////////////////////////////////////////////////
 
-// QQQ move this somewhere else
-typedef  struct { ULong ull; ExeContext* ec; }  ULong_n_EC;
+/* Maps ThrID values to their Thr*s (which contain ThrID values that
+   should point back to the relevant slot in the array.  Lowest
+   numbered slot (0) is for thrid = 1024, (1) is for 1025, etc. */
+static XArray* /* of Thr* */ thrid_to_thr_map = NULL;
 
-/* How many of the above records to collect for each thread?  Older
-   ones are dumped when we run out of space.  62.5k requires 1MB per
-   thread, since each ULong_n_EC record is 16 bytes long.  When more
-   than N_KWs_N_STACKs_PER_THREAD are present, the older half are
-   deleted to make space.  Hence in the worst case we will be able to
-   produce a stack at least for the last N_KWs_N_STACKs_PER_THREAD / 2
-   Kw transitions (segments in this thread).  For the current setting
-   that gives a guaranteed stack for at least the last 31.25k
-   segments. */
-#define N_KWs_N_STACKs_PER_THREAD 62500
+/* And a counter to dole out ThrID values.  For rationale/background,
+   see comments on definition of ScalarTS (far) above. */
+static ThrID thrid_counter = 1024; /* runs up to ThrID_MAX_VALID */
 
+static ThrID Thr__to_ThrID ( Thr* thr ) {
+   return thr->thrid;
+}
+static Thr* Thr__from_ThrID ( UInt thrid ) {
+   Thr* thr = *(Thr**)VG_(indexXA)( thrid_to_thr_map, thrid - 1024 );
+   tl_assert(thr->thrid == thrid);
+   return thr;
+}
 
-struct _Thr {
-   /* Current VTSs for this thread.  They change as we go along.  viR
-      is the VTS to be used for reads, viW for writes.  Usually they
-      are the same, but can differ when we deal with reader-writer
-      locks.  It is always the case that 
-         VtsID__cmpLEQ(viW,viR) == True
-      that is, viW must be the same, or lagging behind, viR. */
-   VtsID viR;
-   VtsID viW;
-
-   /* Is initially False, and is set to true after the thread really
-      has done a low-level exit. */
-   Bool still_alive;
-
-   /* A filter that removes references for which we believe that
-      msmcread/msmcwrite will not change the state, nor report a
-      race. */
-   Filter* filter;
-
-   /* opaque (to us) data we hold on behalf of the library's user. */
-   void* opaque;
-
-   /* The ULongs (scalar Kws) in this accumulate in strictly
-      increasing order, without duplicates.  This is important because
-      we need to be able to find a given scalar Kw in this array
-      later, by binary search. */
-   XArray* /* ULong_n_EC */ local_Kws_n_stacks;
-};
-
-static Thr* Thr__new ( void ) {
+static Thr* Thr__new ( void )
+{
    Thr* thr = HG_(zalloc)( "libhb.Thr__new.1", sizeof(Thr) );
    thr->viR = VtsID_INVALID;
    thr->viW = VtsID_INVALID;
-   thr->still_alive = True;
+   thr->llexit_done = False;
+   thr->joinedwith_done = False;
    thr->filter = HG_(zalloc)( "libhb.Thr__new.2", sizeof(Filter) );
    /* We only really need this at history level 1, but unfortunately
       this routine is called before the command line processing is
@@ -2936,6 +3676,24 @@ static Thr* Thr__new ( void ) {
       = VG_(newXA)( HG_(zalloc),
                     "libhb.Thr__new.3 (local_Kws_and_stacks)",
                     HG_(free), sizeof(ULong_n_EC) );
+
+   /* Add this Thr* <-> ThrID binding to the mapping, and
+      cross-check */
+   if (!thrid_to_thr_map) {
+      thrid_to_thr_map = VG_(newXA)( HG_(zalloc), "libhb.Thr__new.4",
+                                     HG_(free), sizeof(Thr*) );
+      tl_assert(thrid_to_thr_map);
+   }
+
+   if (thrid_counter >= ThrID_MAX_VALID) {
+      /* We're hosed.  We have to stop. */
+      scalarts_limitations_fail_NORETURN( True/*due_to_nThrs*/ );
+   }
+
+   thr->thrid = thrid_counter++;
+   Word ix = VG_(addToXA)( thrid_to_thr_map, &thr );
+   tl_assert(ix + 1024 == thr->thrid);
+
    return thr;
 }
 
@@ -3418,13 +4176,19 @@ static RCEC* get_RCEC ( Thr* thr )
 // (UInt) `echo "Old Reference Information" | md5sum`
 #define OldRef_MAGIC 0x30b1f075UL
 
-/* Records an access: a thread and a context.  The size
-   (1,2,4,8) and read-or-writeness are also encoded as
-   follows: bottom bit of .thr is 1 if write, 0 if read
-            bottom 2 bits of .rcec are encode size:
-            00 = 1, 01 = 2, 10 = 4, 11 = 8
+/* Records an access: a thread, a context (size & writeness) and the
+   number of held locks. The size (1,2,4,8) is encoded as 00 = 1, 01 =
+   2, 10 = 4, 11 = 8. 
 */
-typedef  struct { Thr* thr; RCEC* rcec; }  Thr_n_RCEC;
+typedef
+   struct { 
+      RCEC*     rcec;
+      WordSetID locksHeldW;
+      UInt      thrid  : SCALARTS_N_THRBITS;
+      UInt      szLg2B : 2;
+      UInt      isW    : 1;
+   }
+   Thr_n_RCEC;
 
 #define N_OLDREF_ACCS 5
 
@@ -3433,7 +4197,7 @@ typedef
       UWord magic;  /* sanity check only */
       UWord gen;    /* when most recently accessed */
                     /* or free list when not in use */
-      /* unused slots in this array have .thr == NULL */
+      /* unused slots in this array have .thrid == 0, which is invalid */
       Thr_n_RCEC accs[N_OLDREF_ACCS];
    }
    OldRef;
@@ -3457,13 +4221,6 @@ static SparseWA* oldrefTree     = NULL; /* SparseWA* OldRef* */
 static UWord     oldrefGen      = 0;    /* current LRU generation # */
 static UWord     oldrefTreeN    = 0;    /* # elems in oldrefTree */
 static UWord     oldrefGenIncAt = 0;    /* inc gen # when size hits this */
-
-inline static void* ptr_or_UWord ( void* p, UWord w ) {
-   return (void*)( ((UWord)p) | ((UWord)w) );
-}
-inline static void* ptr_and_UWord ( void* p, UWord w ) {
-   return (void*)( ((UWord)p) & ((UWord)w) );
-}
 
 inline static UInt min_UInt ( UInt a, UInt b ) {
    return a < b ? a : b;
@@ -3496,50 +4253,51 @@ static void event_map_bind ( Addr a, SizeT szB, Bool isW, Thr* thr )
    UWord   keyW, valW;
    Bool    b;
 
+   tl_assert(thr);
+   ThrID thrid = thr->thrid;
+   tl_assert(thrid != 0); /* zero is used to denote an empty slot. */
+
+   WordSetID locksHeldW = thr->hgthread->locksetW;
+
    rcec = get_RCEC( thr );
    ctxt__rcinc(rcec);
 
-   /* encode the size and writeness of the transaction in the bottom
-      two bits of thr and rcec. */
-   thr = ptr_or_UWord(thr, isW ? 1 : 0);
+   UInt szLg2B = 0;
    switch (szB) {
       /* This doesn't look particularly branch-predictor friendly. */
-      case 1:  rcec = ptr_or_UWord(rcec, 0); break;
-      case 2:  rcec = ptr_or_UWord(rcec, 1); break;
-      case 4:  rcec = ptr_or_UWord(rcec, 2); break;
-      case 8:  rcec = ptr_or_UWord(rcec, 3); break;
+      case 1:  szLg2B = 0; break;
+      case 2:  szLg2B = 1; break;
+      case 4:  szLg2B = 2; break;
+      case 8:  szLg2B = 3; break;
       default: tl_assert(0);
    }
 
-   /* Look in the map to see if we already have this. */
+   /* Look in the map to see if we already have a record for this
+      address. */
    b = VG_(lookupSWA)( oldrefTree, &keyW, &valW, a );
 
    if (b) {
 
       /* We already have a record for this address.  We now need to
-         see if we have a stack trace pertaining to this (thread, R/W,
+         see if we have a stack trace pertaining to this (thrid, R/W,
          size) triple. */
       tl_assert(keyW == a);
       ref = (OldRef*)valW;
       tl_assert(ref->magic == OldRef_MAGIC);
 
-      tl_assert(thr);
       for (i = 0; i < N_OLDREF_ACCS; i++) {
-         if (ref->accs[i].thr != thr)
+         if (ref->accs[i].thrid != thrid)
             continue;
-         /* since .thr encodes both the accessing thread and the
-            read/writeness, we know now that at least those features
-            of the access match this entry.  So we just need to check
-            the size indication.  Do this by inspecting the lowest 2 bits of
-            .rcec, which contain the encoded size info. */
-         if (ptr_and_UWord(ref->accs[i].rcec,3) != ptr_and_UWord(rcec,3))
+         if (ref->accs[i].szLg2B != szLg2B)
+            continue;
+         if (ref->accs[i].isW != (UInt)(isW & 1))
             continue;
          /* else we have a match, so stop looking. */
          break;
       }
 
       if (i < N_OLDREF_ACCS) {
-         /* thread 'thr' has an entry at index 'i'.  Update it. */
+         /* thread 'thr' has an entry at index 'i'.  Update its RCEC. */
          if (i > 0) {
             Thr_n_RCEC tmp = ref->accs[i-1];
             ref->accs[i-1] = ref->accs[i];
@@ -3548,31 +4306,36 @@ static void event_map_bind ( Addr a, SizeT szB, Bool isW, Thr* thr )
          }
          if (rcec == ref->accs[i].rcec) stats__ctxt_rcdec1_eq++;
          stats__ctxt_rcdec1++;
-         ctxt__rcdec( ptr_and_UWord(ref->accs[i].rcec, ~3) );
-         ref->accs[i].rcec = rcec;
-         tl_assert(ref->accs[i].thr == thr);
+         ctxt__rcdec( ref->accs[i].rcec );
+         tl_assert(ref->accs[i].thrid == thrid);
+         /* Update the RCEC and the W-held lockset. */
+         ref->accs[i].rcec       = rcec;
+         ref->accs[i].locksHeldW = locksHeldW;
       } else {
-         /* No entry for this (thread, R/W, size) triple.  Shuffle all
-            of them down one slot, and put the new entry at the start
-            of the array. */
-         if (ref->accs[N_OLDREF_ACCS-1].thr) {
+         /* No entry for this (thread, R/W, size, nWHeld) quad.
+            Shuffle all of them down one slot, and put the new entry
+            at the start of the array. */
+         if (ref->accs[N_OLDREF_ACCS-1].thrid != 0) {
             /* the last slot is in use.  We must dec the rc on the
                associated rcec. */
             tl_assert(ref->accs[N_OLDREF_ACCS-1].rcec);
             stats__ctxt_rcdec2++;
             if (0 && 0 == (stats__ctxt_rcdec2 & 0xFFF))
                VG_(printf)("QQQQ %lu overflows\n",stats__ctxt_rcdec2);
-            ctxt__rcdec( ptr_and_UWord(ref->accs[N_OLDREF_ACCS-1].rcec, ~3) );
+            ctxt__rcdec( ref->accs[N_OLDREF_ACCS-1].rcec );
          } else {
             tl_assert(!ref->accs[N_OLDREF_ACCS-1].rcec);
          }
          for (j = N_OLDREF_ACCS-1; j >= 1; j--)
             ref->accs[j] = ref->accs[j-1];
-         ref->accs[0].thr = thr;
-         ref->accs[0].rcec = rcec;
-         /* thr==NULL is used to signify an empty slot, so we can't
-            add a NULL thr. */
-         tl_assert(ptr_and_UWord(thr, ~3) != 0); 
+         ref->accs[0].thrid      = thrid;
+         ref->accs[0].szLg2B     = szLg2B;
+         ref->accs[0].isW        = (UInt)(isW & 1);
+         ref->accs[0].locksHeldW = locksHeldW;
+         ref->accs[0].rcec       = rcec;
+         /* thrid==0 is used to signify an empty slot, so we can't
+            add zero thrid (such a ThrID is invalid anyway). */
+         /* tl_assert(thrid != 0); */ /* There's a dominating assert above. */
       }
 
       ref->gen = oldrefGen;
@@ -3589,15 +4352,24 @@ static void event_map_bind ( Addr a, SizeT szB, Bool isW, Thr* thr )
 
       ref = alloc_OldRef();
       ref->magic = OldRef_MAGIC;
-      ref->gen = oldrefGen;
-      ref->accs[0].rcec = rcec;
-      ref->accs[0].thr = thr;
-      /* thr==NULL is used to signify an empty slot, so we can't add a
-         NULL thr. */
-      tl_assert(ptr_and_UWord(thr, ~3) != 0); 
+      ref->gen   = oldrefGen;
+      ref->accs[0].thrid      = thrid;
+      ref->accs[0].szLg2B     = szLg2B;
+      ref->accs[0].isW        = (UInt)(isW & 1);
+      ref->accs[0].locksHeldW = locksHeldW;
+      ref->accs[0].rcec       = rcec;
+
+      /* thrid==0 is used to signify an empty slot, so we can't
+         add zero thrid (such a ThrID is invalid anyway). */
+      /* tl_assert(thrid != 0); */ /* There's a dominating assert above. */
+
+      /* Clear out the rest of the entries */
       for (j = 1; j < N_OLDREF_ACCS; j++) {
-         ref->accs[j].thr = NULL;
-         ref->accs[j].rcec = NULL;
+         ref->accs[j].rcec       = NULL;
+         ref->accs[j].thrid      = 0;
+         ref->accs[j].szLg2B     = 0;
+         ref->accs[j].isW        = 0;
+         ref->accs[j].locksHeldW = 0;
       }
       VG_(addToSWA)( oldrefTree, a, (UWord)ref );
       oldrefTreeN++;
@@ -3606,10 +4378,12 @@ static void event_map_bind ( Addr a, SizeT szB, Bool isW, Thr* thr )
 }
 
 
+/* Extract info from the conflicting-access machinery. */
 Bool libhb_event_map_lookup ( /*OUT*/ExeContext** resEC,
-                              /*OUT*/Thr**  resThr,
-                              /*OUT*/SizeT* resSzB,
-                              /*OUT*/Bool*  resIsW,
+                              /*OUT*/Thr**        resThr,
+                              /*OUT*/SizeT*       resSzB,
+                              /*OUT*/Bool*        resIsW,
+                              /*OUT*/WordSetID*   locksHeldW,
                               Thr* thr, Addr a, SizeT szB, Bool isW )
 {
    Word    i, j;
@@ -3617,17 +4391,20 @@ Bool libhb_event_map_lookup ( /*OUT*/ExeContext** resEC,
    UWord   keyW, valW;
    Bool    b;
 
-   Thr*    cand_thr;
-   RCEC*   cand_rcec;
-   Bool    cand_isW;
-   SizeT   cand_szB;
-   Addr    cand_a;
+   ThrID     cand_thrid;
+   RCEC*     cand_rcec;
+   Bool      cand_isW;
+   SizeT     cand_szB;
+   WordSetID cand_locksHeldW;
+   Addr      cand_a;
 
    Addr toCheck[15];
    Int  nToCheck = 0;
 
    tl_assert(thr);
    tl_assert(szB == 8 || szB == 4 || szB == 2 || szB == 1);
+
+   ThrID thrid = thr->thrid;
 
    toCheck[nToCheck++] = a;
    for (i = -7; i < (Word)szB; i++) {
@@ -3650,33 +4427,27 @@ Bool libhb_event_map_lookup ( /*OUT*/ExeContext** resEC,
       ref = (OldRef*)valW;
       tl_assert(keyW == cand_a);
       tl_assert(ref->magic == OldRef_MAGIC);
-      tl_assert(ref->accs[0].thr); /* first slot must always be used */
+      tl_assert(ref->accs[0].thrid != 0); /* first slot must always be used */
 
-      cand_thr  = NULL;
-      cand_rcec = NULL;
-      cand_isW  = False;
-      cand_szB  = 0;
+      cand_thrid      = 0; /* invalid; see comments in event_map_bind */
+      cand_rcec       = NULL;
+      cand_isW        = False;
+      cand_szB        = 0;
+      cand_locksHeldW = 0; /* always valid; see initialise_data_structures() */
 
       for (i = 0; i < N_OLDREF_ACCS; i++) {
          Thr_n_RCEC* cand = &ref->accs[i];
-         cand_thr  = ptr_and_UWord(cand->thr, ~3);
-         cand_rcec = ptr_and_UWord(cand->rcec, ~3);
-         /* Decode the writeness from the bottom bit of .thr. */
-         cand_isW = 1 == (UWord)ptr_and_UWord(cand->thr, 1);
-         /* Decode the size from the bottom two bits of .rcec. */
-         switch ((UWord)ptr_and_UWord(cand->rcec, 3)) {
-            case 0:  cand_szB = 1; break;
-            case 1:  cand_szB = 2; break;
-            case 2:  cand_szB = 4; break;
-            case 3:  cand_szB = 8; break;
-            default: tl_assert(0);
-         }
+         cand_rcec       = cand->rcec;
+         cand_thrid      = cand->thrid;
+         cand_isW        = (Bool)cand->isW;
+         cand_szB        = 1 << cand->szLg2B;
+         cand_locksHeldW = cand->locksHeldW;
 
-         if (cand_thr == NULL) 
+         if (cand_thrid == 0) 
             /* This slot isn't in use.  Ignore it. */
             continue;
 
-         if (cand_thr == thr)
+         if (cand_thrid == thrid)
             /* This is an access by the same thread, but we're only
                interested in accesses from other threads.  Ignore. */
             continue;
@@ -3699,7 +4470,7 @@ Bool libhb_event_map_lookup ( /*OUT*/ExeContext** resEC,
       if (i < N_OLDREF_ACCS) {
          Int n, maxNFrames;
          /* return with success */
-         tl_assert(cand_thr);
+         tl_assert(cand_thrid);
          tl_assert(cand_rcec);
          tl_assert(cand_rcec->magic == RCEC_MAGIC);
          tl_assert(cand_szB >= 1);
@@ -3708,10 +4479,12 @@ Bool libhb_event_map_lookup ( /*OUT*/ExeContext** resEC,
          for (n = 0; n < maxNFrames; n++) {
             if (0 == cand_rcec->frames[n]) break;
          }
-         *resEC  = VG_(make_ExeContext_from_StackTrace)(cand_rcec->frames, n);
-         *resThr = cand_thr;
-         *resSzB = cand_szB;
-         *resIsW = cand_isW;
+         *resEC      = VG_(make_ExeContext_from_StackTrace)
+                          (cand_rcec->frames, n);
+         *resThr     = Thr__from_ThrID(cand_thrid);
+         *resSzB     = cand_szB;
+         *resIsW     = cand_isW;
+         *locksHeldW = cand_locksHeldW;
          return True;
       }
 
@@ -3798,9 +4571,9 @@ static void event_map__check_reference_counts ( Bool before )
       oldref = (OldRef*)valW;
       tl_assert(oldref->magic == OldRef_MAGIC);
       for (i = 0; i < N_OLDREF_ACCS; i++) {
-         Thr*  aThr = ptr_and_UWord(oldref->accs[i].thr, ~3);
-         RCEC* aRef = ptr_and_UWord(oldref->accs[i].rcec, ~3);
-         if (aThr) {
+         ThrID aThrID = oldref->accs[i].thrid;
+         RCEC* aRef   = oldref->accs[i].rcec;
+         if (aThrID != 0) {
             tl_assert(aRef);
             tl_assert(aRef->magic == RCEC_MAGIC);
             aRef->rcX++;
@@ -4041,14 +4814,14 @@ static void event_map_maybe_GC ( void )
       tl_assert(keyW == ga2del);
       oldref = (OldRef*)valW;
       for (j = 0; j < N_OLDREF_ACCS; j++) {
-         Thr*  aThr = ptr_and_UWord(oldref->accs[j].thr, ~3);
-         RCEC* aRef = ptr_and_UWord(oldref->accs[j].rcec, ~3);
+         ThrID aThrID = oldref->accs[j].thrid;
+         RCEC* aRef   = oldref->accs[j].rcec;
          if (aRef) {
-            tl_assert(aThr);
+            tl_assert(aThrID != 0);
             stats__ctxt_rcdec3++;
             ctxt__rcdec( aRef );
          } else {
-            tl_assert(!aThr);
+            tl_assert(aThrID == 0);
          }
       }
 
@@ -4173,7 +4946,8 @@ static void record_race_info ( Thr* acc_thr,
    Thread*     hist1_conf_thr  = NULL;
 
    tl_assert(acc_thr);
-   tl_assert(acc_thr->opaque);
+   tl_assert(acc_thr->hgthread);
+   tl_assert(acc_thr->hgthread->hbthr == acc_thr);
    tl_assert(HG_(clo_history_level) >= 0 && HG_(clo_history_level) <= 2);
 
    if (HG_(clo_history_level) == 1) {
@@ -4251,17 +5025,17 @@ static void record_race_info ( Thr* acc_thr,
                we should search a bit further along the array than
                lastIx+1 if hist1_seg_end is NULL. */
          } else {
-            if (confThr->still_alive)
+            if (!confThr->llexit_done)
                hist1_seg_end = main_get_EC( confThr );
          }
          // seg_start could be NULL iff this is the first stack in the thread
          //if (seg_start) VG_(pp_ExeContext)(seg_start);
          //if (seg_end)   VG_(pp_ExeContext)(seg_end);
-         hist1_conf_thr = confThr->opaque;
+         hist1_conf_thr = confThr->hgthread;
       }
    }
 
-   HG_(record_error_Race)( acc_thr->opaque, acc_addr,
+   HG_(record_error_Race)( acc_thr->hgthread, acc_addr,
                            szB, isWrite,
                            hist1_conf_thr, hist1_seg_start, hist1_seg_end );
 }
@@ -5299,7 +6073,7 @@ void libhb_Thr_resumes ( Thr* thr )
 {
    if (0) VG_(printf)("resume %p\n", thr);
    tl_assert(thr);
-   tl_assert(thr->still_alive);
+   tl_assert(!thr->llexit_done);
    Filter__clear(thr->filter, "libhb_Thr_resumes");
    /* A kludge, but .. if this thread doesn't have any marker stacks
       at all, get one right now.  This is easier than figuring out
@@ -5319,23 +6093,31 @@ void libhb_Thr_resumes ( Thr* thr )
 //                                                     //
 /////////////////////////////////////////////////////////
 
-// (UInt) `echo "Synchronisation object" | md5sum`
-#define SO_MAGIC 0x56b3c5b0U
+/* A double linked list of all the SO's. */
+SO* admin_SO = NULL;
 
-struct _SO {
-   VtsID viR; /* r-clock of sender */
-   VtsID viW; /* w-clock of sender */
-   UInt  magic;
-};
-
-static SO* SO__Alloc ( void ) {
+static SO* SO__Alloc ( void )
+{
    SO* so = HG_(zalloc)( "libhb.SO__Alloc.1", sizeof(SO) );
    so->viR   = VtsID_INVALID;
    so->viW   = VtsID_INVALID;
    so->magic = SO_MAGIC;
+   /* Add to double linked list */
+   if (admin_SO) {
+      tl_assert(admin_SO->admin_prev == NULL);
+      admin_SO->admin_prev = so;
+      so->admin_next = admin_SO;
+   } else {
+      so->admin_next = NULL;
+   }
+   so->admin_prev = NULL;
+   admin_SO = so;
+   /* */
    return so;
 }
-static void SO__Dealloc ( SO* so ) {
+
+static void SO__Dealloc ( SO* so )
+{
    tl_assert(so);
    tl_assert(so->magic == SO_MAGIC);
    if (so->viR == VtsID_INVALID) {
@@ -5346,6 +6128,14 @@ static void SO__Dealloc ( SO* so ) {
       VtsID__rcdec(so->viW);
    }
    so->magic = 0;
+   /* Del from double linked list */
+   if (so->admin_prev)
+      so->admin_prev->admin_next = so->admin_next;
+   if (so->admin_next)
+      so->admin_next->admin_prev = so->admin_prev;
+   if (so == admin_SO)
+      admin_SO = so->admin_next;
+   /* */
    HG_(free)( so );
 }
 
@@ -5380,6 +6170,31 @@ Thr* libhb_init (
 {
    Thr*  thr;
    VtsID vi;
+
+   // We will have to have to store a large number of these,
+   // so make sure they're the size we expect them to be.
+   tl_assert(sizeof(ScalarTS) == 8);
+
+   /* because first 1024 unusable */
+   tl_assert(SCALARTS_N_THRBITS >= 11);
+   /* so as to fit in a UInt w/ 3 bits to spare (see defn of
+      Thr_n_RCEC). */
+   tl_assert(SCALARTS_N_THRBITS <= 29);
+
+   /* Need to be sure that Thr_n_RCEC is 2 words (64-bit) or 3 words
+      (32-bit).  It's not correctness-critical, but there are a lot of
+      them, so it's important from a space viewpoint.  Unfortunately
+      we simply can't pack it into 2 words on a 32-bit target. */
+   if (sizeof(UWord) == 8) {
+      tl_assert(sizeof(Thr_n_RCEC) == 16);
+   } else {
+      tl_assert(sizeof(Thr_n_RCEC) == 12);
+   }
+
+   /* Word sets really are 32 bits.  Even on a 64 bit target. */
+   tl_assert(sizeof(WordSetID) == 4);
+   tl_assert(sizeof(WordSet) == sizeof(WordSetID));
+
    tl_assert(get_stacktrace);
    tl_assert(get_EC);
    main_get_stacktrace   = get_stacktrace;
@@ -5388,6 +6203,11 @@ Thr* libhb_init (
    // No need to initialise hg_wordfm.
    // No need to initialise hg_wordset.
 
+   /* Allocated once and never deallocated.  Used as a temporary in
+      VTS singleton, tick and join operations. */
+   temp_max_sized_VTS = VTS__new( "libhb.libhb_init.1", ThrID_MAX_VALID );
+   temp_max_sized_VTS->id = VtsID_INVALID;
+   verydead_thread_table_init();
    vts_set_init();
    vts_tab_init();
    event_map_init();
@@ -5525,8 +6345,8 @@ void libhb_shutdown ( Bool show_stats )
                    stats__vts__tick, stats__vts__join,  stats__vts__cmpLEQ );
       VG_(printf)( "   libhb: VTSops: cmp_structural %'lu (%'lu slow)\n",
                    stats__vts__cmp_structural, stats__vts__cmp_structural_slow );
-      VG_(printf)( "   libhb: VTSset: find_and_dealloc__or_add %'lu (%'lu deallocd)\n",
-                   stats__vts_set__fadoa, stats__vts_set__fadoa_d );
+      VG_(printf)( "   libhb: VTSset: find__or__clone_and_add %'lu (%'lu allocd)\n",
+                   stats__vts_set__focaa, stats__vts_set__focaa_a );
       VG_(printf)( "   libhb: VTSops: indexAt_SLOW %'lu\n",
                    stats__vts__indexat_slow );
 
@@ -5579,17 +6399,26 @@ void libhb_shutdown ( Bool show_stats )
    }
 }
 
+/* Receive notification that a thread has low level exited.  The
+   significance here is that we do not expect to see any more memory
+   references from it. */
 void libhb_async_exit ( Thr* thr )
 {
    tl_assert(thr);
-   tl_assert(thr->still_alive);
-   thr->still_alive = False;
+   tl_assert(!thr->llexit_done);
+   thr->llexit_done = True;
 
    /* free up Filter and local_Kws_n_stacks (well, actually not the
       latter ..) */
    tl_assert(thr->filter);
    HG_(free)(thr->filter);
    thr->filter = NULL;
+
+   /* Tell the VTS mechanism this thread has exited, so it can
+      participate in VTS pruning.  Note this can only happen if the
+      thread has both ll_exited and has been joined with. */
+   if (thr->joinedwith_done)
+      VTS__declare_thread_very_dead(thr);
 
    /* Another space-accuracy tradeoff.  Do we want to be able to show
       H1 history for conflicts in threads which have since exited?  If
@@ -5601,6 +6430,20 @@ void libhb_async_exit ( Thr* thr )
    // VG_(deleteXA)(thr->local_Kws_n_stacks);
    // thr->local_Kws_n_stacks = NULL;
 }
+
+/* Receive notification that a thread has been joined with.  The
+   significance here is that we do not expect to see any further
+   references to its vector clocks (Thr::viR and Thr::viW). */
+void libhb_joinedwith_done ( Thr* thr )
+{
+   tl_assert(thr);
+   /* Caller must ensure that this is only ever called once per Thr. */
+   tl_assert(!thr->joinedwith_done);
+   thr->joinedwith_done = True;
+   if (thr->llexit_done)
+      VTS__declare_thread_very_dead(thr);
+}
+
 
 /* Both Segs and SOs point to VTSs.  However, there is no sharing, so
    a Seg that points at a VTS is its one-and-only owner, and ditto for
@@ -5660,7 +6503,7 @@ void libhb_so_send ( Thr* thr, SO* so, Bool strong_send )
    VtsID__rcdec(thr->viW);
    thr->viR = VtsID__tick( thr->viR, thr );
    thr->viW = VtsID__tick( thr->viW, thr );
-   if (thr->still_alive) {
+   if (!thr->llexit_done) {
       Filter__clear(thr->filter, "libhb_so_send");
       note_local_Kw_n_stack_for(thr);
    }
@@ -5764,9 +6607,19 @@ void libhb_srange_new ( Thr* thr, Addr a, SizeT szB )
    if (0 && TRACEME(a,szB)) trace(thr,a,szB,"nw-after ");
 }
 
-void libhb_srange_noaccess ( Thr* thr, Addr a, SizeT szB )
+void libhb_srange_noaccess_NoFX ( Thr* thr, Addr a, SizeT szB )
 {
    /* do nothing */
+}
+
+void libhb_srange_noaccess_AHAE ( Thr* thr, Addr a, SizeT szB )
+{
+   /* This really does put the requested range in NoAccess.  It's
+      expensive though. */
+   SVal sv = SVal_NOACCESS;
+   tl_assert(is_sane_SVal_C(sv));
+   zsm_sset_range( a, szB, sv );
+   Filter__clear_range( thr->filter, a, szB );
 }
 
 void libhb_srange_untrack ( Thr* thr, Addr a, SizeT szB )
@@ -5779,14 +6632,14 @@ void libhb_srange_untrack ( Thr* thr, Addr a, SizeT szB )
    if (0 && TRACEME(a,szB)) trace(thr,a,szB,"untrack-after ");
 }
 
-void* libhb_get_Thr_opaque ( Thr* thr ) {
+Thread* libhb_get_Thr_hgthread ( Thr* thr ) {
    tl_assert(thr);
-   return thr->opaque;
+   return thr->hgthread;
 }
 
-void libhb_set_Thr_opaque ( Thr* thr, void* v ) {
+void libhb_set_Thr_hgthread ( Thr* thr, Thread* hgthread ) {
    tl_assert(thr);
-   thr->opaque = v;
+   thr->hgthread = hgthread;
 }
 
 void libhb_copy_shadow_state ( Thr* thr, Addr src, Addr dst, SizeT len )

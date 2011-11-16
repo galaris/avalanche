@@ -40,6 +40,7 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcprint.h"
+#include "pub_tool_libcfile.h"
 #include "pub_tool_threadstate.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_hashtable.h"
@@ -47,11 +48,14 @@
 #include "pub_tool_machine.h"
 #include "pub_tool_options.h"
 #include "pub_tool_xarray.h"
+#include "pub_tool_mallocfree.h"
 #include "pub_tool_stacktrace.h"
 #include "pub_tool_wordfm.h"
 #include "pub_tool_debuginfo.h" // VG_(find_seginfo), VG_(seginfo_soname)
 #include "pub_tool_redir.h"     // sonames for the dynamic linkers
 #include "pub_tool_vki.h"       // VKI_PAGE_SIZE
+#include "pub_tool_libcproc.h"  // VG_(atfork)
+#include "pub_tool_aspacemgr.h" // VG_(am_is_valid_for_client)
 
 #include "hg_basics.h"
 #include "hg_wordset.h"
@@ -62,6 +66,54 @@
 
 #include "helgrind.h"
 
+#include <avalanche.h>
+
+#ifdef WITH_AVALANCHE
+
+VgHashTable basicBlocksTable;
+
+UInt alarm = 0;
+
+extern UShort port;
+extern Bool sockets;
+extern Bool datagrams;
+extern UChar ip1, ip2, ip3, ip4;
+extern Int cursocket;
+extern ULong curoffs;
+
+Bool replace = False;
+Bool isRead = False;
+Bool noCoverage = False;
+extern Bool isRecv;
+
+static Int socketsNum = 0;
+static Int socketsBoundary;
+static replaceData* replace_data;
+static Char* bbFileName = NULL;
+static Char* tempDir;
+static Char* replaceFileName;
+
+static
+Char* concatTempDir(Char* fileName)
+{
+  Char* result;
+  if (tempDir == NULL)
+  {
+    result = VG_(malloc)(fileName, VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, fileName);
+  }
+  else
+  {
+    Int length = VG_(strlen)(tempDir);
+    result = VG_(malloc)(fileName, length + VG_(strlen)(fileName) + 1);
+    VG_(strcpy)(result, tempDir);
+    VG_(strcpy)(result + length, fileName);
+    result[length + VG_(strlen)(fileName)] = '\0';
+  }
+  return result;
+}
+
+#endif
 
 // FIXME: new_mem_w_tid ignores the supplied tid. (wtf?!)
 
@@ -79,11 +131,6 @@
    worthwhile performance benefits over -O.
 */
 
-// FIXME catch sync signals (SEGV, basically) and unlock BHL,
-// if held.  Otherwise a LOCK-prefixed insn which segfaults 
-// gets Helgrind into a total muddle as the BHL will not be
-// released after the insn.
-
 // FIXME what is supposed to happen to locks in memory which
 // is relocated as a result of client realloc?
 
@@ -98,12 +145,6 @@
 // the thread still holds the lock.
 
 /* ------------ Debug/trace options ------------ */
-
-// this is:
-// shadow_mem_make_NoAccess: 29156 SMs, 1728 scanned
-// happens_before_wrk: 1000
-// ev__post_thread_join: 3360 SMs, 29 scanned, 252 re-Excls
-#define SHOW_EXPENSIVE_STUFF 0
 
 // 0 for silent, 1 for some stuff, 2 for lots of stuff
 #define SHOW_EVENTS 0
@@ -129,8 +170,11 @@ static void all__sanity_check ( Char* who ); /* fwds */
 
 /* Admin linked list of Threads */
 static Thread* admin_threads = NULL;
+Thread* get_admin_threads ( void ) { return admin_threads; }
 
-/* Admin linked list of Locks */
+/* Admin double linked list of Locks */
+/* We need a double linked list to properly and efficiently
+   handle del_LockN. */
 static Lock* admin_locks = NULL;
 
 /* Mapping table for core ThreadIds to Thread* */
@@ -139,16 +183,17 @@ static Thread** map_threads = NULL; /* Array[VG_N_THREADS] of Thread* */
 /* Mapping table for lock guest addresses to Lock* */
 static WordFM* map_locks = NULL; /* WordFM LockAddr Lock* */
 
-/* The word-set universes for thread sets and lock sets. */
-static WordSetU* univ_tsets = NULL; /* sets of Thread* */
+/* The word-set universes for lock sets. */
 static WordSetU* univ_lsets = NULL; /* sets of Lock* */
 static WordSetU* univ_laog  = NULL; /* sets of Lock*, for LAOG */
 
-/* never changed; we only care about its address.  Is treated as if it
-   was a standard userspace lock.  Also we have a Lock* describing it
-   so it can participate in lock sets in the usual way. */
-static Int   __bus_lock = 0;
-static Lock* __bus_lock_Lock = NULL;
+/* Allow libhb to get at the universe of locksets stored
+   here.  Sigh. */
+WordSetU* HG_(get_univ_lsets) ( void ) { return univ_lsets; }
+
+/* Allow libhb to get at the list of locks stored here.  Ditto
+   sigh. */
+Lock* HG_(get_admin_locks) ( void ) { return admin_locks; }
 
 
 /*----------------------------------------------------------------*/
@@ -180,10 +225,17 @@ static Thread* mk_Thread ( Thr* hbthr ) {
 }
 
 // Make a new lock which is unlocked (hence ownerless)
+// and insert the new lock in admin_locks double linked list.
 static Lock* mk_LockN ( LockKind kind, Addr guestaddr ) {
    static ULong unique = 0;
    Lock* lock             = HG_(zalloc)( "hg.mk_Lock.1", sizeof(Lock) );
-   lock->admin            = admin_locks;
+   /* begin: add to double linked list */
+   if (admin_locks)
+      admin_locks->admin_prev = lock;
+   lock->admin_next       = admin_locks;
+   lock->admin_prev       = NULL;
+   admin_locks            = lock;
+   /* end: add */
    lock->unique           = unique++;
    lock->magic            = LockN_MAGIC;
    lock->appeared_at      = NULL;
@@ -194,12 +246,11 @@ static Lock* mk_LockN ( LockKind kind, Addr guestaddr ) {
    lock->heldW            = False;
    lock->heldBy           = NULL;
    tl_assert(HG_(is_sane_LockN)(lock));
-   admin_locks            = lock;
    return lock;
 }
 
 /* Release storage for a Lock.  Also release storage in .heldBy, if
-   any. */
+   any. Removes from admin_locks double linked list. */
 static void del_LockN ( Lock* lk ) 
 {
    tl_assert(HG_(is_sane_LockN)(lk));
@@ -207,6 +258,20 @@ static void del_LockN ( Lock* lk )
    libhb_so_dealloc(lk->hbso);
    if (lk->heldBy)
       VG_(deleteBag)( lk->heldBy );
+   /* begin: del lock from double linked list */
+   if (lk == admin_locks) {
+      tl_assert(lk->admin_prev == NULL);
+      if (lk->admin_next)
+         lk->admin_next->admin_prev = NULL;
+      admin_locks = lk->admin_next;
+   }
+   else {
+      tl_assert(lk->admin_prev != NULL);
+      lk->admin_prev->admin_next = lk->admin_next;
+      if (lk->admin_next)
+         lk->admin_next->admin_prev = lk->admin_prev;
+   }
+   /* end: del */
    VG_(memset)(lk, 0xAA, sizeof(*lk));
    HG_(free)(lk);
 }
@@ -360,8 +425,6 @@ static void remove_Lock_from_locksets_of_all_owning_Threads( Lock* lk )
 /*--- Print out the primary data structures                    ---*/
 /*----------------------------------------------------------------*/
 
-//static WordSetID del_BHL ( WordSetID lockset ); /* fwds */
-
 #define PP_THREADS      (1<<1)
 #define PP_LOCKS        (1<<2)
 #define PP_ALL (PP_THREADS | PP_LOCKS)
@@ -444,8 +507,9 @@ static void pp_Lock ( Int d, Lock* lk )
 {
    space(d+0); VG_(printf)("Lock %p (ga %#lx) {\n", lk, lk->guestaddr);
    if (sHOW_ADMIN) {
-      space(d+3); VG_(printf)("admin  %p\n",   lk->admin);
-      space(d+3); VG_(printf)("magic  0x%x\n", (UInt)lk->magic);
+      space(d+3); VG_(printf)("admin_n  %p\n",   lk->admin_next);
+      space(d+3); VG_(printf)("admin_p  %p\n",   lk->admin_prev);
+      space(d+3); VG_(printf)("magic    0x%x\n", (UInt)lk->magic);
    }
    space(d+3); VG_(printf)("unique %llu\n", lk->unique);
    space(d+3); VG_(printf)("kind   %s\n", show_LockKind(lk->kind));
@@ -469,11 +533,11 @@ static void pp_admin_locks ( Int d )
 {
    Int   i, n;
    Lock* lk;
-   for (n = 0, lk = admin_locks;  lk;  n++, lk = lk->admin) {
+   for (n = 0, lk = admin_locks;  lk;  n++, lk = lk->admin_next) {
       /* nothing */
    }
    space(d); VG_(printf)("admin_locks (%d records) {\n", n);
-   for (i = 0, lk = admin_locks;  lk;  i++, lk = lk->admin) {
+   for (i = 0, lk = admin_locks;  lk;  i++, lk = lk->admin_next) {
       if (0) {
          space(n); 
          VG_(printf)("admin_locks record %d of %d:\n", i, n);
@@ -532,6 +596,7 @@ static void pp_everything ( Int flags, Char* caller )
 static void initialise_data_structures ( Thr* hbthr_root )
 {
    Thread*   thr;
+   WordSetID wsid;
 
    /* Get everything initialised and zeroed. */
    tl_assert(admin_threads == NULL);
@@ -549,24 +614,22 @@ static void initialise_data_structures ( Thr* hbthr_root )
                            NULL/*unboxed Word cmp*/);
    tl_assert(map_locks != NULL);
 
-   __bus_lock_Lock = mk_LockN( LK_nonRec, (Addr)&__bus_lock );
-   tl_assert(HG_(is_sane_LockN)(__bus_lock_Lock));
-   VG_(addToFM)( map_locks, (Word)&__bus_lock, (Word)__bus_lock_Lock );
-
-   tl_assert(univ_tsets == NULL);
-   univ_tsets = HG_(newWordSetU)( HG_(zalloc), "hg.ids.3", HG_(free),
-                                  8/*cacheSize*/ );
-   tl_assert(univ_tsets != NULL);
-
    tl_assert(univ_lsets == NULL);
    univ_lsets = HG_(newWordSetU)( HG_(zalloc), "hg.ids.4", HG_(free),
                                   8/*cacheSize*/ );
    tl_assert(univ_lsets != NULL);
+   /* Ensure that univ_lsets is non-empty, with lockset zero being the
+      empty lockset.  hg_errors.c relies on the assumption that
+      lockset number zero in univ_lsets is always valid. */
+   wsid = HG_(emptyWS)(univ_lsets);
+   tl_assert(wsid == 0);
 
    tl_assert(univ_laog == NULL);
-   univ_laog = HG_(newWordSetU)( HG_(zalloc), "hg.ids.5 (univ_laog)",
-                                 HG_(free), 24/*cacheSize*/ );
-   tl_assert(univ_laog != NULL);
+   if (HG_(clo_track_lockorders)) {
+      univ_laog = HG_(newWordSetU)( HG_(zalloc), "hg.ids.5 (univ_laog)",
+                                    HG_(free), 24/*cacheSize*/ );
+      tl_assert(univ_laog != NULL);
+   }
 
    /* Set up entries for the root thread */
    // FIXME: this assumes that the first real ThreadId is 1
@@ -575,8 +638,8 @@ static void initialise_data_structures ( Thr* hbthr_root )
    thr = mk_Thread(hbthr_root);
    thr->coretid = 1; /* FIXME: hardwires an assumption about the
                         identity of the root thread. */
-   tl_assert( libhb_get_Thr_opaque(hbthr_root) == NULL );
-   libhb_set_Thr_opaque(hbthr_root, thr);
+   tl_assert( libhb_get_Thr_hgthread(hbthr_root) == NULL );
+   libhb_set_Thr_hgthread(hbthr_root, thr);
 
    /* and bind it in the thread-map table. */
    tl_assert(HG_(is_sane_ThreadId)(thr->coretid));
@@ -585,10 +648,6 @@ static void initialise_data_structures ( Thr* hbthr_root )
    map_threads[thr->coretid] = thr;
 
    tl_assert(VG_INVALID_THREADID == 0);
-
-   /* Mark the new bus lock correctly (to stop the sanity checks
-      complaining) */
-   tl_assert( sizeof(__bus_lock) == 4 );
 
    all__sanity_check("initialise_data_structures");
 }
@@ -839,7 +898,7 @@ static void locks__sanity_check ( Char* who )
    Lock*     lk;
    Int       i;
    // # entries in admin_locks == # entries in map_locks
-   for (i = 0, lk = admin_locks;  lk;  i++, lk = lk->admin)
+   for (i = 0, lk = admin_locks;  lk;  i++, lk = lk->admin_next)
       ;
    if (i != VG_(sizeFM)(map_locks)) BAD("1");
    // for each entry (gla, lk) in map_locks
@@ -851,7 +910,7 @@ static void locks__sanity_check ( Char* who )
    }
    VG_(doneIterFM)( map_locks );
    // scan through admin_locks ...
-   for (lk = admin_locks; lk; lk = lk->admin) {
+   for (lk = admin_locks; lk; lk = lk->admin_next) {
       // lock is sane.  Quite comprehensive, also checks that
       // referenced (holder) threads are sane.
       if (!HG_(is_sane_LockN)(lk)) BAD("3");
@@ -899,142 +958,13 @@ static void all_except_Locks__sanity_check ( Char* who ) {
    stats__sanity_checks++;
    if (0) VG_(printf)("all_except_Locks__sanity_check(%s)\n", who);
    threads__sanity_check(who);
-   laog__sanity_check(who);
+   if (HG_(clo_track_lockorders))
+      laog__sanity_check(who);
 }
 static void all__sanity_check ( Char* who ) {
    all_except_Locks__sanity_check(who);
    locks__sanity_check(who);
 }
-
-
-/*----------------------------------------------------------------*/
-/*--- the core memory state machine (msm__* functions)         ---*/
-/*----------------------------------------------------------------*/
-
-//static WordSetID add_BHL ( WordSetID lockset ) {
-//   return HG_(addToWS)( univ_lsets, lockset, (Word)__bus_lock_Lock );
-//}
-//static WordSetID del_BHL ( WordSetID lockset ) {
-//   return HG_(delFromWS)( univ_lsets, lockset, (Word)__bus_lock_Lock );
-//}
-
-
-///* Last-lock-lossage records.  This mechanism exists to help explain
-//   to programmers why we are complaining about a race.  The idea is to
-//   monitor all lockset transitions.  When a previously nonempty
-//   lockset becomes empty, the lock(s) that just disappeared (the
-//   "lossage") are the locks that have consistently protected the
-//   location (ga_of_access) in question for the longest time.  Most of
-//   the time the lossage-set is a single lock.  Because the
-//   lossage-lock is the one that has survived longest, there is there
-//   is a good chance that it is indeed the lock that the programmer
-//   intended to use to protect the location.
-//
-//   Note that we cannot in general just look at the lossage set when we
-//   see a transition to ShM(...,empty-set), because a transition to an
-//   empty lockset can happen arbitrarily far before the point where we
-//   want to report an error.  This is in the case where there are many
-//   transitions ShR -> ShR, all with an empty lockset, and only later
-//   is there a transition to ShM.  So what we want to do is note the
-//   lossage lock at the point where a ShR -> ShR transition empties out
-//   the lockset, so we can present it later if there should be a
-//   transition to ShM.
-//
-//   So this function finds such transitions.  For each, it associates
-//   in ga_to_lastlock, the guest address and the lossage lock.  In fact
-//   we do not record the Lock* directly as that may disappear later,
-//   but instead the ExeContext inside the Lock which says where it was
-//   initialised or first locked.  ExeContexts are permanent so keeping
-//   them indefinitely is safe.
-//
-//   A boring detail: the hardware bus lock is not interesting in this
-//   respect, so we first remove that from the pre/post locksets.
-//*/
-//
-//static UWord stats__ga_LL_adds = 0;
-//
-//static WordFM* ga_to_lastlock = NULL; /* GuestAddr -> ExeContext* */
-//
-//static 
-//void record_last_lock_lossage ( Addr ga_of_access,
-//                                WordSetID lset_old, WordSetID lset_new )
-//{
-//   Lock* lk;
-//   Int   card_old, card_new;
-//
-//   tl_assert(lset_old != lset_new);
-//
-//   if (0) VG_(printf)("XX1: %d (card %ld) -> %d (card %ld) %#lx\n",
-//                      (Int)lset_old, 
-//                      HG_(cardinalityWS)(univ_lsets,lset_old),
-//                      (Int)lset_new, 
-//                      HG_(cardinalityWS)(univ_lsets,lset_new),
-//                      ga_of_access );
-//
-//   /* This is slow, but at least it's simple.  The bus hardware lock
-//      just confuses the logic, so remove it from the locksets we're
-//      considering before doing anything else. */
-//   lset_new = del_BHL( lset_new );
-//
-//   if (!HG_(isEmptyWS)( univ_lsets, lset_new )) {
-//      /* The post-transition lock set is not empty.  So we are not
-//         interested.  We're only interested in spotting transitions
-//         that make locksets become empty. */
-//      return;
-//   }
-//
-//   /* lset_new is now empty */
-//   card_new = HG_(cardinalityWS)( univ_lsets, lset_new );
-//   tl_assert(card_new == 0);
-//
-//   lset_old = del_BHL( lset_old );
-//   card_old = HG_(cardinalityWS)( univ_lsets, lset_old );
-//
-//   if (0) VG_(printf)(" X2: %d (card %d) -> %d (card %d)\n",
-//                      (Int)lset_old, card_old, (Int)lset_new, card_new );
-//
-//   if (card_old == 0) {
-//      /* The old lockset was also empty.  Not interesting. */
-//      return;
-//   }
-//
-//   tl_assert(card_old > 0);
-//   tl_assert(!HG_(isEmptyWS)( univ_lsets, lset_old ));
-//
-//   /* Now we know we've got a transition from a nonempty lockset to an
-//      empty one.  So lset_old must be the set of locks lost.  Record
-//      some details.  If there is more than one element in the lossage
-//      set, just choose one arbitrarily -- not the best, but at least
-//      it's simple. */
-//
-//   lk = (Lock*)HG_(anyElementOfWS)( univ_lsets, lset_old );
-//   if (0) VG_(printf)("lossage %ld %p\n",
-//                      HG_(cardinalityWS)( univ_lsets, lset_old), lk );
-//   if (lk->appeared_at) {
-//      if (ga_to_lastlock == NULL)
-//         ga_to_lastlock = VG_(newFM)( HG_(zalloc), "hg.rlll.1", HG_(free), NULL );
-//      VG_(addToFM)( ga_to_lastlock, ga_of_access, (Word)lk->appeared_at );
-//      stats__ga_LL_adds++;
-//   }
-//}
-//
-///* This queries the table (ga_to_lastlock) made by
-//   record_last_lock_lossage, when constructing error messages.  It
-//   attempts to find the ExeContext of the allocation or initialisation
-//   point for the lossage lock associated with 'ga'. */
-//
-//static ExeContext* maybe_get_lastlock_initpoint ( Addr ga ) 
-//{
-//   ExeContext* ec_hint = NULL;
-//   if (ga_to_lastlock != NULL 
-//       && VG_(lookupFM)(ga_to_lastlock, 
-//                        NULL, (Word*)&ec_hint, ga)) {
-//      tl_assert(ec_hint != NULL);
-//      return ec_hint;
-//   } else {
-//      return NULL;
-//   }
-//}
 
 
 /*----------------------------------------------------------------*/
@@ -1077,11 +1007,20 @@ static void shadow_mem_make_New ( Thread* thr, Addr a, SizeT len )
    libhb_srange_new( thr->hbthr, a, len );
 }
 
-static void shadow_mem_make_NoAccess ( Thread* thr, Addr aIN, SizeT len )
+static void shadow_mem_make_NoAccess_NoFX ( Thread* thr, Addr aIN, SizeT len )
 {
    if (0 && len > 500)
-      VG_(printf)("make NoAccess ( %#lx, %ld )\n", aIN, len );
-   libhb_srange_noaccess( thr->hbthr, aIN, len );
+      VG_(printf)("make NoAccess_NoFX ( %#lx, %ld )\n", aIN, len );
+   // has no effect (NoFX)
+   libhb_srange_noaccess_NoFX( thr->hbthr, aIN, len );
+}
+
+static void shadow_mem_make_NoAccess_AHAE ( Thread* thr, Addr aIN, SizeT len )
+{
+   if (0 && len > 500)
+      VG_(printf)("make NoAccess_AHAE ( %#lx, %ld )\n", aIN, len );
+   // Actually Has An Effect (AHAE)
+   libhb_srange_noaccess_AHAE( thr->hbthr, aIN, len );
 }
 
 static void shadow_mem_make_Untracked ( Thread* thr, Addr aIN, SizeT len )
@@ -1205,9 +1144,11 @@ void evhH__post_thread_w_acquires_lock ( Thread* thr,
    goto noerror;
 
   noerror:
-   /* check lock order acquisition graph, and update.  This has to
-      happen before the lock is added to the thread's locksetA/W. */
-   laog__pre_thread_acquires_lock( thr, lk );
+   if (HG_(clo_track_lockorders)) {
+      /* check lock order acquisition graph, and update.  This has to
+         happen before the lock is added to the thread's locksetA/W. */
+      laog__pre_thread_acquires_lock( thr, lk );
+   }
    /* update the thread's held-locks set */
    thr->locksetA = HG_(addToWS)( univ_lsets, thr->locksetA, (Word)lk );
    thr->locksetW = HG_(addToWS)( univ_lsets, thr->locksetW, (Word)lk );
@@ -1278,9 +1219,11 @@ void evhH__post_thread_r_acquires_lock ( Thread* thr,
    goto noerror;
 
   noerror:
-   /* check lock order acquisition graph, and update.  This has to
-      happen before the lock is added to the thread's locksetA/W. */
-   laog__pre_thread_acquires_lock( thr, lk );
+   if (HG_(clo_track_lockorders)) {
+      /* check lock order acquisition graph, and update.  This has to
+         happen before the lock is added to the thread's locksetA/W. */
+      laog__pre_thread_acquires_lock( thr, lk );
+   }
    /* update the thread's held-locks set */
    thr->locksetA = HG_(addToWS)( univ_lsets, thr->locksetA, (Word)lk );
    /* but don't update thr->locksetW, since lk is only rd-held */
@@ -1534,31 +1477,49 @@ void evh__new_mem_w_perms ( Addr a, SizeT len,
 static
 void evh__set_perms ( Addr a, SizeT len,
                       Bool rr, Bool ww, Bool xx ) {
+   // This handles mprotect requests.  If the memory is being put
+   // into no-R no-W state, paint it as NoAccess, for the reasons
+   // documented at evh__die_mem_munmap().
    if (SHOW_EVENTS >= 1)
-      VG_(printf)("evh__set_perms(%p, %lu, %d,%d,%d)\n",
+      VG_(printf)("evh__set_perms(%p, %lu, r=%d w=%d x=%d)\n",
                   (void*)a, len, (Int)rr, (Int)ww, (Int)xx );
    /* Hmm.  What should we do here, that actually makes any sense?
       Let's say: if neither readable nor writable, then declare it
       NoAccess, else leave it alone. */
    if (!(rr || ww))
-      shadow_mem_make_NoAccess( get_current_Thread(), a, len );
+      shadow_mem_make_NoAccess_AHAE( get_current_Thread(), a, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__set_perms-post");
 }
 
 static
 void evh__die_mem ( Addr a, SizeT len ) {
-   // urr, libhb ignores this.
+   // Urr, libhb ignores this.
    if (SHOW_EVENTS >= 2)
       VG_(printf)("evh__die_mem(%p, %lu)\n", (void*)a, len );
-   shadow_mem_make_NoAccess( get_current_Thread(), a, len );
+   shadow_mem_make_NoAccess_NoFX( get_current_Thread(), a, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__die_mem-post");
 }
 
 static
+void evh__die_mem_munmap ( Addr a, SizeT len ) {
+   // It's important that libhb doesn't ignore this.  If, as is likely,
+   // the client is subject to address space layout randomization,
+   // then unmapped areas may never get remapped over, even in long
+   // runs.  If we just ignore them we wind up with large resource
+   // (VTS) leaks in libhb.  So force them to NoAccess, so that all
+   // VTS references in the affected area are dropped.  Marking memory
+   // as NoAccess is expensive, but we assume that munmap is sufficiently
+   // rare that the space gains of doing this are worth the costs.
+   if (SHOW_EVENTS >= 2)
+      VG_(printf)("evh__die_mem_munmap(%p, %lu)\n", (void*)a, len );
+   shadow_mem_make_NoAccess_AHAE( get_current_Thread(), a, len );
+}
+
+static
 void evh__untrack_mem ( Addr a, SizeT len ) {
-   // whereas it doesn't ignore this
+   // Libhb doesn't ignore this.
    if (SHOW_EVENTS >= 2)
       VG_(printf)("evh__untrack_mem(%p, %lu)\n", (void*)a, len );
    shadow_mem_make_Untracked( get_current_Thread(), a, len );
@@ -1600,15 +1561,15 @@ void evh__pre_thread_ll_create ( ThreadId parent, ThreadId child )
 
       hbthr_p = thr_p->hbthr;
       tl_assert(hbthr_p != NULL);
-      tl_assert( libhb_get_Thr_opaque(hbthr_p) == thr_p );
+      tl_assert( libhb_get_Thr_hgthread(hbthr_p) == thr_p );
 
       hbthr_c = libhb_create ( hbthr_p );
 
       /* Create a new thread record for the child. */
       /* a Thread for the new thread ... */
       thr_c = mk_Thread( hbthr_c );
-      tl_assert( libhb_get_Thr_opaque(hbthr_c) == NULL );
-      libhb_set_Thr_opaque(hbthr_c, thr_c);
+      tl_assert( libhb_get_Thr_hgthread(hbthr_c) == NULL );
+      libhb_set_Thr_hgthread(hbthr_c, thr_c);
 
       /* and bind it in the thread-map table */
       map_threads[child] = thr_c;
@@ -1679,6 +1640,8 @@ void evh__pre_thread_ll_exit ( ThreadId quit_tid )
       - tell libhb the thread is gone
       - clear the map_threads entry, in order that the Valgrind core
         can re-use it. */
+   /* Cleanup actions (next 5 lines) copied in evh__atfork_child; keep
+      in sync. */
    tl_assert(thr_q->hbthr);
    libhb_async_exit(thr_q->hbthr);
    tl_assert(thr_q->coretid == quit_tid);
@@ -1687,6 +1650,35 @@ void evh__pre_thread_ll_exit ( ThreadId quit_tid )
 
    if (HG_(clo_sanity_flags) & SCE_THREADS)
       all__sanity_check("evh__pre_thread_ll_exit-post");
+}
+
+/* This is called immediately after fork, for the child only.  'tid'
+   is the only surviving thread (as per POSIX rules on fork() in
+   threaded programs), so we have to clean up map_threads to remove
+   entries for any other threads. */
+static
+void evh__atfork_child ( ThreadId tid )
+{
+   UInt    i;
+   Thread* thr;
+   /* Slot 0 should never be used. */
+   thr = map_threads_maybe_lookup( 0/*INVALID*/ );
+   tl_assert(!thr);
+   /* Clean up all other slots except 'tid'. */
+   for (i = 1; i < VG_N_THREADS; i++) {
+      if (i == tid)
+         continue;
+      thr = map_threads_maybe_lookup(i);
+      if (!thr)
+         continue;
+      /* Cleanup actions (next 5 lines) copied from end of
+         evh__pre_thread_ll_exit; keep in sync. */
+      tl_assert(thr->hbthr);
+      libhb_async_exit(thr->hbthr);
+      tl_assert(thr->coretid == i);
+      thr->coretid = VG_INVALID_THREADID;
+      map_threads_delete(i);
+   }
 }
 
 
@@ -1714,8 +1706,8 @@ void evh__HG_PTHREAD_JOIN_POST ( ThreadId stay_tid, Thread* quit_thr )
    hbthr_s = thr_s->hbthr;
    hbthr_q = thr_q->hbthr;
    tl_assert(hbthr_s != hbthr_q);
-   tl_assert( libhb_get_Thr_opaque(hbthr_s) == thr_s );
-   tl_assert( libhb_get_Thr_opaque(hbthr_q) == thr_q );
+   tl_assert( libhb_get_Thr_hgthread(hbthr_s) == thr_s );
+   tl_assert( libhb_get_Thr_hgthread(hbthr_q) == thr_q );
 
    /* Allocate a temporary synchronisation object and use it to send
       an imaginary message from the quitter to the stayer, the purpose
@@ -1726,9 +1718,20 @@ void evh__HG_PTHREAD_JOIN_POST ( ThreadId stay_tid, Thread* quit_thr )
    /* Send last arg of _so_send as False, since the sending thread
       doesn't actually exist any more, so we don't want _so_send to
       try taking stack snapshots of it. */
-   libhb_so_send(hbthr_q, so, True/*strong_send*/);
+   libhb_so_send(hbthr_q, so, True/*strong_send*//*?!? wrt comment above*/);
    libhb_so_recv(hbthr_s, so, True/*strong_recv*/);
    libhb_so_dealloc(so);
+
+   /* Tell libhb that the quitter has been reaped.  Note that we might
+      have to be cleverer about this, to exclude 2nd and subsequent
+      notifications for the same hbthr_q, in the case where the app is
+      buggy (calls pthread_join twice or more on the same thread) AND
+      where libpthread is also buggy and doesn't return ESRCH on
+      subsequent calls.  (If libpthread isn't thusly buggy, then the
+      wrapper for pthread_join in hg_intercepts.c will stop us getting
+      notified here multiple times for the same joinee.)  See also
+      comments in helgrind/tests/jointwice.c. */
+   libhb_joinedwith_done(hbthr_q);
 
    /* evh__pre_thread_ll_exit issues an error message if the exiting
       thread holds any locks.  No need to check here. */
@@ -1765,7 +1768,12 @@ void evh__pre_mem_read_asciiz ( CorePart part, ThreadId tid,
    if (SHOW_EVENTS >= 1)
       VG_(printf)("evh__pre_mem_asciiz(ctid=%d, \"%s\", %p)\n", 
                   (Int)tid, s, (void*)a );
-   // FIXME: think of a less ugly hack
+   // Don't segfault if the string starts in an obviously stupid
+   // place.  Actually we should check the whole string, not just
+   // the start address, but that's too much trouble.  At least
+   // checking the first byte is better than nothing.  See #255009.
+   if (!VG_(am_is_valid_for_client) (a, 1, VKI_PROT_READ))
+      return;
    len = VG_(strlen)( (Char*) a );
    shadow_mem_cread_range( map_threads_lookup(tid), a, len+1 );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
@@ -1800,9 +1808,20 @@ void evh__new_mem_heap ( Addr a, SizeT len, Bool is_inited ) {
 
 static
 void evh__die_mem_heap ( Addr a, SizeT len ) {
+   Thread* thr;
    if (SHOW_EVENTS >= 1)
       VG_(printf)("evh__die_mem_heap(%p, %lu)\n", (void*)a, len );
-   shadow_mem_make_NoAccess( get_current_Thread(), a, len );
+   thr = get_current_Thread();
+   tl_assert(thr);
+   if (HG_(clo_free_is_write)) {
+      /* Treat frees as if the memory was written immediately prior to
+         the free.  This shakes out more races, specifically, cases
+         where memory is referenced by one thread, and freed by
+         another, and there's no observable synchronisation event to
+         guarantee that the reference happens before the free. */
+      shadow_mem_cwrite_range(thr, a, len);
+   }
+   shadow_mem_make_NoAccess_NoFX( thr, a, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__pre_mem_read-post");
 }
@@ -1938,8 +1957,9 @@ void evh__HG_PTHREAD_MUTEX_DESTROY_PRE( ThreadId tid, void* mutex )
       }
       tl_assert( !lk->heldBy );
       tl_assert( HG_(is_sane_LockN)(lk) );
-
-      laog__handle_one_lock_deletion(lk);
+      
+      if (HG_(clo_track_lockorders))
+         laog__handle_one_lock_deletion(lk);
       map_locks_delete( lk->guestaddr );
       del_LockN( lk );
    }
@@ -2208,32 +2228,53 @@ static void evh__HG_PTHREAD_COND_SIGNAL_PRE ( ThreadId tid, void* cond )
    // Hmm.  POSIX doesn't actually say that it's an error to call 
    // pthread_cond_signal with the associated mutex being unlocked.
    // Although it does say that it should be "if consistent scheduling
-   // is desired."
+   // is desired."  For that reason, print "dubious" if the lock isn't
+   // held by any thread.  Skip the "dubious" if it is held by some
+   // other thread; that sounds straight-out wrong.
    //
-   // For the moment, disable these checks.
-   //lk = map_locks_maybe_lookup(cvi->mx_ga);
-   //if (lk == NULL || cvi->mx_ga == 0) {
-   //   HG_(record_error_Misc)( thr, 
-   //      "pthread_cond_{signal,broadcast}: "
-   //      "no or invalid mutex associated with cond");
-   //}
-   ///* note: lk could be NULL.  Be careful. */
-   //if (lk) {
-   //   if (lk->kind == LK_rdwr) {
-   //      HG_(record_error_Misc)(thr,
-   //         "pthread_cond_{signal,broadcast}: associated lock is a rwlock");
-   //   }
-   //   if (lk->heldBy == NULL) {
-   //      HG_(record_error_Misc)(thr,
-   //         "pthread_cond_{signal,broadcast}: "
-   //         "associated lock is not held by any thread");
-   //   }
-   //   if (lk->heldBy != NULL && 0 == VG_(elemBag)(lk->heldBy, (Word)thr)) {
-   //      HG_(record_error_Misc)(thr,
-   //         "pthread_cond_{signal,broadcast}: "
-   //         "associated lock is not held by calling thread");
-   //   }
-   //}
+   // Anybody who writes code that signals on a CV without holding
+   // the associated MX needs to be shipped off to a lunatic asylum
+   // ASAP, even though POSIX doesn't actually declare such behaviour
+   // illegal -- it makes code extremely difficult to understand/
+   // reason about.  In particular it puts the signalling thread in
+   // a situation where it is racing against the released waiter
+   // as soon as the signalling is done, and so there needs to be
+   // some auxiliary synchronisation mechanism in the program that
+   // makes this safe -- or the race(s) need to be harmless, or
+   // probably nonexistent.
+   //
+   if (1) {
+      Lock* lk = NULL;
+      if (cvi->mx_ga != 0) {
+         lk = map_locks_maybe_lookup( (Addr)cvi->mx_ga );
+      }
+      /* note: lk could be NULL.  Be careful. */
+      if (lk) {
+         if (lk->kind == LK_rdwr) {
+            HG_(record_error_Misc)(thr,
+               "pthread_cond_{signal,broadcast}: associated lock is a rwlock");
+         }
+         if (lk->heldBy == NULL) {
+            HG_(record_error_Misc)(thr,
+               "pthread_cond_{signal,broadcast}: dubious: "
+               "associated lock is not held by any thread");
+         }
+         if (lk->heldBy != NULL && 0 == VG_(elemBag)(lk->heldBy, (Word)thr)) {
+            HG_(record_error_Misc)(thr,
+               "pthread_cond_{signal,broadcast}: "
+               "associated lock is not held by calling thread");
+         }
+      } else {
+         /* Couldn't even find the damn thing. */
+         // But actually .. that's not necessarily an error.  We don't
+         // know the (CV,MX) binding until a pthread_cond_wait or bcast
+         // shows us what it is, and if that may not have happened yet.
+         // So just keep quiet in this circumstance.
+         //HG_(record_error_Misc)( thr, 
+         //   "pthread_cond_{signal,broadcast}: "
+         //   "no or invalid mutex associated with cond");
+      }
+   }
 
    libhb_so_send( thr->hbthr, cvi->so, True/*strong_send*/ );
 }
@@ -2336,7 +2377,7 @@ static void evh__HG_PTHREAD_COND_WAIT_POST ( ThreadId tid,
          it?  If this happened it would surely be a bug in the threads
          library.  Or one of those fabled "spurious wakeups". */
       HG_(record_error_Misc)( thr, "Bug in libpthread: pthread_cond_wait "
-                                   "succeeded on"
+                                   "succeeded"
                                    " without prior pthread_cond_post");
    }
 
@@ -2413,8 +2454,9 @@ void evh__HG_PTHREAD_RWLOCK_DESTROY_PRE( ThreadId tid, void* rwl )
       }
       tl_assert( !lk->heldBy );
       tl_assert( HG_(is_sane_LockN)(lk) );
-
-      laog__handle_one_lock_deletion(lk);
+      
+      if (HG_(clo_track_lockorders))
+         laog__handle_one_lock_deletion(lk);
       map_locks_delete( lk->guestaddr );
       del_LockN( lk );
    }
@@ -3114,17 +3156,16 @@ static SO* map_usertag_to_SO_lookup_or_alloc ( UWord usertag ) {
    }
 }
 
-// If it's ever needed (XXX check before use)
-//static void map_usertag_to_SO_delete ( UWord usertag ) {
-//   UWord keyW, valW;
-//   map_usertag_to_SO_INIT();
-//   if (VG_(delFromFM)( map_usertag_to_SO, &keyW, &valW, usertag )) {
-//      SO* so = (SO*)valW;
-//      tl_assert(keyW == usertag);
-//      tl_assert(so);
-//      libhb_so_dealloc(so);
-//   }
-//}
+static void map_usertag_to_SO_delete ( UWord usertag ) {
+   UWord keyW, valW;
+   map_usertag_to_SO_INIT();
+   if (VG_(delFromFM)( map_usertag_to_SO, &keyW, &valW, usertag )) {
+      SO* so = (SO*)valW;
+      tl_assert(keyW == usertag);
+      tl_assert(so);
+      libhb_so_dealloc(so);
+   }
+}
 
 
 static
@@ -3133,9 +3174,12 @@ void evh__HG_USERSO_SEND_PRE ( ThreadId tid, UWord usertag )
    /* TID is just about to notionally sent a message on a notional
       abstract synchronisation object whose identity is given by
       USERTAG.  Bind USERTAG to a real SO if it is not already so
-      bound, and do a 'strong send' on the SO.  This is later used by
+      bound, and do a 'weak send' on the SO.  This joins the vector
+      clocks from this thread into any vector clocks already present
+      in the SO.  The resulting SO vector clocks are later used by
       other thread(s) which successfully 'receive' from the SO,
-      thereby acquiring a dependency on this signalling event. */
+      thereby acquiring a dependency on all the events that have
+      previously signalled on this SO. */
    Thread* thr;
    SO*     so;
 
@@ -3149,7 +3193,7 @@ void evh__HG_USERSO_SEND_PRE ( ThreadId tid, UWord usertag )
    so = map_usertag_to_SO_lookup_or_alloc( usertag );
    tl_assert(so);
 
-   libhb_so_send( thr->hbthr, so, True/*strong_send*/ );
+   libhb_so_send( thr->hbthr, so, False/*!strong_send*/ );
 }
 
 static
@@ -3178,6 +3222,21 @@ void evh__HG_USERSO_RECV_POST ( ThreadId tid, UWord usertag )
       sent on, then libhb_so_recv will do nothing.  So we're safe
       regardless of SO's history. */
    libhb_so_recv( thr->hbthr, so, True/*strong_recv*/ );
+}
+
+static
+void evh__HG_USERSO_FORGET_ALL ( ThreadId tid, UWord usertag )
+{
+   /* TID declares that any happens-before edges notionally stored in
+      USERTAG can be deleted.  If (as would normally be the case) a
+      SO is associated with USERTAG, then the assocation is removed
+      and all resources associated with SO are freed.  Importantly,
+      that frees up any VTSs stored in SO. */
+   if (SHOW_EVENTS >= 1)
+      VG_(printf)("evh__HG_USERSO_FORGET_ALL(ctid=%d, usertag=%#lx)\n", 
+                  (Int)tid, usertag );
+
+   map_usertag_to_SO_delete( usertag );
 }
 
 
@@ -3253,6 +3312,7 @@ static void laog__init ( void )
 {
    tl_assert(!laog);
    tl_assert(!laog_exposition);
+   tl_assert(HG_(clo_track_lockorders));
 
    laog = VG_(newFM)( HG_(zalloc), "hg.laog__init.1", 
                       HG_(free), NULL/*unboxedcmp*/ );
@@ -3429,8 +3489,6 @@ static void laog__sanity_check ( Char* who ) {
    UWord* ws_words;
    Lock* me;
    LAOGLinks* links;
-   if (UNLIKELY(!laog || !laog_exposition))
-      laog__init();
    VG_(initIterFM)( laog );
    me = NULL;
    links = NULL;
@@ -3542,9 +3600,6 @@ static void laog__pre_thread_acquires_lock (
    if (HG_(elemWS)( univ_lsets, thr->locksetA, (Word)lk ))
       return;
 
-   if (UNLIKELY(!laog || !laog_exposition))
-      laog__init();
-
    /* First, the check.  Complain if there is any path in laog from lk
       to any of the locks already held by thr, since if any such path
       existed, it would mean that previously lk was acquired before
@@ -3575,12 +3630,12 @@ static void laog__pre_thread_acquires_lock (
          tl_assert(found->dst_ec);
          HG_(record_error_LockOrder)( 
             thr, lk->guestaddr, other->guestaddr,
-                 found->src_ec, found->dst_ec );
+                 found->src_ec, found->dst_ec, other->acquired_at );
       } else {
          /* Hmm.  This can't happen (can it?) */
          HG_(record_error_LockOrder)(
             thr, lk->guestaddr, other->guestaddr,
-                 NULL, NULL );
+                 NULL, NULL, NULL );
       }
    }
 
@@ -3616,9 +3671,6 @@ static void laog__handle_one_lock_deletion ( Lock* lk )
    Word preds_size, succs_size, i, j;
    UWord *preds_words, *succs_words;
 
-   if (UNLIKELY(!laog || !laog_exposition))
-      laog__init();
-
    preds = laog__preds( lk );
    succs = laog__succs( lk );
 
@@ -3650,8 +3702,6 @@ static void laog__handle_one_lock_deletion ( Lock* lk )
 //   Word   i, ws_size;
 //   UWord* ws_words;
 //
-//   if (UNLIKELY(!laog || !laog_exposition))
-//      laog__init();
 //
 //   HG_(getPayloadWS)( &ws_words, &ws_size, univ_lsets, locksToDelete );
 //   for (i = 0; i < ws_size; i++)
@@ -3948,11 +3998,18 @@ Bool HG_(mm_find_containing_block)( /*OUT*/ExeContext** where,
 /*--- Instrumentation                                        ---*/
 /*--------------------------------------------------------------*/
 
-static void instrument_mem_access ( IRSB*   bbOut, 
+#define binop(_op, _arg1, _arg2) IRExpr_Binop((_op),(_arg1),(_arg2))
+#define mkexpr(_tmp)             IRExpr_RdTmp((_tmp))
+#define mkU32(_n)                IRExpr_Const(IRConst_U32(_n))
+#define mkU64(_n)                IRExpr_Const(IRConst_U64(_n))
+#define assign(_t, _e)           IRStmt_WrTmp((_t), (_e))
+
+static void instrument_mem_access ( IRSB*   sbOut, 
                                     IRExpr* addr,
                                     Int     szB,
                                     Bool    isStore,
-                                    Int     hWordTy_szB )
+                                    Int     hWordTy_szB,
+                                    Int     goff_sp )
 {
    IRType   tyAddr   = Ity_INVALID;
    HChar*   hName    = NULL;
@@ -3961,10 +4018,15 @@ static void instrument_mem_access ( IRSB*   bbOut,
    IRExpr** argv     = NULL;
    IRDirty* di       = NULL;
 
+   // THRESH is the size of the window above SP (well,
+   // mostly above) that we assume implies a stack reference.
+   const Int THRESH = 4096 * 4; // somewhat arbitrary
+   const Int rz_szB = VG_STACK_REDZONE_SZB;
+
    tl_assert(isIRAtom(addr));
    tl_assert(hWordTy_szB == 4 || hWordTy_szB == 8);
 
-   tyAddr = typeOfIRExpr( bbOut->tyenv, addr );
+   tyAddr = typeOfIRExpr( sbOut->tyenv, addr );
    tl_assert(tyAddr == Ity_I32 || tyAddr == Ity_I64);
 
    /* So the effective address is in 'addr' now. */
@@ -4031,14 +4093,71 @@ static void instrument_mem_access ( IRSB*   bbOut,
       }
    }
 
-   /* Add the helper. */
+   /* Create the helper. */
    tl_assert(hName);
    tl_assert(hAddr);
    tl_assert(argv);
    di = unsafeIRDirty_0_N( regparms,
                            hName, VG_(fnptr_to_fnentry)( hAddr ),
                            argv );
-   addStmtToIRSB( bbOut, IRStmt_Dirty(di) );
+
+   if (! HG_(clo_check_stack_refs)) {
+      /* We're ignoring memory references which are (obviously) to the
+         stack.  In fact just skip stack refs that are within 4 pages
+         of SP (SP - the redzone, really), as that's simple, easy, and
+         filters out most stack references. */
+      /* Generate the guard condition: "(addr - (SP - RZ)) >u N", for
+         some arbitrary N.  If that is true then addr is outside the
+         range (SP - RZ .. SP + N - RZ).  If N is smallish (a few
+         pages) then we can say addr is within a few pages of SP and
+         so can't possibly be a heap access, and so can be skipped.
+
+         Note that the condition simplifies to
+            (addr - SP + RZ) >u N
+         which generates better code in x86/amd64 backends, but it does
+         not unfortunately simplify to
+            (addr - SP) >u (N - RZ)
+         (would be beneficial because N - RZ is a constant) because
+         wraparound arithmetic messes up the comparison.  eg.
+         20 >u 10 == True,
+         but (20 - 15) >u (10 - 15) == 5 >u (MAXINT-5) == False.
+      */
+      IRTemp sp = newIRTemp(sbOut->tyenv, tyAddr);
+      addStmtToIRSB( sbOut, assign(sp, IRExpr_Get(goff_sp, tyAddr)));
+
+      /* "addr - SP" */
+      IRTemp addr_minus_sp = newIRTemp(sbOut->tyenv, tyAddr);
+      addStmtToIRSB(
+         sbOut,
+         assign(addr_minus_sp,
+                tyAddr == Ity_I32
+                   ? binop(Iop_Sub32, addr, mkexpr(sp))
+                   : binop(Iop_Sub64, addr, mkexpr(sp)))
+      );
+
+      /* "addr - SP + RZ" */
+      IRTemp diff = newIRTemp(sbOut->tyenv, tyAddr);
+      addStmtToIRSB(
+         sbOut,
+         assign(diff,
+                tyAddr == Ity_I32 
+                   ? binop(Iop_Add32, mkexpr(addr_minus_sp), mkU32(rz_szB))
+                   : binop(Iop_Add64, mkexpr(addr_minus_sp), mkU64(rz_szB)))
+      );
+
+      IRTemp guard = newIRTemp(sbOut->tyenv, Ity_I1);
+      addStmtToIRSB(
+         sbOut,
+         assign(guard,
+                tyAddr == Ity_I32 
+                   ? binop(Iop_CmpLT32U, mkU32(THRESH), mkexpr(diff))
+                   : binop(Iop_CmpLT64U, mkU64(THRESH), mkexpr(diff)))
+      );
+      di->guard = mkexpr(guard);
+   }
+
+   /* Add the helper. */
+   addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
 }
 
 
@@ -4086,9 +4205,18 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
    Bool    inLDSO = False;
    Addr64  inLDSOmask4K = 1; /* mismatches on first check */
 
+   const Int goff_sp = layout->offset_SP;
+
    if (gWordTy != hWordTy) {
       /* We don't currently support this case. */
       VG_(tool_panic)("host/guest word size mismatch");
+   }
+   
+   if (!noCoverage)
+   {
+     bbNode* n = VG_(malloc)("bbNode", sizeof(bbNode)); 
+     n->key = vge->base[0]; 
+     VG_(HT_add_node)(basicBlocksTable, n);
    }
 
    if (VKI_PAGE_SIZE < 4096 || VG_(log2)(VKI_PAGE_SIZE) == -1) {
@@ -4177,7 +4305,7 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                   (isDCAS ? 2 : 1)
                      * sizeofIRType(typeOfIRExpr(bbIn->tyenv, cas->dataLo)),
                   False/*!isStore*/,
-                  sizeofIRType(hWordTy)
+                  sizeofIRType(hWordTy), goff_sp
                );
             }
             break;
@@ -4197,7 +4325,7 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                      st->Ist.LLSC.addr,
                      sizeofIRType(dataTy),
                      False/*!isStore*/,
-                     sizeofIRType(hWordTy)
+                     sizeofIRType(hWordTy), goff_sp
                   );
                }
             } else {
@@ -4216,7 +4344,7 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                   st->Ist.Store.addr, 
                   sizeofIRType(typeOfIRExpr(bbIn->tyenv, st->Ist.Store.data)),
                   True/*isStore*/,
-                  sizeofIRType(hWordTy)
+                  sizeofIRType(hWordTy), goff_sp
                );
             }
             break;
@@ -4232,7 +4360,7 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                      data->Iex.Load.addr,
                      sizeofIRType(data->Iex.Load.ty),
                      False/*!isStore*/,
-                     sizeofIRType(hWordTy)
+                     sizeofIRType(hWordTy), goff_sp
                   );
                }
             }
@@ -4252,7 +4380,7 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                   if (!inLDSO) {
                      instrument_mem_access( 
                         bbOut, d->mAddr, dataSize, False/*!isStore*/,
-                        sizeofIRType(hWordTy)
+                        sizeofIRType(hWordTy), goff_sp
                      );
                   }
                }
@@ -4260,7 +4388,7 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                   if (!inLDSO) {
                      instrument_mem_access( 
                         bbOut, d->mAddr, dataSize, True/*isStore*/,
-                        sizeofIRType(hWordTy)
+                        sizeofIRType(hWordTy), goff_sp
                      );
                   }
                }
@@ -4283,6 +4411,12 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
 
    return bbOut;
 }
+
+#undef binop
+#undef mkexpr
+#undef mkU32
+#undef mkU64
+#undef assign
 
 
 /*----------------------------------------------------------------*/
@@ -4604,6 +4738,11 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          evh__HG_USERSO_RECV_POST( tid, args[1] );
          break;
 
+      case _VG_USERREQ__HG_USERSO_FORGET_ALL:
+         /* UWord arbitrary-SO-tag */
+         evh__HG_USERSO_FORGET_ALL( tid, args[1] );
+         break;
+
       default:
          /* Unhandled Helgrind client request! */
          tl_assert2(0, "unhandled Helgrind client request 0x%lx",
@@ -4612,7 +4751,6 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
 
    return True;
 }
-
 
 /*----------------------------------------------------------------*/
 /*--- Setup                                                    ---*/
@@ -4659,6 +4797,63 @@ static Bool hg_process_cmd_line_option ( Char* arg )
       }
       if (0) VG_(printf)("XXX sanity flags: 0x%lx\n", HG_(clo_sanity_flags));
    }
+#ifdef WITH_AVALANCHE
+   else if (VG_INT_CLO(arg, "--alarm", alarm)) { 
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--port", tmp_str)) {
+      port = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      return True;
+   }
+   else if (VG_BOOL_CLO(arg, "--sockets", sockets)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--datagrams", datagrams)) { 
+      return True; 
+   }
+   else if (VG_BOOL_CLO(arg, "--no-coverage", noCoverage)) { 
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--filename", bbFileName)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--temp-dir", tempDir)) {
+      return True;
+   }
+   else if (VG_STR_CLO(arg, "--replace",  replaceFileName)) { 
+      replace = True;
+      return True; 
+   }
+   else if (VG_STR_CLO(arg, "--host", tmp_str)) {
+      Char* dot = VG_(strchr)(tmp_str, '.');
+      *dot = '\0';
+      ip1 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      tmp_str = dot + 1;
+      dot = VG_(strchr)(tmp_str, '.');
+      *dot = '\0';
+      ip2 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      tmp_str = dot + 1;
+      dot = VG_(strchr)(tmp_str, '.');
+      *dot = '\0';
+      ip3 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      tmp_str = dot + 1;
+      ip4 = (UShort) VG_(strtoll10)(tmp_str, NULL);
+      return True;
+   }
+#endif
+
+   else if VG_BOOL_CLO(arg, "--free-is-write",
+                            HG_(clo_free_is_write)) {}
+
+   else if VG_XACT_CLO(arg, "--vts-pruning=never",
+                            HG_(clo_vts_pruning), 0);
+   else if VG_XACT_CLO(arg, "--vts-pruning=auto",
+                            HG_(clo_vts_pruning), 1);
+   else if VG_XACT_CLO(arg, "--vts-pruning=always",
+                            HG_(clo_vts_pruning), 2);
+
+   else if VG_BOOL_CLO(arg, "--check-stack-refs",
+                            HG_(clo_check_stack_refs)) {}
 
    else 
       return VG_(replacement_malloc_process_cmd_line_option)(arg);
@@ -4669,12 +4864,15 @@ static Bool hg_process_cmd_line_option ( Char* arg )
 static void hg_print_usage ( void )
 {
    VG_(printf)(
+"    --free-is-write=no|yes    treat heap frees as writes [no]\n"
 "    --track-lockorders=no|yes show lock ordering errors? [yes]\n"
 "    --history-level=none|approx|full [full]\n"
 "       full:   show both stack traces for a data race (can be very slow)\n"
 "       approx: full trace for one thread, approx for the other (faster)\n"
 "       none:   only show trace for one thread in a race (fastest)\n"
 "    --conflict-cache-size=N   size of 'full' history cache [1000000]\n"
+"    --check-stack-refs=no|yes race-check reads and writes on the\n"
+"                              main stack and thread stacks? [yes]\n"
    );
 }
 
@@ -4692,14 +4890,43 @@ static void hg_print_debug_usage ( void )
                "ranges >= %d bytes\n", SCE_BIGRANGE_T);
    VG_(printf)("       000010   at lock/unlock events\n");
    VG_(printf)("       000001   at thread create/join events\n");
-}
-
-static void hg_post_clo_init ( void )
-{
+   VG_(printf)(
+"    --vts-pruning=never|auto|always [auto]\n"
+"       never:   is never done (may cause big space leaks in Helgrind)\n"
+"       auto:    done just often enough to keep space usage under control\n"
+"       always:  done after every VTS GC (mostly just a big time waster)\n"
+    );
 }
 
 static void hg_fini ( Int exitcode )
 {
+#ifdef WITH_AVALANCHE
+   if (!noCoverage)
+   {
+      VG_(HT_ResetIter)(basicBlocksTable);
+      bbNode* n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
+      SysRes fd;
+      Char *bbFile;
+      if (bbFileName != NULL) {
+         bbFile = concatTempDir(bbFileName);
+      } else {
+         bbFile = concatTempDir("basic_blocks.log");
+      }
+      fd = VG_(open)(bbFile, 
+                     VKI_O_WRONLY | VKI_O_TRUNC | VKI_O_CREAT, 
+                     VKI_S_IRUSR | VKI_S_IROTH | VKI_S_IRGRP |
+                        VKI_S_IWUSR | VKI_S_IWOTH | VKI_S_IWGRP);
+      VG_(free)(bbFile);
+      if (!sr_isError(fd)) {
+         while (n != NULL) {
+            UWord addr = n->key;
+            VG_(write)(sr_Res(fd), &addr, sizeof(addr));
+            n = (bbNode*) VG_(HT_Next)(basicBlocksTable);
+         }
+         VG_(close)(sr_Res(fd));
+      }
+   }
+#endif
    if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
       VG_(message)(Vg_UserMsg, 
                    "For counts of detected and suppressed errors, "
@@ -4723,11 +4950,11 @@ static void hg_fini ( Int exitcode )
 
       if (1) {
          VG_(printf)("\n");
-         HG_(ppWSUstats)( univ_tsets, "univ_tsets" );
-         VG_(printf)("\n");
          HG_(ppWSUstats)( univ_lsets, "univ_lsets" );
-         VG_(printf)("\n");
-         HG_(ppWSUstats)( univ_laog,  "univ_laog" );
+         if (HG_(clo_track_lockorders)) {
+            VG_(printf)("\n");
+            HG_(ppWSUstats)( univ_laog,  "univ_laog" );
+         }
       }
 
       //zz       VG_(printf)("\n");
@@ -4745,10 +4972,10 @@ static void hg_fini ( Int exitcode )
       VG_(printf)("\n");
       VG_(printf)("        locksets: %'8d unique lock sets\n",
                   (Int)HG_(cardinalityWSU)( univ_lsets ));
-      VG_(printf)("      threadsets: %'8d unique thread sets\n",
-                  (Int)HG_(cardinalityWSU)( univ_tsets ));
-      VG_(printf)("       univ_laog: %'8d unique lock sets\n",
-                  (Int)HG_(cardinalityWSU)( univ_laog ));
+      if (HG_(clo_track_lockorders)) {
+         VG_(printf)("       univ_laog: %'8d unique lock sets\n",
+                     (Int)HG_(cardinalityWSU)( univ_laog ));
+      }
 
       //VG_(printf)("L(ast)L(ock) map: %'8lu inserts (%d map size)\n",
       //            stats__ga_LL_adds,
@@ -4761,10 +4988,13 @@ static void hg_fini ( Int exitcode )
       VG_(printf)("string table map: %'8llu queries (%llu map size)\n",
                   HG_(stats__string_table_queries),
                   HG_(stats__string_table_get_map_size)() );
-      VG_(printf)("            LAOG: %'8d map size\n",
-                  (Int)(laog ? VG_(sizeFM)( laog ) : 0));
-      VG_(printf)(" LAOG exposition: %'8d map size\n",
-                  (Int)(laog_exposition ? VG_(sizeFM)( laog_exposition ) : 0));
+      if (HG_(clo_track_lockorders)) {
+         VG_(printf)("            LAOG: %'8d map size\n",
+                     (Int)(laog ? VG_(sizeFM)( laog ) : 0));
+         VG_(printf)(" LAOG exposition: %'8d map size\n",
+                     (Int)(laog_exposition ? VG_(sizeFM)( laog_exposition ) : 0));
+      }
+         
       VG_(printf)("           locks: %'8lu acquires, "
                   "%'lu releases\n",
                   stats__lockN_acquires,
@@ -4786,7 +5016,7 @@ void for_libhb__get_stacktrace ( Thr* hbt, Addr* frames, UWord nRequest )
    ThreadId    tid;
    UWord       nActual;
    tl_assert(hbt);
-   thr = libhb_get_Thr_opaque( hbt );
+   thr = libhb_get_Thr_hgthread( hbt );
    tl_assert(thr);
    tid = map_threads_maybe_reverse_lookup_SLOW(thr);
    nActual = (UWord)VG_(get_StackTrace)( tid, frames, (UInt)nRequest,
@@ -4803,7 +5033,7 @@ ExeContext* for_libhb__get_EC ( Thr* hbt )
    ThreadId    tid;
    ExeContext* ec;
    tl_assert(hbt);
-   thr = libhb_get_Thr_opaque( hbt );
+   thr = libhb_get_Thr_hgthread( hbt );
    tl_assert(thr);
    tid = map_threads_maybe_reverse_lookup_SLOW(thr);
    /* this will assert if tid is invalid */
@@ -4812,17 +5042,64 @@ ExeContext* for_libhb__get_EC ( Thr* hbt )
 }
 
 
-static void hg_pre_clo_init ( void )
+static void hg_post_clo_init ( void )
 {
+#ifdef WITH_AVALANCHE  
+   if (replace) {
+      Int i;
+      Char *replaceFile = concatTempDir(replaceFileName);
+      SysRes fd = VG_(open)(replaceFile, 
+                            VKI_O_RDWR, 
+                            VKI_S_IRWXU | VKI_S_IRWXG | VKI_S_IRWXO);
+      if (sr_isError(fd)) {
+         VG_(write)(2, "helgrind: cannot open replace_data",
+                    VG_(strlen)("helgrind: cannot open replace_data"));
+         VG_(exit)(1);
+      }
+      VG_(read)(sr_Res(fd), &socketsNum, 4);
+      if (socketsNum > 0) {
+         replace_data = (replaceData*) 
+                 VG_(malloc)("replace_data", socketsNum * sizeof(replaceData));
+         for (i = 0; i < socketsNum; i++) {
+           VG_(read)(sr_Res(fd), &(replace_data[i].length), sizeof(Int));
+           replace_data[i].data = 
+               (Char*) VG_(malloc)("replace_data", replace_data[i].length);
+           VG_(read)(sr_Res(fd), replace_data[i].data, replace_data[i].length);
+         }
+      } else {
+         replace_data = NULL;
+      }
+      VG_(close)(sr_Res(fd));
+      VG_(free)(replaceFile);
+   }
+
+   if (alarm != 0) {
+      VG_(alarm)(alarm);
+   }
+#endif
    Thr* hbthr_root;
 
+   /////////////////////////////////////////////
+   hbthr_root = libhb_init( for_libhb__get_stacktrace, 
+                            for_libhb__get_EC );
+   /////////////////////////////////////////////
+
+
+   if (HG_(clo_track_lockorders))
+      laog__init();
+
+   initialise_data_structures(hbthr_root);
+}
+
+static void hg_pre_clo_init ( void )
+{
    VG_(details_name)            ("Helgrind");
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a thread error detector");
    VG_(details_copyright_author)(
       "Copyright (C) 2007-2010, and GNU GPL'd, by OpenWorks LLP et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
-   VG_(details_avg_translation_sizeB) ( 200 );
+   VG_(details_avg_translation_sizeB) ( 320 );
 
    VG_(basic_tool_funcs)          (hg_post_clo_init,
                                    hg_instrument,
@@ -4881,8 +5158,8 @@ static void hg_pre_clo_init ( void )
    VG_(track_change_mem_mprotect) ( evh__set_perms );
 
    VG_(track_die_mem_stack_signal)( evh__die_mem );
-   VG_(track_die_mem_brk)         ( evh__die_mem );
-   VG_(track_die_mem_munmap)      ( evh__die_mem );
+   VG_(track_die_mem_brk)         ( evh__die_mem_munmap );
+   VG_(track_die_mem_munmap)      ( evh__die_mem_munmap );
    VG_(track_die_mem_stack)       ( evh__die_mem );
 
    // FIXME: what is this for?
@@ -4901,13 +5178,6 @@ static void hg_pre_clo_init ( void )
    VG_(track_start_client_code)( evh__start_client_code );
    VG_(track_stop_client_code)( evh__stop_client_code );
 
-   /////////////////////////////////////////////
-   hbthr_root = libhb_init( for_libhb__get_stacktrace, 
-                            for_libhb__get_EC );
-   /////////////////////////////////////////////
-
-   initialise_data_structures(hbthr_root);
-
    /* Ensure that requirements for "dodgy C-as-C++ style inheritance"
       as described in comments at the top of pub_tool_hashtable.h, are
       met.  Blargh. */
@@ -4915,7 +5185,13 @@ static void hg_pre_clo_init ( void )
    tl_assert( sizeof(UWord) == sizeof(Addr) );
    hg_mallocmeta_table
       = VG_(HT_construct)( "hg_malloc_metadata_table" );
+      
+#ifdef WITH_AVALANCHE
+   basicBlocksTable = VG_(HT_construct)("basicBlocksTable");
+#endif
 
+   // add a callback to clean up on (threaded) fork.
+   VG_(atfork)(NULL/*pre*/, NULL/*parent*/, evh__atfork_child/*child*/);
 }
 
 VG_DETERMINE_INTERFACE_VERSION(hg_pre_clo_init)

@@ -2,11 +2,17 @@ bin_PROGRAMS = avalanche
 
 INCLUDES = -I../include
 
-CXXFLAGS += -pthread
 avalanche_CFLAGS = -Wno-deprecated
 
+if !BIONIC
+  LDFLAGS += -pthread
+endif
+
+CXXLD = $(CC)
+LIBS = -static-libgcc -Wl,-Bstatic,-lstdc++,-Bdynamic
+
 avalanche_SOURCES = \
-       Chunk.cpp \
+       Error.cpp \
        Entry.cpp \
        LocalExecutor.cpp \
        RemotePluginExecutor.cpp \
@@ -16,9 +22,9 @@ avalanche_SOURCES = \
        PluginExecutor.cpp \
        FileBuffer.cpp \
        SocketBuffer.cpp \
+       ExecutionLogBuffer.cpp \
        Input.cpp \
        STP_Executor.cpp \
-       STP_Output.cpp \
        TmpFile.cpp \
        Thread.cpp \
        Monitor.cpp

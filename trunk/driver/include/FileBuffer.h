@@ -24,44 +24,62 @@
 #ifndef __FILE_BUFFER__H__
 #define __FILE_BUFFER__H__
 
-#include <stddef.h>
+#include <cstddef>
+#include <string>
+#include <sys/types.h>
+#include <set>
+#include <vector>
+
+struct FileOffsetSet
+{
+  std::string file_name;
+  std::set<unsigned long> offset_set;
+};
 
 class FileBuffer
 {
 public:
 
-  char* buf;
-  int size;
-  char* name;
-  int sd;
-  //unsigned int startdepth;
-  //bool* prediction;
-  //int predictionSize;
-  //FileBuffer* parent;
+    char* buf;
+    int sd;
 
-  friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
+    friend bool operator == (const FileBuffer& arg1, const FileBuffer& arg2);
 
-  FileBuffer(const char* name);
+    FileBuffer(std::string file_name);
 
-  FileBuffer(const FileBuffer& other);
+    FileBuffer(const FileBuffer& other);
+    FileBuffer(char* buf);
 
-  virtual FileBuffer* forkInput(char* stpOutputFile);
+    virtual FileBuffer* forkInput(FileBuffer *stp_file, 
+                                  std::vector<FileOffsetSet> &used_offsets);
 
-  virtual void dumpFile(const char* name = NULL);
+    virtual int dumpFile(std::string file_name = "");
 
-  void cutQueryAndDump(const char* name, bool do_invert = false);
+    int cutQueryAndDump(std::string file_name, bool do_invert = false);
 
-  virtual void applySTPSolution(char* buf);
-  
-  bool filterCovgrindOutput();
+    virtual int applySTPSolution(char* buf, 
+                                 std::vector<FileOffsetSet> &used_offsets);
+    
+    std::string getName() const
+    { return name; }
 
-  ~FileBuffer();
+    int getSize() const
+    { return size; }
+
+    void setSize(int _size)
+    { size = _size; }
+
+    ~FileBuffer();
 
 protected:
-
-  FileBuffer()
-  { }
+    int size;
+    std::string name;
+  
+    FileBuffer() {}
 
 };
+
+#define PERM_R_W   S_IRUSR | S_IROTH | S_IRGRP | \
+                   S_IWUSR | S_IWOTH | S_IWGRP
 
 #endif

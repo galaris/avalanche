@@ -998,7 +998,10 @@ static void setFlags_DEP1_DEP2_shift ( IROp    op32,
                                    widenUto32(mkexpr(resUS)))) );
    /* Set NDEP even though it isn't used.  This makes redundant-PUT
       elimination of previous stores to this field work better. */
-   stmt( IRStmt_Put( OFFB_CC_NDEP, mkU32(0) ));
+   stmt( IRStmt_Put( OFFB_CC_NDEP,
+                     IRExpr_Mux0X( mkexpr(guard),
+                                   IRExpr_Get(OFFB_CC_NDEP,Ity_I32),
+				   mkU32(0) )));
 }
 
 
@@ -2389,18 +2392,13 @@ UInt dis_Grp2 ( UChar sorb,
    }
 
    isShift = False;
-   switch (gregOfRM(modrm)) { case 4: case 5: case 7: isShift = True; }
+   switch (gregOfRM(modrm)) { case 4: case 5: case 6: case 7: isShift = True; }
 
    isRotate = False;
    switch (gregOfRM(modrm)) { case 0: case 1: isRotate = True; }
 
    isRotateC = False;
    switch (gregOfRM(modrm)) { case 2: case 3: isRotateC = True; }
-
-   if (gregOfRM(modrm) == 6) {
-      *decode_OK = False;
-      return delta;
-   }
 
    if (!isShift && !isRotate && !isRotateC) {
       /*NOTREACHED*/
@@ -2446,6 +2444,7 @@ UInt dis_Grp2 ( UChar sorb,
       switch (gregOfRM(modrm)) { 
          case 4: op32 = Iop_Shl32; break;
          case 5: op32 = Iop_Shr32; break;
+         case 6: op32 = Iop_Shl32; break;
          case 7: op32 = Iop_Sar32; break;
          /*NOTREACHED*/
          default: vpanic("dis_Grp2:shift"); break;
@@ -5472,9 +5471,9 @@ UInt dis_MMXop_regmem_to_reg ( UChar  sorb,
       case 0x65: op = Iop_CmpGT16Sx4; break;
       case 0x66: op = Iop_CmpGT32Sx2; break;
 
-      case 0x6B: op = Iop_QNarrow32Sx2; eLeft = True; break;
-      case 0x63: op = Iop_QNarrow16Sx4; eLeft = True; break;
-      case 0x67: op = Iop_QNarrow16Ux4; eLeft = True; break;
+      case 0x6B: op = Iop_QNarrowBin32Sto16Sx4; eLeft = True; break;
+      case 0x63: op = Iop_QNarrowBin16Sto8Sx8;  eLeft = True; break;
+      case 0x67: op = Iop_QNarrowBin16Sto8Ux8;  eLeft = True; break;
 
       case 0x68: op = Iop_InterleaveHI8x8;  eLeft = True; break;
       case 0x69: op = Iop_InterleaveHI16x4; eLeft = True; break;
@@ -8095,6 +8094,7 @@ DisResult disInstr_X86_WRK (
 
       addr = disAMode ( &alen, sorb, delta+2, dis_buf );
       delta += 2+alen;
+      gen_SEGV_if_not_16_aligned(addr);
 
       DIP("fxsave %s\n", dis_buf);
 
@@ -8165,11 +8165,15 @@ DisResult disInstr_X86_WRK (
 
       addr = disAMode ( &alen, sorb, delta+2, dis_buf );
       delta += 2+alen;
+      gen_SEGV_if_not_16_aligned(addr);
 
       DIP("fxrstor %s\n", dis_buf);
 
       /* Uses dirty helper: 
-            void x86g_do_FXRSTOR ( VexGuestX86State*, UInt ) */
+            VexEmWarn x86g_do_FXRSTOR ( VexGuestX86State*, UInt )
+         NOTE:
+            the VexEmWarn value is simply ignored (unlike for FRSTOR)
+      */
       d = unsafeIRDirty_0_N ( 
              0/*regparms*/, 
              "x86g_dirtyhelper_FXRSTOR", 
@@ -10524,21 +10528,24 @@ DisResult disInstr_X86_WRK (
    /* 66 0F 6B = PACKSSDW */
    if (sz == 2 && insn[0] == 0x0F && insn[1] == 0x6B) {
       delta = dis_SSEint_E_to_G( sorb, delta+2, 
-                                 "packssdw", Iop_QNarrow32Sx4, True );
+                                 "packssdw",
+                                 Iop_QNarrowBin32Sto16Sx8, True );
       goto decode_success;
    }
 
    /* 66 0F 63 = PACKSSWB */
    if (sz == 2 && insn[0] == 0x0F && insn[1] == 0x63) {
       delta = dis_SSEint_E_to_G( sorb, delta+2, 
-                                 "packsswb", Iop_QNarrow16Sx8, True );
+                                 "packsswb",
+                                 Iop_QNarrowBin16Sto8Sx16, True );
       goto decode_success;
    }
 
    /* 66 0F 67 = PACKUSWB */
    if (sz == 2 && insn[0] == 0x0F && insn[1] == 0x67) {
       delta = dis_SSEint_E_to_G( sorb, delta+2, 
-                                 "packuswb", Iop_QNarrow16Ux8, True );
+                                 "packuswb",
+                                 Iop_QNarrowBin16Sto8Ux16, True );
       goto decode_success;
    }
 
@@ -12907,25 +12914,51 @@ DisResult disInstr_X86_WRK (
      }
      break;
 
-//--    case 0xD4: /* AAM */
-//--    case 0xD5: /* AAD */
-//--       d32 = getIByte(delta); delta++;
-//--       if (d32 != 10) VG_(core_panic)("disInstr: AAM/AAD but base not 10 !");
-//--       t1 = newTemp(cb);
-//--       uInstr2(cb, GET, 2, ArchReg, R_EAX, TempReg, t1);
-//--       /* Widen %AX to 32 bits, so it's all defined when we push it. */
-//--       uInstr1(cb, WIDEN, 4, TempReg, t1);
-//--       uWiden(cb, 2, False);
-//--       uInstr0(cb, CALLM_S, 0);
-//--       uInstr1(cb, PUSH, 4, TempReg, t1);
-//--       uInstr1(cb, CALLM, 0, Lit16, 
-//--                   opc == 0xD4 ? VGOFF_(helper_AAM) : VGOFF_(helper_AAD) );
-//--       uFlagsRWU(cb, FlagsEmpty, FlagsSZP, FlagsEmpty);
-//--       uInstr1(cb, POP, 4, TempReg, t1);
-//--       uInstr0(cb, CALLM_E, 0);
-//--       uInstr2(cb, PUT, 2, TempReg, t1, ArchReg, R_EAX);
-//--       DIP(opc == 0xD4 ? "aam\n" : "aad\n");
-//--       break;
+   case 0xD4: /* AAM */
+   case 0xD5: /* AAD */
+      d32 = getIByte(delta); delta++;
+      if (sz != 4 || d32 != 10) goto decode_failure;
+      t1 = newTemp(Ity_I32);
+      t2 = newTemp(Ity_I32);
+      /* Make up a 32-bit value (t1), with the old value of AX in the
+         bottom 16 bits, and the old OSZACP bitmask in the upper 16
+         bits. */
+      assign(t1, 
+             binop(Iop_16HLto32, 
+                   unop(Iop_32to16,
+                        mk_x86g_calculate_eflags_all()),
+                   getIReg(2, R_EAX)
+            ));
+      /* Call the helper fn, to get a new AX and OSZACP value, and
+         poke both back into the guest state.  Also pass the helper
+         the actual opcode so it knows which of the 2 instructions it
+         is doing the computation for. */
+      assign(t2,
+              mkIRExprCCall(
+                 Ity_I32, 0/*regparm*/, "x86g_calculate_aad_aam",
+                 &x86g_calculate_aad_aam,
+                 mkIRExprVec_2( mkexpr(t1), mkU32( opc & 0xFF) )
+            ));
+      putIReg(2, R_EAX, unop(Iop_32to16, mkexpr(t2) ));
+
+      stmt( IRStmt_Put( OFFB_CC_OP,   mkU32(X86G_CC_OP_COPY) ));
+      stmt( IRStmt_Put( OFFB_CC_DEP2, mkU32(0) ));
+      stmt( IRStmt_Put( OFFB_CC_DEP1, 
+                        binop(Iop_And32,
+                              binop(Iop_Shr32, mkexpr(t2), mkU8(16)),
+                              mkU32( X86G_CC_MASK_C | X86G_CC_MASK_P 
+                                     | X86G_CC_MASK_A | X86G_CC_MASK_Z 
+                                     | X86G_CC_MASK_S| X86G_CC_MASK_O )
+                             )
+                       )
+          );
+      /* Set NDEP even though it isn't used.  This makes
+         redundant-PUT elimination of previous stores to this field
+         work better. */
+      stmt( IRStmt_Put( OFFB_CC_NDEP, mkU32(0) ));
+
+      DIP(opc == 0xD4 ? "aam\n" : "aad\n");
+      break;
 
    /* ------------------------ CWD/CDQ -------------------- */
 
@@ -14969,11 +15002,12 @@ DisResult disInstr_X86_WRK (
          break;
       }
 
+      case 0x0E: /* FEMMS */
       case 0x77: /* EMMS */
          if (sz != 4)
             goto decode_failure;
          do_EMMS_preamble();
-         DIP("emms\n");
+         DIP("{f}emms\n");
          break;
 
       /* =-=-=-=-=-=-=-=-=- SGDT and SIDT =-=-=-=-=-=-=-=-=-=-= */

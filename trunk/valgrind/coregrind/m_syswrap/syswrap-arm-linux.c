@@ -35,6 +35,7 @@
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"
+#include "pub_core_libcsetjmp.h"    // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_aspacemgr.h"
 #include "pub_core_debuglog.h"
@@ -58,9 +59,8 @@
 #include "priv_syswrap-linux.h"     /* for decls of linux-ish wrappers */
 #include "priv_syswrap-main.h"
 
-Bool accept = False;
-Bool connect = False;
-Bool socket = False;
+Bool addTaintedSocket = False;
+Bool isMap = False;
 
 extern Int listeningSocket;
 extern Int boundSocket;
@@ -346,8 +346,10 @@ DECL_TEMPLATE(arm_linux, sys_fstat64);
 DECL_TEMPLATE(arm_linux, sys_clone);
 DECL_TEMPLATE(arm_linux, sys_sigreturn);
 DECL_TEMPLATE(arm_linux, sys_rt_sigreturn);
+DECL_TEMPLATE(arm_linux, sys_sigsuspend);
 DECL_TEMPLATE(arm_linux, sys_set_tls);
 DECL_TEMPLATE(arm_linux, sys_cacheflush);
+DECL_TEMPLATE(arm_linux, sys_ptrace);
 
 PRE(sys_socketcall)
 {
@@ -357,10 +359,6 @@ PRE(sys_socketcall)
 #  define ARG2_3  (((UWord*)ARG2)[3])
 #  define ARG2_4  (((UWord*)ARG2)[4])
 #  define ARG2_5  (((UWord*)ARG2)[5])
-
-   accept = False;
-   connect = False;
-   socket = False;
 
    *flags |= SfMayBlock;
    PRINT("sys_socketcall ( %ld, %#lx )",ARG1,ARG2);
@@ -377,7 +375,7 @@ PRE(sys_socketcall)
    case VKI_SYS_SOCKET:
       if ((ARG2_1 & 0xff) == 2)
       {
-        socket = True;
+        addTaintedSocket = True;
       }
      /* int socket(int domain, int type, int protocol); */
       PRE_MEM_READ( "socketcall.socket(args)", ARG2, 3*sizeof(Addr) );
@@ -396,7 +394,7 @@ PRE(sys_socketcall)
       break;
 
    case VKI_SYS_ACCEPT: {
-      accept = True;
+      addTaintedSocket = True;
      /* int accept(int s, struct sockaddr *addr, int *addrlen); */
       PRE_MEM_READ( "socketcall.accept(args)", ARG2, 3*sizeof(Addr) );
       ML_(generic_PRE_sys_accept)( tid, ARG2_0, ARG2_1, ARG2_2 );
@@ -440,7 +438,7 @@ PRE(sys_socketcall)
    case VKI_SYS_CONNECT:
      /* int connect(int sockfd,
    struct sockaddr *serv_addr, int addrlen ); */
-     connect = True;
+     addTaintedSocket = True;
      PRE_MEM_READ( "socketcall.connect(args)", ARG2, 3*sizeof(Addr) );
      ML_(generic_PRE_sys_connect)( tid, ARG2_0, ARG2_1, ARG2_2 );
      break;
@@ -624,6 +622,7 @@ PRE(sys_socket)
 {
    PRINT("sys_socket ( %ld, %ld, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "socket", int, domain, int, type, int, protocol);
+   addTaintedSocket = True;
 }
 POST(sys_socket)
 {
@@ -663,6 +662,7 @@ PRE(sys_connect)
    PRINT("sys_connect ( %ld, %#lx, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "connect",
                  int, sockfd, struct sockaddr *, serv_addr, int, addrlen);
+   addTaintedSocket = True;
    ML_(generic_PRE_sys_connect)(tid, ARG1,ARG2,ARG3);
 }
 
@@ -672,6 +672,7 @@ PRE(sys_accept)
    PRINT("sys_accept ( %ld, %#lx, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "accept",
                  int, s, struct sockaddr *, addr, int, *addrlen);
+   addTaintedSocket = True;
    ML_(generic_PRE_sys_accept)(tid, ARG1,ARG2,ARG3);
 }
 POST(sys_accept)
@@ -1001,6 +1002,7 @@ PRE(sys_mmap2)
                  unsigned long, prot,  unsigned long, flags,
                  unsigned long, fd,    unsigned long, offset);
 
+   isMap = True;
    r = ML_(generic_PRE_sys_mmap)( tid, ARG1, ARG2, ARG3, ARG4, ARG5, 
                                        4096 * (Off64T)ARG6 );
    SET_STATUS_from_SysRes(r);
@@ -1206,6 +1208,26 @@ PRE(sys_rt_sigreturn)
    *flags |= SfPollAfter;
 }
 
+/* NB: clone of x86-linux version, and ppc32-linux has an almost
+   identical one. */
+PRE(sys_sigsuspend)
+{
+   /* The C library interface to sigsuspend just takes a pointer to
+      a signal mask but this system call has three arguments - the first
+      two don't appear to be used by the kernel and are always passed as
+      zero by glibc and the third is the first word of the signal mask
+      so only 32 signals are supported.
+     
+      In fact glibc normally uses rt_sigsuspend if it is available as
+      that takes a pointer to the signal mask so supports more signals.
+    */
+   *flags |= SfMayBlock;
+   PRINT("sys_sigsuspend ( %ld, %ld, %ld )", ARG1,ARG2,ARG3 );
+   PRE_REG_READ3(int, "sigsuspend",
+                 int, history0, int, history1,
+                 vki_old_sigset_t, mask);
+}
+
 /* Very much ARM specific */
 
 PRE(sys_set_tls)
@@ -1225,6 +1247,124 @@ PRE(sys_cacheflush)
    SET_STATUS_Success(0);
 }
 
+// ARG3 is only used for pointers into the traced process's address
+// space and for offsets into the traced process's struct
+// user_regs_struct. It is never a pointer into this process's memory
+// space, and we should therefore not check anything it points to.
+PRE(sys_ptrace)
+{
+   PRINT("sys_ptrace ( %ld, %ld, %#lx, %#lx )", ARG1,ARG2,ARG3,ARG4);
+   PRE_REG_READ4(int, "ptrace", 
+                 long, request, long, pid, long, addr, long, data);
+   switch (ARG1) {
+   case VKI_PTRACE_PEEKTEXT:
+   case VKI_PTRACE_PEEKDATA:
+   case VKI_PTRACE_PEEKUSR:
+      PRE_MEM_WRITE( "ptrace(peek)", ARG4, 
+		     sizeof (long));
+      break;
+   case VKI_PTRACE_GETREGS:
+      PRE_MEM_WRITE( "ptrace(getregs)", ARG4, 
+		     sizeof (struct vki_user_regs_struct));
+      break;
+   case VKI_PTRACE_GETFPREGS:
+      PRE_MEM_WRITE( "ptrace(getfpregs)", ARG4, 
+		     sizeof (struct vki_user_fp));
+      break;
+   case VKI_PTRACE_GETWMMXREGS:
+      PRE_MEM_WRITE( "ptrace(getwmmxregs)", ARG4, 
+		     VKI_IWMMXT_SIZE);
+      break;
+   case VKI_PTRACE_GETCRUNCHREGS:
+      PRE_MEM_WRITE( "ptrace(getcrunchregs)", ARG4, 
+		     VKI_CRUNCH_SIZE);
+      break;
+   case VKI_PTRACE_GETVFPREGS:
+      PRE_MEM_WRITE( "ptrace(getvfpregs)", ARG4, 
+                     sizeof (struct vki_user_vfp) );
+      break;
+   case VKI_PTRACE_GETHBPREGS:
+      PRE_MEM_WRITE( "ptrace(gethbpregs)", ARG4, 
+                     sizeof (unsigned long) );
+      break;
+   case VKI_PTRACE_SETREGS:
+      PRE_MEM_READ( "ptrace(setregs)", ARG4, 
+		     sizeof (struct vki_user_regs_struct));
+      break;
+   case VKI_PTRACE_SETFPREGS:
+      PRE_MEM_READ( "ptrace(setfpregs)", ARG4, 
+		     sizeof (struct vki_user_fp));
+      break;
+   case VKI_PTRACE_SETWMMXREGS:
+      PRE_MEM_READ( "ptrace(setwmmxregs)", ARG4, 
+		     VKI_IWMMXT_SIZE);
+      break;
+   case VKI_PTRACE_SETCRUNCHREGS:
+      PRE_MEM_READ( "ptrace(setcrunchregs)", ARG4, 
+		     VKI_CRUNCH_SIZE);
+      break;
+   case VKI_PTRACE_SETVFPREGS:
+      PRE_MEM_READ( "ptrace(setvfpregs)", ARG4, 
+                     sizeof (struct vki_user_vfp));
+      break;
+   case VKI_PTRACE_SETHBPREGS:
+      PRE_MEM_READ( "ptrace(sethbpregs)", ARG4, sizeof(unsigned long));
+      break;
+   case VKI_PTRACE_GET_THREAD_AREA:
+      PRE_MEM_WRITE( "ptrace(get_thread_area)", ARG4, sizeof(unsigned long));
+      break;
+   case VKI_PTRACE_GETEVENTMSG:
+      PRE_MEM_WRITE( "ptrace(geteventmsg)", ARG4, sizeof(unsigned long));
+      break;
+   case VKI_PTRACE_GETSIGINFO:
+      PRE_MEM_WRITE( "ptrace(getsiginfo)", ARG4, sizeof(vki_siginfo_t));
+      break;
+   case VKI_PTRACE_SETSIGINFO:
+      PRE_MEM_READ( "ptrace(setsiginfo)", ARG4, sizeof(vki_siginfo_t));
+      break;
+   default:
+      break;
+   }
+}
+
+POST(sys_ptrace)
+{
+   switch (ARG1) {
+   case VKI_PTRACE_PEEKTEXT:
+   case VKI_PTRACE_PEEKDATA:
+   case VKI_PTRACE_PEEKUSR:
+      POST_MEM_WRITE( ARG4, sizeof (long));
+      break;
+   case VKI_PTRACE_GETREGS:
+      POST_MEM_WRITE( ARG4, sizeof (struct vki_user_regs_struct));
+      break;
+   case VKI_PTRACE_GETFPREGS:
+      POST_MEM_WRITE( ARG4, sizeof (struct vki_user_fp));
+      break;
+   case VKI_PTRACE_GETWMMXREGS:
+      POST_MEM_WRITE( ARG4, VKI_IWMMXT_SIZE);
+      break;
+   case VKI_PTRACE_GETCRUNCHREGS:
+      POST_MEM_WRITE( ARG4, VKI_CRUNCH_SIZE);
+      break;
+   case VKI_PTRACE_GETVFPREGS:
+      POST_MEM_WRITE( ARG4, sizeof(struct vki_user_vfp));
+      break;
+   case VKI_PTRACE_GET_THREAD_AREA:
+   case VKI_PTRACE_GETHBPREGS:
+   case VKI_PTRACE_GETEVENTMSG:
+      POST_MEM_WRITE( ARG4, sizeof(unsigned long));
+      break;
+   case VKI_PTRACE_GETSIGINFO:
+      /* XXX: This is a simplification. Different parts of the
+       * siginfo_t are valid depending on the type of signal.
+       */
+      POST_MEM_WRITE( ARG4, sizeof(vki_siginfo_t));
+      break;
+   default:
+      break;
+   }
+}
 
 #undef PRE
 #undef POST
@@ -1282,7 +1422,7 @@ static SyscallTableEntry syscall_main_table[] = {
    LINX_(__NR_getuid,            sys_getuid16),       // 24 ## P
 //zz 
 //zz    //   (__NR_stime,             sys_stime),          // 25 * (SVr4,SVID,X/OPEN)
-//   PLAXY(__NR_ptrace,            sys_ptrace),         // 26
+   PLAXY(__NR_ptrace,            sys_ptrace),         // 26
    GENX_(__NR_alarm,             sys_alarm),          // 27
 //zz    //   (__NR_oldfstat,          sys_fstat),          // 28 * L -- obsolete
    GENX_(__NR_pause,             sys_pause),          // 29
@@ -1331,13 +1471,13 @@ static SyscallTableEntry syscall_main_table[] = {
 
    GENX_(__NR_getpgrp,           sys_getpgrp),        // 65
    GENX_(__NR_setsid,            sys_setsid),         // 66
-//      _____(__NR_sigaction,         sys_sigaction),      // 67
+   LINXY(__NR_sigaction,         sys_sigaction),      // 67
 //zz    //   (__NR_sgetmask,          sys_sgetmask),       // 68 */* (ANSI C)
 //zz    //   (__NR_ssetmask,          sys_ssetmask),       // 69 */* (ANSI C)
 //zz 
    LINX_(__NR_setreuid,          sys_setreuid16),     // 70
    LINX_(__NR_setregid,          sys_setregid16),     // 71
-//   _____(__NR_sigsuspend,        sys_sigsuspend),     // 72
+   PLAX_(__NR_sigsuspend,        sys_sigsuspend),     // 72
    LINXY(__NR_sigpending,        sys_sigpending),     // 73
 //zz    //   (__NR_sethostname,       sys_sethostname),    // 74 */*
 //zz 
@@ -1402,7 +1542,7 @@ static SyscallTableEntry syscall_main_table[] = {
 //zz    LINXY(__NR_adjtimex,          sys_adjtimex),       // 124
 //zz 
    GENXY(__NR_mprotect,          sys_mprotect),       // 125
-   //   LINXY(__NR_sigprocmask,       sys_sigprocmask),    // 126
+   LINXY(__NR_sigprocmask,       sys_sigprocmask),    // 126
 //zz    // Nb: create_module() was removed 2.4-->2.6
 //   GENX_(__NR_create_module,     sys_ni_syscall),     // 127
    LINX_(__NR_init_module,       sys_init_module),    // 128

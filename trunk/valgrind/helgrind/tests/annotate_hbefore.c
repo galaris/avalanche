@@ -167,6 +167,25 @@ UWord do_acasW ( UWord* addr, UWord expected, UWord nyu )
    return success;
 }
 
+#elif defined(VGA_s390x)
+
+// s390x
+/* return 1 if success, 0 if failure */
+UWord do_acasW(UWord* addr, UWord expected, UWord nyu )
+{
+   int cc;
+
+   __asm__ __volatile__ (
+     "csg %2,%3,%1\n\t"
+     "ipm %0\n\t"
+     "srl %0,28\n\t"
+     : /* out */  "=r" (cc)
+     : /* in */ "Q" (*addr), "d" (expected), "d" (nyu)
+     : "memory", "cc"
+   );
+   return cc == 0;
+}
+
 #endif
 
 void atomic_incW ( UWord* w )
@@ -216,9 +235,9 @@ int main ( void )
 int shared_var = 0;  // is not raced upon
 
 
-void delay100ms ( void )
+void delay500ms ( void )
 {
-   struct timespec ts = { 0, 100 * 1000 * 1000 };
+   struct timespec ts = { 0, 500 * 1000 * 1000 };
    nanosleep(&ts, NULL);
 }
 
@@ -242,11 +261,11 @@ void do_signal ( UWord* w )
 void* thread_fn1 ( void* arg )
 {
   UWord* w = (UWord*)arg;
-  delay100ms();    // ensure t2 gets to its wait first
+  delay500ms();    // ensure t2 gets to its wait first
   shared_var = 1;  // first access
   do_signal(w);    // cause h-b edge to second thread
 
-  delay100ms();
+  delay500ms();
   return NULL;
 }
 
@@ -256,7 +275,7 @@ void* thread_fn2 ( void* arg )
   do_wait(w);      // wait for h-b edge from first thread
   shared_var = 2;  // second access
 
-  delay100ms();
+  delay500ms();
   return NULL;
 }
 

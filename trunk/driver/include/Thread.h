@@ -37,7 +37,7 @@ struct data_wrapper
   void* data;
 };
 
-struct pool_data
+struct job_wrapper
 {
   void* (*work_func) (void*);
   void* data;
@@ -56,17 +56,11 @@ class Thread
            ~Thread() {}
 
            int createThread(void* data, bool is_joinable = true);
-           virtual int waitForThread() { return pthread_join(tid, NULL); }
+           virtual void waitForThread();
            
-           static void* createAndRun(void* input)
-           {
-             void* data = ((data_wrapper*) input)->data;
-             Thread* this_pointer = ((data_wrapper*) input)->this_pointer;
-             delete ((data_wrapper*)input);
-             this_pointer->doWork(data);
-           }
+           static void* createAndRun(void* input);
 
-           virtual void doWork(void* data) {}
+           virtual void doWork(void* data);
            
            void addPrivateData(void* _data_unit, std::string name) 
            { 
@@ -125,7 +119,7 @@ class PoolThread : public Thread
            PoolThread() : work_finish_mutex(NULL), work_finish_cond(NULL), thread_status(-1), active_threads(NULL) {}
            ~PoolThread() {}
 
-           int waitForThread()
+           void waitForThread()
            {
              if (thread_status != UNINIT)
              {

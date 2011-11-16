@@ -1,8 +1,8 @@
-/*----------------------------------------------------------------------------------------*/
-/*------------------------------------- AVALANCHE ----------------------------------------*/
-/*------ Driver. Coordinates other processes, traverses conditional jumps tree.  ---------*/
-/*------------------------------------- Entry.cpp ----------------------------------------*/
-/*----------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+/*------------------------------ AVALANCHE ----------------------------------*/
+/*- Driver. Coordinates other processes, traverses conditional jumps tree. --*/
+/*------------------------------ Entry.cpp ----------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 /*
    Copyright (C) 2009 Ildar Isaev
@@ -31,16 +31,6 @@
 #include <signal.h>
 #include <dirent.h>
 
-#include "ExecutionManager.h"
-#include "Logger.h"
-#include "FileBuffer.h"
-#include "OptionConfig.h"
-#include "OptionParser.h"
-#include "Input.h"
-#include "Chunk.h"
-#include "Thread.h"
-#include "Monitor.h"
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -48,6 +38,16 @@
 #include <cstdlib>
 #include <string.h>
 #include <cerrno>
+#include <fstream>
+
+#include "ExecutionManager.h"
+#include "Logger.h"
+#include "OptionConfig.h"
+#include "OptionParser.h"
+#include "Input.h"
+#include "Error.h"
+#include "Thread.h"
+#include "Monitor.h"
 
 using namespace std;
 
@@ -57,148 +57,180 @@ Monitor* monitor;
 ExecutionManager* em;
 OptionParser *op;
 
+extern Thread remote_thread;
 extern PoolThread *threads;
 extern Input* initial;
-extern vector<Chunk*> report;
+extern vector<Error*> report;
 
 extern int in_thread_creation;
 
 int thread_num;
 extern int dist_fd;
 
-static void printHelpBanner()
-{
-    char banner[] =
-        "usage: avalanche [options] prog-and-args\n\n"
-        "  user options defined in [ ]:\n"
-        "    --help                       Print help and exit\n"
-        "    --use-memcheck               Use memcheck instead of covgrind\n"
-        "    --leaks                      Check for memory leaks\n"
-        "                                 (ignored if '--use-memcheck' isn't specified)\n"
-        "    --verbose                    Much more detailed avalanche output\n" 
-        "    --debug                      Save some debugging information - divergent inputs, etc.\n" 
-        "    --depth=<number>             The number of conditions collected during one run of tracegrind\n"
-        "                                 (default is 100). May be used in the form '--depth=infinity',\n"
-        "                                 which means that tracegrind should collect all conditions in the trace\n"
-        "    --alarm=<number>             Timer value in seconds (for infinite loop recognition) (default is 300)\n"
-        "    --filename=<input_file>      The path to the file with the input data for the application being tested\n"
-        "    --trace-children             Run valgrind plugins with '--trace-children=yes' option\n"
-        "    --check-danger               Emit special constraints for memory access operations\n"
-	"                                 and divisions (slows down the analysis)\n"
-	"    --dump-calls                 Dump the list of functions manipulating with tainted data to calldump.log\n"
-	"    --func-name=<name>           The name of function that should be used for separate function analysis\n"
-	"    --func-file=<name>           The path to the file with the list of functions that\n"
-	"                                 should be used for separate function analysis\n"
-	"    --mask=<mask_file>           The path to the file with input mask\n"
-	"    --suppress-subcalls          Ignore conditions in a nested function calls during separate analysis\n"
-        "    --stp-threads=<number>       The number of STP queries handled simultaneously. May be used in the form\n"
-        "                                 '--stp-threads=auto'. In this case the number of CPU cores is taken.\n"
-        "    --report-log=<filename>      Dump exploits report to the specified file\n"
-        "\n"
-        "  special options for sockets:\n"
-        "    --sockets                    Mark data read from TCP sockets as tainted\n"
-        "    --host=<IPv4 address>        IP address of the network connection (for TCP sockets only)\n"
-        "    --port=<number>              Port number of the network connection (for TCP sockets only)\n"
-        "    --datagrams                  Mark data read from UDP sockets as tainted\n"
-        "    --alarm=<number>             Timer for breaking infinite waitings in covgrind\n"
-        "                                 or memcheck (not set by default)\n" 
-        "    --tracegrind-alarm=<number>  Timer for breaking infinite waitings in tracegrind (not set by default)\n" 
-        "\n"
-        "  options for distributed Avalanche:\n"
-        "    --distributed                Tell Avalanche that it should connect to distribution server\n"
-        "                                 and run distributed analysis\n"
-        "    --dist-host=<IPv4 address>   IP address of the distribution server (default is 127.0.0.1)\n"
-        "    --dist-port=<number>         Port number of the distribution server (default is 12200)\n"
-        "    --protect-main-agent         Do not send inputs to the remore agents, if the overall number\n"
-        "                                 of inputs in the main agent do not exceed 5 * <number_of_agents>\n";
-
-
-    cout << banner << endl;
-}
-
 OptionConfig* opt_config;
 
 void cleanUp()
 {
-  if (thread_num > 0)
-  {
-    for (int i = 1; i < thread_num + 1; i ++)
+    monitor->removeTmpFiles();
+    string dir_name = ExecutionManager::getTempDir();
+    if (thread_num > 0)
     {
-      ostringstream file_modifier;
-      file_modifier << "_" << i;
-      remove(string("basic_blocks").append(file_modifier.str()).append(".log").c_str());
-      remove(string("execution").append(file_modifier.str()).append(".log").c_str());
-      remove(string("prediction").append(file_modifier.str()).append(".log").c_str());
-      remove(string("curtrace").append(file_modifier.str()).append(".log").c_str());
-      remove(string("replace_data").append(file_modifier.str()).c_str());
-      for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
-      {
-        remove(opt_config->getFile(j).append(file_modifier.str()).c_str());
-      }
+        for (int i = 1; i < thread_num + 1; i ++)
+        {
+            ostringstream file_modifier;
+            file_modifier << "_" << i;
+            string modifier_log = file_modifier.str() + string(".log");
+            unlink((dir_name + string("basic_blocks") + modifier_log).c_str());
+            unlink((dir_name + string("execution") + modifier_log).c_str());
+            unlink((dir_name + string("curtrace") + modifier_log).c_str());
+            unlink((dir_name + string("replace_data") + modifier_log).c_str());
+            unlink((dir_name + string("argv.log") + modifier_log).c_str());
+            for (int j = 0; j < opt_config->getNumberOfFiles(); j ++)
+            {
+                unlink((opt_config->getFile(j) + file_modifier.str()).c_str());
+            }
+        }
+        delete []threads;
     }
-    delete []threads;
-  }
-  for (int i = 0; i < report.size(); i ++)
-  {
-    delete (report.at(i));
-  }
-  delete em;
-  delete op;
-  delete opt_config;
-  delete initial;
-  delete monitor;
-  delete logger;
+    if (opt_config->enabledCleanUp()) {
+        unlink((dir_name + string("basic_blocks.log")).c_str());
+        unlink((dir_name + string("curtrace.log")).c_str());
+        unlink((dir_name + string("curdtrace.log")).c_str());
+        unlink((dir_name + string("execution.log")).c_str());
+        unlink((dir_name + string("prediction.log")).c_str());
+        unlink((dir_name + string("dangertrace.log")).c_str());
+        unlink((dir_name + string("trace.log")).c_str());
+        unlink((dir_name + string("actual.log")).c_str());
+        unlink((dir_name + string("divergence.log")).c_str());
+        unlink((dir_name + string("replace_data")).c_str());
+        unlink((dir_name + string("offsets.log")).c_str());
+        if (opt_config->getCheckArgv() != "")
+        {
+            unlink((dir_name + string("argv.log")).c_str());
+            unlink((dir_name + string("arg_lengths")).c_str());
+        }
+        if (dir_name != "")
+        {
+            if (rmdir(dir_name.substr(0, dir_name.length() - 1).c_str()) < 0)
+            {
+                if (errno != EEXIST)
+                {
+                    LOG(Logger::ERROR, "Cannot delete temporary directory " <<
+                                       dir_name << " : " << strerror(errno));
+                }
+            }
+        }
+    }
+    for (int i = 0; i < report.size(); i ++)
+    {
+        delete (report.at(i));
+    }
+    delete em;
+    delete op;
+    delete opt_config;
+    delete initial;
+    delete monitor;
+    delete logger;
 }
 
 void reportResults()
 {
-  time_t end_time = time(NULL);
-  LOG(logger, "Time statistics:\ntotal: " << end_time - monitor->getGlobalStartTime() << ", "
-                                          << monitor->getStats(end_time - monitor->getGlobalStartTime()));
-  if (opt_config->getReportLog() == string(""))
-  {
-    REPORT(logger, "\nExploits report:");
-    for (int i = 0; i < report.size(); i++)
+    // Exploits report
+
+    bool to_file = (opt_config -> getReportLog() != string (""));
+    ofstream report_f;
+
+    if (to_file)
     {
-      report.at(i)->print(opt_config->getPrefix(), i);
+        report_f.open((opt_config->getResultDir() + 
+                        opt_config->getReportLog()).c_str());
+        if (report_f.bad())
+        {
+          to_file = false;
+        }
     }
-    REPORT(logger, "");
-  }
-  else
-  {
-    int fd = open(opt_config->getReportLog().c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-    for (int i = 0; i < report.size(); i++)
+
+    if (!to_file)
     {
-      report.at(i)->print(opt_config->getPrefix(), i, fd);
+        LOG(Logger::REPORT, "Unique error(s) found: " << 
+                            report.size () << ".");
     }
-    close(fd);
-  }  
+
+    if (report.size() > 0)
+    {
+        for (int i = 0; i < report.size(); i++)
+        {
+            string summary = 
+                report.at(i)->getSummary(opt_config->getPrefix(),
+                                         opt_config->getNumberOfFiles(),false);
+            if (to_file)
+            {
+                report_f << summary;
+            }
+            else
+            {
+                LOG(Logger::REPORT, summary);
+            }
+        }
+    }
+
+    ofstream error_f((opt_config->getResultDir() + "error_list.log").c_str());
+    if (error_f.bad())
+    {
+        LOG(Logger::ERROR, 
+                "Error opening file " << opt_config->getResultDir() <<
+                "error_list.log: " << strerror(errno));
+    }
+    else
+    {
+        for (int i = 0; i < report.size(); i ++)
+        {
+            error_f << report[i]->getList();
+        }
+        error_f.close();
+    }
+
+    // Time statistics
+
+    time_t end_time = time(NULL);
+    LOG (Logger::REPORT, endl << "Time statistics: " << 
+        end_time - monitor->getGlobalStartTime() << " sec, " << 
+        monitor->getStats(end_time - monitor->getGlobalStartTime() - 
+                                     monitor->getNetworkOverhead()));
+    LOG(Logger::REPORT, "");
 }
 
 void sig_hndlr(int signo)
 {
-  if (opt_config->getDistributed())
-  {
-    write(dist_fd, "q", 1);
-    shutdown(dist_fd, SHUT_RDWR);
-    close(dist_fd);
-  }
-  if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
-  {
-    initial->dumpFiles();
-  }
-  monitor->setKilledStatus(true);
-  monitor->handleSIGKILL();
-  for (int i = 0; i < thread_num; i ++)
-  {
-    if (in_thread_creation != i)
+    if (opt_config->getDistributed())
     {
-      threads[i].waitForThread();
+        write(dist_fd, "q", 1);
+        shutdown(dist_fd, SHUT_RDWR);
+        close(dist_fd);
     }
-  }
-  reportResults();
-  cleanUp();
-  exit(0);
+    if (!(opt_config->usingSockets()) && 
+        !(opt_config->usingDatagrams()) &&
+        (initial != NULL))
+    {
+        initial->dumpFiles();
+    }
+    monitor->setKilledStatus(true);
+    monitor->handleSIGKILL();
+    for (int i = 0; i < thread_num; i ++)
+    {
+        if (in_thread_creation != i)
+        {
+            threads[i].waitForThread();
+        }
+    }
+/*    if ((thread_num > 0) && opt_config->getRemoteValgrind())
+    {
+        pthread_cancel(remote_thread.getTID());
+        remote_thread.waitForThread();
+    }*/
+    reportResults();
+    cleanUp();
+    exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -208,38 +240,73 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     op = new OptionParser(argc, argv);
     opt_config = op->run();
-    
-    if (opt_config == NULL || opt_config->empty()) {
-        printHelpBanner();
+        
+    if (opt_config == NULL || opt_config->empty()) 
+    {
+        LOG(Logger::JOURNAL, 
+                "Use 'avalanche --help' for a complete options list.");
         return EXIT_FAILURE;
     }
 
-    if (opt_config->getVerbose()) logger->enableVerbose();
+    if (opt_config -> getVerbose ()) logger -> setVerbose ();
+    if (opt_config -> getDebug ()) logger -> setDebug ();
+    if (opt_config -> getProgramOutput ()) logger -> setProgramOutput ();
+    if (opt_config -> getNetworkLog ()) logger -> setNetworkLog ();
 
     thread_num = opt_config->getSTPThreads();
-    string checker_name = ((opt_config->usingMemcheck()) ? string("memcheck") : string("covgrind"));
+    string checker_name = (opt_config->getPlugin());
     if (thread_num > 0)
     {
-      monitor = new ParallelMonitor(checker_name, start_time, thread_num);
-      ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), opt_config->getTracegrindAlarm());
-      threads = new PoolThread[thread_num];
+        monitor = new ParallelMonitor(checker_name, start_time, thread_num);
+        ((ParallelMonitor*)monitor)->setAlarm(opt_config->getAlarm(), 
+                                              opt_config->getTracegrindAlarm());
+        threads = new PoolThread[thread_num];
     }
     else
     {
-      monitor = new SimpleMonitor(checker_name, start_time);
+        monitor = new SimpleMonitor(checker_name, start_time);
     }
     checker_name.clear();
-    time_t work_start_time = time(NULL);
-    string t = string(ctime(&work_start_time));
+    Error::initCounters();
+    LOG_TIME (Logger :: VERBOSE, "Avalanche, a dynamic analysis tool.");
 
-    LOG(logger, "Avalanche, a dynamic analysis tool.");
-    LOG(logger, "Start time: " << t.substr(0, t.size() - 1));
-  
-    em = new ExecutionManager(opt_config);
-    em->run();
-    if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+    if (opt_config->getResultDir() != string(""))
     {
-      initial->dumpFiles();
+        if (mkdir(opt_config->getResultDir().c_str(), 
+                  S_IRWXG | S_IRWXO | S_IRWXU) < 0)
+        {
+            if (errno != EEXIST)
+            {
+                LOG(Logger::ERROR, 
+                        "Cannot create directory " << 
+                        opt_config->getResultDir() << ": " << strerror(errno));
+                opt_config->setResultDir("");
+            }
+        }
+    }
+    
+    try
+    {
+        em = new ExecutionManager(opt_config);
+        string temp_dir = ExecutionManager::getTempDir();
+        em->run();
+    }
+    catch (char *msg)
+    {
+    }
+    /* We need 2 separate try-catch blocks so that an attempt to restore
+       initial input files is made. */
+    try
+    {
+        if (!(opt_config->usingSockets()) && !(opt_config->usingDatagrams()))
+        {
+            initial->dumpFiles();
+        }
+    }
+    catch (char *msg)
+    {
+        LOG(Logger::REPORT, "Warning! Input file(s) may not be restored to \
+                             initial state!");
     }
     reportResults();
     cleanUp();

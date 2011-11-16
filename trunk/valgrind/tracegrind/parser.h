@@ -70,4 +70,8 @@ Bool cmpNames (Char* fnName, Char* checkName);
 Bool cutAffixes (Char* fnName);
 Bool leaveFnName (Char* fnName);
 Bool cutTemplates (Char* fnName);
+
+/* Write used offsets to offsets.log */
+Bool storeUsedOffsets(Char *fileName);
+
 #endif

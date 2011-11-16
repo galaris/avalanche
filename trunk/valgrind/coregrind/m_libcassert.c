@@ -31,6 +31,7 @@
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"
+#include "pub_core_libcsetjmp.h"    // to keep threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_libcbase.h"
 #include "pub_core_libcassert.h"
@@ -76,7 +77,7 @@
         (srP)->r_sp = rsp;                                \
         (srP)->misc.AMD64.r_rbp = rbp;                    \
       }
-#elif defined(VGP_ppc32_linux) || defined(VGP_ppc32_aix5)
+#elif defined(VGP_ppc32_linux)
 #  define GET_STARTREGS(srP)                              \
       { UInt cia, r1, lr;                                 \
         __asm__ __volatile__(                             \
@@ -95,7 +96,7 @@
         (srP)->r_sp = (ULong)r1;                          \
         (srP)->misc.PPC32.r_lr = lr;                      \
       }
-#elif defined(VGP_ppc64_linux) || defined(VGP_ppc64_aix5)
+#elif defined(VGP_ppc64_linux)
 #  define GET_STARTREGS(srP)                              \
       { ULong cia, r1, lr;                                \
         __asm__ __volatile__(                             \
@@ -135,6 +136,22 @@
         (srP)->misc.ARM.r11 = block[4];                   \
         (srP)->misc.ARM.r7  = block[5];                   \
       }
+#elif defined(VGP_s390x_linux)
+#  define GET_STARTREGS(srP)                              \
+      { ULong ia, sp, fp, lr;                             \
+        __asm__ __volatile__(                             \
+           "bras %0,0f;"                                  \
+           "0: lgr %1,15;"                                \
+           "lgr %2,11;"                                   \
+           "lgr %3,14;"                                   \
+           : "=r" (ia), "=r" (sp),"=r" (fp),"=r" (lr)     \
+           /* no read & clobber */                        \
+        );                                                \
+        (srP)->r_pc = ia;                                 \
+        (srP)->r_sp = sp;                                 \
+        (srP)->misc.S390X.r_fp = fp;                      \
+        (srP)->misc.S390X.r_lr = lr;                      \
+      }
 #else
 #  error Unknown platform
 #endif
@@ -146,7 +163,7 @@ void VG_(exit)( Int status )
 {
 #if defined(VGO_linux)
    (void)VG_(do_syscall1)(__NR_exit_group, status );
-#elif defined(VGO_aix5) || defined(VGO_darwin)
+#elif defined(VGO_darwin)
    (void)VG_(do_syscall1)(__NR_exit, status );
 #else
 #  error Unknown OS

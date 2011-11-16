@@ -3,9 +3,11 @@ include $(top_srcdir)/Makefile.tool-tests.am
 
 dist_noinst_SCRIPTS =		    \
 	compare_error_count_with    \
+	filter_error_count	    \
 	filter_error_summary	    \
 	filter_stderr               \
 	filter_stderr_and_thread_no \
+	filter_stderr_and_thread_no_and_offset \
 	run_openmp_test             \
 	supported_libpthread	    \
 	supported_sem_init
@@ -33,6 +35,8 @@ EXTRA_DIST =                                        \
 	annotate_publish_hg.vgtest		    \
 	annotate_smart_pointer.stderr.exp	    \
 	annotate_smart_pointer.vgtest		    \
+	annotate_smart_pointer2.stderr.exp	    \
+	annotate_smart_pointer2.vgtest		    \
 	annotate_spinlock.stderr.exp		    \
 	annotate_spinlock.vgtest		    \
 	annotate_rwlock.stderr.exp		    \
@@ -68,10 +72,16 @@ EXTRA_DIST =                                        \
 	circular_buffer.vgtest			    \
 	custom_alloc.stderr.exp			    \
 	custom_alloc.vgtest			    \
+	custom_alloc_fiw.stderr.exp		    \
+	custom_alloc_fiw.vgtest			    \
 	fp_race.stderr.exp                          \
 	fp_race.vgtest                              \
 	fp_race2.stderr.exp                         \
 	fp_race2.vgtest                             \
+	free_is_write.stderr.exp		    \
+	free_is_write.vgtest			    \
+	free_is_write2.stderr.exp		    \
+	free_is_write2.vgtest			    \
 	hg01_all_ok.stderr.exp                      \
 	hg01_all_ok.vgtest                          \
 	hg02_deadlock.stderr.exp                    \
@@ -123,6 +133,9 @@ EXTRA_DIST =                                        \
 	pth_barrier_race.vgtest                     \
 	pth_barrier_reinit.stderr.exp               \
 	pth_barrier_reinit.vgtest                   \
+	pth_barrier_thr_cr.stderr.exp               \
+	pth_barrier_thr_cr.vgtest                   \
+	pth_barrier_thr_cr.supp                     \
 	pth_broadcast.stderr.exp                    \
 	pth_broadcast.vgtest                        \
 	pth_cancel_locked.stderr.exp		    \
@@ -146,6 +159,9 @@ EXTRA_DIST =                                        \
 	pth_detached2.stderr.exp                    \
 	pth_detached2.stdout.exp                    \
 	pth_detached2.vgtest                        \
+	pth_detached3.stderr.exp1                   \
+	pth_detached3.stderr.exp2                   \
+	pth_detached3.vgtest                        \
 	pth_detached_sem.stderr.exp                 \
 	pth_detached_sem.stdout.exp                 \
 	pth_detached_sem.vgtest                     \
@@ -170,8 +186,8 @@ EXTRA_DIST =                                        \
 	qt4_rwlock.vgtest                           \
 	qt4_semaphore.stderr.exp                    \
 	qt4_semaphore.vgtest                        \
-	read_after_free.stderr.exp		    \
-	read_after_free.vgtest			    \
+	read_and_free_race.stderr.exp		    \
+	read_and_free_race.vgtest		    \
 	recursive_mutex.stderr.exp-linux            \
 	recursive_mutex.stderr.exp-darwin           \
 	recursive_mutex.vgtest                      \
@@ -248,12 +264,15 @@ EXTRA_DIST =                                        \
 	tc22_exit_w_lock.vgtest                     \
 	tc23_bogus_condwait.stderr.exp-linux-x86    \
 	tc23_bogus_condwait.stderr.exp-linux-ppc    \
-	tc23_bogus_condwait.stderr.exp-darwin       \
+	tc23_bogus_condwait.stderr.exp-darwin-x86   \
+	tc23_bogus_condwait.stderr.exp-darwin-amd64 \
 	tc23_bogus_condwait.vgtest                  \
 	tc24_nonzero_sem.stderr.exp                 \
 	tc24_nonzero_sem.vgtest                     \
 	thread_name.stderr.exp			    \
 	thread_name.vgtest			    \
+	threaded-fork.stderr.exp		    \
+	threaded-fork.vgtest			    \
 	trylock.stderr.exp                          \
 	trylock.vgtest				    \
 	unit_bitmap.stderr.exp                      \
@@ -272,6 +291,7 @@ check_PROGRAMS =      \
   bug-235681          \
   custom_alloc        \
   fp_race             \
+  free_is_write	      \
   hold_lock           \
   linuxthreads_det    \
   memory_allocation   \
@@ -284,6 +304,7 @@ check_PROGRAMS =      \
   pth_create_chain    \
   pth_detached        \
   pth_detached_sem    \
+  pth_detached3       \
   pth_inconsistent_cond_wait \
   pth_mutex_reinit    \
   pth_process_shared_mutex   \
@@ -296,6 +317,7 @@ check_PROGRAMS =      \
   sem_open            \
   sigalrm             \
   thread_name         \
+  threaded-fork       \
   trylock             \
   unit_bitmap         \
   unit_vc
@@ -308,10 +330,13 @@ if HAVE_BUILTIN_ATOMIC
 check_PROGRAMS +=        \
   annotate_barrier       \
   annotate_rwlock        \
-  annotate_smart_pointer \
   atomic_var             \
-  circular_buffer        \
-  read_after_free        \
+  circular_buffer
+endif
+
+if HAVE_BUILTIN_ATOMIC_CXX
+check_PROGRAMS +=        \
+  annotate_smart_pointer \
   tsan_unittest
 endif
 
@@ -320,7 +345,8 @@ check_PROGRAMS += omp_matinv omp_prime omp_printf
 endif
 
 if HAVE_PTHREAD_BARRIER
-check_PROGRAMS += matinv pth_barrier pth_barrier_race pth_barrier_reinit
+check_PROGRAMS += matinv pth_barrier pth_barrier_race pth_barrier_reinit \
+	pth_barrier_thr_cr
 endif
 
 if HAVE_PTHREAD_CREATE_GLIBC_2_0

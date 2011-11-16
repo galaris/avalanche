@@ -917,6 +917,22 @@ static Bool sameIRTempsOrIcoU32s ( IRExpr* e1, IRExpr* e2 )
    }
 }
 
+/* Is this literally IRExpr_Const(IRConst_U32(0)) ? */
+static Bool isZeroU32 ( IRExpr* e )
+{
+   return toBool( e->tag == Iex_Const 
+                  && e->Iex.Const.con->tag == Ico_U32
+                  && e->Iex.Const.con->Ico.U32 == 0);
+}
+
+/* Is this literally IRExpr_Const(IRConst_U64(0)) ? */
+static Bool isZeroU64 ( IRExpr* e )
+{
+   return toBool( e->tag == Iex_Const 
+                  && e->Iex.Const.con->tag == Ico_U64
+                  && e->Iex.Const.con->Ico.U64 == 0);
+}
+
 static Bool notBool ( Bool b )
 {
    if (b == True) return False;
@@ -954,6 +970,31 @@ static IRExpr* mkOnesOfPrimopResultType ( IROp op )
       default:
          vpanic("mkOnesOfPrimopResultType: bad primop");
    }
+}
+
+/* Helpers for folding Clz32/64. */
+static UInt fold_Clz64 ( ULong value )
+{
+   UInt i;
+   vassert(value != 0ULL); /* no defined semantics for arg==0 */
+   for (i = 0; i < 64; ++i) {
+      if (0ULL != (value & (((ULong)1) << (63 - i)))) return i;
+   }
+   vassert(0);
+   /*NOTREACHED*/
+   return 0;
+}
+
+static UInt fold_Clz32 ( UInt value )
+{
+   UInt i;
+   vassert(value != 0); /* no defined semantics for arg==0 */
+   for (i = 0; i < 32; ++i) {
+      if (0 != (value & (((UInt)1) << (31 - i)))) return i;
+   }
+   vassert(0);
+   /*NOTREACHED*/
+   return 0;
 }
 
 
@@ -1010,6 +1051,13 @@ static IRExpr* fold_Expr ( IRExpr* e )
             e2 = IRExpr_Const(IRConst_U32((UInt)s32));
             break;
          }
+         case Iop_16Sto32: {
+            /* signed */ Int s32 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
+            s32 <<= 16;
+            s32 >>= 16;
+            e2 = IRExpr_Const(IRConst_U32( (UInt)s32) );
+            break;
+         }
          case Iop_8Uto64:
             e2 = IRExpr_Const(IRConst_U64(
                     0xFFULL & e->Iex.Unop.arg->Iex.Const.con->Ico.U8));
@@ -1020,6 +1068,17 @@ static IRExpr* fold_Expr ( IRExpr* e )
             break;
          case Iop_8Uto32:
             e2 = IRExpr_Const(IRConst_U32(
+                    0xFF & e->Iex.Unop.arg->Iex.Const.con->Ico.U8));
+            break;
+         case Iop_8Sto16: {
+            /* signed */ Short s16 = e->Iex.Unop.arg->Iex.Const.con->Ico.U8;
+            s16 <<= 8;
+            s16 >>= 8;
+            e2 = IRExpr_Const(IRConst_U16( (UShort)s16) );
+            break;
+         }
+         case Iop_8Uto16:
+            e2 = IRExpr_Const(IRConst_U16(
                     0xFF & e->Iex.Unop.arg->Iex.Const.con->Ico.U8));
             break;
          case Iop_16Uto32:
@@ -1096,6 +1155,13 @@ static IRExpr* fold_Expr ( IRExpr* e )
                     0xFFFFFFFFULL 
                     & e->Iex.Unop.arg->Iex.Const.con->Ico.U32));
             break;
+         case Iop_16Sto64: {
+            /* signed */ Long s64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
+            s64 <<= 48;
+            s64 >>= 48;
+            e2 = IRExpr_Const(IRConst_U64((ULong)s64));
+            break;
+         }
          case Iop_32Sto64: {
             /* signed */ Long s64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U32;
             s64 <<= 32;
@@ -1103,6 +1169,21 @@ static IRExpr* fold_Expr ( IRExpr* e )
             e2 = IRExpr_Const(IRConst_U64((ULong)s64));
             break;
          }
+
+         case Iop_16to8: {
+            UShort w16 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
+            w16 &= 0xFF;
+            e2 = IRExpr_Const(IRConst_U8( (UChar)w16 ));
+            break;
+         }
+         case Iop_16HIto8: {
+            UShort w16 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
+            w16 >>= 8;
+            w16 &= 0xFF;
+            e2 = IRExpr_Const(IRConst_U8( (UChar)w16 ));
+            break;
+         }
+
          case Iop_CmpNEZ8:
             e2 = IRExpr_Const(IRConst_U1(toBool(
                     0 != 
@@ -1151,6 +1232,19 @@ static IRExpr* fold_Expr ( IRExpr* e )
             Long  s64 = (Long)u64;
             s64 = (s64 | (-s64));
             e2 = IRExpr_Const( IRConst_U64( (ULong)s64 ));
+            break;
+         }
+
+         case Iop_Clz32: {
+            UInt u32 = e->Iex.Unop.arg->Iex.Const.con->Ico.U32;
+            if (u32 != 0)
+               e2 = IRExpr_Const(IRConst_U32(fold_Clz32(u32)));
+            break;
+         }
+         case Iop_Clz64: {
+            ULong u64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U64;
+            if (u64 != 0ULL)
+               e2 = IRExpr_Const(IRConst_U64(fold_Clz64(u64)));
             break;
          }
 
@@ -1215,6 +1309,11 @@ static IRExpr* fold_Expr ( IRExpr* e )
                e2 = IRExpr_Const(IRConst_U8(toUChar( 
                        (e->Iex.Binop.arg1->Iex.Const.con->Ico.U8
                         & e->Iex.Binop.arg2->Iex.Const.con->Ico.U8))));
+               break;
+            case Iop_And16:
+               e2 = IRExpr_Const(IRConst_U16(toUShort(
+                       (e->Iex.Binop.arg1->Iex.Const.con->Ico.U16
+                        & e->Iex.Binop.arg2->Iex.Const.con->Ico.U16))));
                break;
             case Iop_And32:
                e2 = IRExpr_Const(IRConst_U32(
@@ -1401,12 +1500,22 @@ static IRExpr* fold_Expr ( IRExpr* e )
                        ((UInt)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U32)
                         <= (UInt)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U32)))));
                break;
+            case Iop_CmpLE64U:
+               e2 = IRExpr_Const(IRConst_U1(toBool(
+                       ((ULong)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U64)
+                        <= (ULong)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U64)))));
+               break;
 
             /* -- CmpLES -- */
             case Iop_CmpLE32S:
                e2 = IRExpr_Const(IRConst_U1(toBool(
                        ((Int)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U32)
                         <= (Int)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U32)))));
+               break;
+            case Iop_CmpLE64S:
+               e2 = IRExpr_Const(IRConst_U1(toBool(
+                       ((Long)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U64)
+                        <= (Long)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U64)))));
                break;
 
             /* -- CmpLTS -- */
@@ -1415,12 +1524,22 @@ static IRExpr* fold_Expr ( IRExpr* e )
                        ((Int)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U32)
                         < (Int)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U32)))));
                break;
+            case Iop_CmpLT64S:
+               e2 = IRExpr_Const(IRConst_U1(toBool(
+                       ((Long)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U64)
+                        < (Long)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U64)))));
+               break;
 
             /* -- CmpLTU -- */
             case Iop_CmpLT32U:
                e2 = IRExpr_Const(IRConst_U1(toBool(
                        ((UInt)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U32)
                         < (UInt)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U32)))));
+               break;
+            case Iop_CmpLT64U:
+               e2 = IRExpr_Const(IRConst_U1(toBool(
+                       ((ULong)(e->Iex.Binop.arg1->Iex.Const.con->Ico.U64)
+                        < (ULong)(e->Iex.Binop.arg2->Iex.Const.con->Ico.U64)))));
                break;
 
             /* -- CmpORD -- */
@@ -1491,11 +1610,18 @@ static IRExpr* fold_Expr ( IRExpr* e )
             e2 = e->Iex.Binop.arg1;
          } else
 
-         /* Or32/Add32/Max32U(x,0) ==> x */
-         if ((e->Iex.Binop.op == Iop_Add32 
-              || e->Iex.Binop.op == Iop_Or32 || e->Iex.Binop.op == Iop_Max32U)
-             && e->Iex.Binop.arg2->tag == Iex_Const
-             && e->Iex.Binop.arg2->Iex.Const.con->Ico.U32 == 0) {
+         /* Or32/Add32/Max32U(x,0) ==> x
+            Or32/Add32/Max32U(0,x) ==> x */
+         if (e->Iex.Binop.op == Iop_Add32
+             || e->Iex.Binop.op == Iop_Or32 || e->Iex.Binop.op == Iop_Max32U) {
+            if (isZeroU32(e->Iex.Binop.arg2))
+               e2 = e->Iex.Binop.arg1;
+            else if (isZeroU32(e->Iex.Binop.arg1))
+               e2 = e->Iex.Binop.arg2;
+         } else
+
+         /* Sub64(x,0) ==> x */
+         if (e->Iex.Binop.op == Iop_Sub64 && isZeroU64(e->Iex.Binop.arg2)) {
             e2 = e->Iex.Binop.arg1;
          } else
 
@@ -1536,11 +1662,13 @@ static IRExpr* fold_Expr ( IRExpr* e )
          } else
          /* NB no Add16(t,t) case yet as no known test case exists */
 
-         /* Or64/Add64(x,0) ==> x */
-         if ((e->Iex.Binop.op == Iop_Add64 || e->Iex.Binop.op == Iop_Or64)
-             && e->Iex.Binop.arg2->tag == Iex_Const
-             && e->Iex.Binop.arg2->Iex.Const.con->Ico.U64 == 0) {
-            e2 = e->Iex.Binop.arg1;
+         /* Or64/Add64(x,0) ==> x
+            Or64/Add64(0,x) ==> x */
+         if (e->Iex.Binop.op == Iop_Add64 || e->Iex.Binop.op == Iop_Or64) {
+            if (isZeroU64(e->Iex.Binop.arg2))
+               e2 = e->Iex.Binop.arg1;
+            else if (isZeroU64(e->Iex.Binop.arg1))
+               e2 = e->Iex.Binop.arg2;
          } else
 
          /* And32(x,0xFFFFFFFF) ==> x */
@@ -1568,20 +1696,6 @@ static IRExpr* fold_Expr ( IRExpr* e )
          if (e->Iex.Binop.op == Iop_Or8
              && e->Iex.Binop.arg1->tag == Iex_Const
              && e->Iex.Binop.arg1->Iex.Const.con->Ico.U8 == 0) {
-            e2 = e->Iex.Binop.arg2;
-         } else
-
-         /* Or32/Max32U(0,x) ==> x */
-         if ((e->Iex.Binop.op == Iop_Or32 || e->Iex.Binop.op == Iop_Max32U)
-             && e->Iex.Binop.arg1->tag == Iex_Const
-             && e->Iex.Binop.arg1->Iex.Const.con->Ico.U32 == 0) {
-            e2 = e->Iex.Binop.arg2;
-         } else
-
-         /* Or64(0,x) ==> x */
-         if (e->Iex.Binop.op == Iop_Or64
-             && e->Iex.Binop.arg1->tag == Iex_Const
-             && e->Iex.Binop.arg1->Iex.Const.con->Ico.U64 == 0) {
             e2 = e->Iex.Binop.arg2;
          } else
 
@@ -1894,7 +2008,9 @@ static IRStmt* subst_and_fold_Stmt ( IRExpr** env, IRStmt* st )
       }
 
       case Ist_IMark:
-         return IRStmt_IMark(st->Ist.IMark.addr, st->Ist.IMark.len);
+         return IRStmt_IMark(st->Ist.IMark.addr,
+                             st->Ist.IMark.len,
+                             st->Ist.IMark.delta);
 
       case Ist_NoOp:
          return IRStmt_NoOp();
@@ -3945,6 +4061,14 @@ static IRExpr* fold_IRExpr_Binop ( IROp op, IRExpr* a1, IRExpr* a2 )
                              IRExpr_Binop( Iop_Or32, a1->Iex.Unop.arg, 
                                                      a2->Iex.Unop.arg ) );
       break;
+
+   case Iop_CmpNE32:
+      /* Since X has type Ity_I1 we can simplify:
+         CmpNE32(1Uto32(X),0)) ==> X */
+      if (is_Unop(a1, Iop_1Uto32) && isZeroU32(a2))
+         return a1->Iex.Unop.arg;
+      break;
+
    default:
       break;
    }
@@ -3987,6 +4111,14 @@ static IRExpr* fold_IRExpr_Unop ( IROp op, IRExpr* aa )
       /* CmpNEZ32( Left32(x) ) --> CmpNEZ32(x) */
       if (is_Unop(aa, Iop_Left32)) 
          return IRExpr_Unop(Iop_CmpNEZ32, aa->Iex.Unop.arg);
+      /* CmpNEZ32( 1Uto32(X) ) --> X */
+      if (is_Unop(aa, Iop_1Uto32))
+         return aa->Iex.Unop.arg;
+      break;
+   case Iop_CmpNEZ8:
+      /* CmpNEZ8( 1Uto8(X) ) --> X */
+      if (is_Unop(aa, Iop_1Uto8))
+         return aa->Iex.Unop.arg;
       break;
    case Iop_Left32:
       /* Left32( Left32(x) ) --> Left32(x) */
@@ -4166,7 +4298,9 @@ static IRStmt* atbSubst_Stmt ( ATmpInfo* env, IRStmt* st )
                    st->Ist.Exit.dst
                 );
       case Ist_IMark:
-         return IRStmt_IMark(st->Ist.IMark.addr, st->Ist.IMark.len);
+         return IRStmt_IMark(st->Ist.IMark.addr,
+                             st->Ist.IMark.len,
+                             st->Ist.IMark.delta);
       case Ist_NoOp:
          return IRStmt_NoOp();
       case Ist_MBE:
@@ -4506,7 +4640,7 @@ static void considerExpensives ( /*OUT*/Bool* hasGetIorPutI,
                case Ity_I1: case Ity_I8: case Ity_I16: 
                case Ity_I32: case Ity_I64: case Ity_I128: 
                   break;
-               case Ity_F32: case Ity_F64: case Ity_V128: 
+               case Ity_F32: case Ity_F64: case Ity_F128: case Ity_V128:
                   *hasVorFtemps = True;
                   break;
                default: 
@@ -4611,6 +4745,7 @@ IRSB* do_iropt_BB(
       bb = cprop_BB(bb);
       bb = spec_helpers_BB ( bb, specHelper );
       redundant_put_removal_BB ( bb, preciseMemExnsFn );
+      do_cse_BB( bb );
       do_deadcode_BB( bb );
    }
 
