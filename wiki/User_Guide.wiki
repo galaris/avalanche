@@ -50,7 +50,7 @@ There are a number of points concerning using files as a source of input you may
   # Avalanche cannot construct input files which are bigger than initial. Therefore, a number of paths can be unchecked if the supplied initial files are too small.
   # For most programs supplying very big input files will lead to substantial increase in amount of time required for analysis.
 
-The following is sample Avalanche run on one of supplied test examples (entry.c)
+The following is sample Avalanche run on one of supplied in distribution test examples (entry.c)
 
 {{{
 #include <sys/types.h>
@@ -130,7 +130,7 @@ There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
 and "show warranty" for details.
 This GDB was configured as "i486-linux-gnu"...
 (gdb) r
-Starting program: /space/mermakov/avalanche-trunk/samples/simple/entry exploit_0_0
+Starting program: <...>/avalanche-trunk/samples/simple/entry exploit_0_0
 
 Program received signal SIGSEGV, Segmentation fault.
 0x0804845d in main (argc=-536870880, argv=0x38bfa3a3) at entry.c:26
@@ -218,7 +218,7 @@ The command in the ending report can be used to reproduce the error:
 Aborted
 }}}
 Basically, exploit_0 holds the message that will cause SIGABRT if it is received from the server. We cannot modify what server sends and thus need to intercept it and replace it - that is precisely what covgrind plugin for valgrind can do.
-In the end we will kill out server application
+In the end we will kill our server application.
 {{{
 $ kill 7831
 }}}
